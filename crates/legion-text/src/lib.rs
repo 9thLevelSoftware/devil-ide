@@ -241,6 +241,31 @@ pub struct TextLineSlice {
     pub text: String,
 }
 
+/// A bounded immutable window around a caret within one logical line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextWindow {
+    /// Zero-based logical line number.
+    pub line: usize,
+    /// Absolute byte offset for the start of the logical line.
+    pub line_start_byte: usize,
+    /// Absolute caret byte offset used to choose this window.
+    pub caret_byte: usize,
+    /// Inclusive absolute byte offset of the returned window.
+    pub start_byte: usize,
+    /// Exclusive absolute byte offset of the returned window.
+    pub end_byte: usize,
+    /// Absolute byte offset immediately after logical line content, excluding its terminator.
+    pub logical_end_byte: usize,
+    /// Whether the window includes the logical line start.
+    pub complete_logical_start: bool,
+    /// Whether the window includes the logical line end.
+    pub complete_logical_end: bool,
+    /// True extended-grapheme boundary offsets in the returned window.
+    pub grapheme_boundaries: Vec<usize>,
+    /// Bounded UTF-8 text for the returned window.
+    pub text: String,
+}
+
 /// Immutable snapshot of buffer contents.
 ///
 /// Snapshots are cheap to clone because rope nodes are shared through [`Arc`]. Full-source text is
@@ -426,6 +451,56 @@ impl TextSnapshot {
         self.line_index.line_slice(line, max_bytes)
     }
 
+    /// Return a bounded UTF-8 window centered around an absolute caret byte offset.
+    ///
+    /// The window never crosses a logical line ending or exceeds `max_bytes`. Text is extracted
+    /// directly from the rope, and grapheme boundaries are resolved against the complete rope so
+    /// clusters spanning a window or rope chunk remain correct.
+    pub fn line_window_around_byte(
+        &self,
+        caret_byte: usize,
+        max_bytes: usize,
+    ) -> TextResult<TextWindow> {
+        if max_bytes == 0 || max_bytes > DEFAULT_LINE_SLICE_MAX_BYTES {
+            return Err(TextError::InvalidWindowBudget {
+                requested: max_bytes,
+                maximum: DEFAULT_LINE_SLICE_MAX_BYTES,
+            });
+        }
+        self.line_index.ensure_valid_offset(caret_byte)?;
+        self.line_index.ensure_char_boundary(caret_byte)?;
+        let line = self.line_index.line_for_offset(caret_byte)?;
+        let metric = self.line_index.line(line)?;
+        if caret_byte > metric.content_end_byte {
+            return Err(TextError::InvalidRange {
+                start: caret_byte,
+                end: metric.content_end_byte,
+            });
+        }
+
+        let (start_byte, end_byte) = choose_window_range(
+            self.rope.as_ref(),
+            metric.start_byte,
+            metric.content_end_byte,
+            caret_byte,
+            max_bytes,
+        )?;
+        let grapheme_boundaries =
+            grapheme_boundaries_in_range(self.rope.as_ref(), start_byte, end_byte)?;
+        Ok(TextWindow {
+            line,
+            line_start_byte: metric.start_byte,
+            caret_byte,
+            start_byte,
+            end_byte,
+            logical_end_byte: metric.content_end_byte,
+            complete_logical_start: start_byte == metric.start_byte,
+            complete_logical_end: end_byte == metric.content_end_byte,
+            grapheme_boundaries,
+            text: rope_string_from_byte_range(self.rope.as_ref(), start_byte, end_byte),
+        })
+    }
+
     /// Return the exact logical line range requested by a viewport using the default per-line
     /// slice budget.
     pub fn visible_line_slices(
@@ -563,6 +638,14 @@ pub enum TextError {
         start: usize,
         /// End offset.
         end: usize,
+    },
+    /// A bounded window byte budget was zero or exceeded the line-slice safety limit.
+    #[error("window byte budget {requested} must be between 1 and {maximum}")]
+    InvalidWindowBudget {
+        /// Requested window byte budget.
+        requested: usize,
+        /// Maximum permitted window byte budget.
+        maximum: usize,
     },
     /// A full-text compatibility operation exceeded the text-model byte budget.
     #[error(
@@ -2085,6 +2168,174 @@ fn is_char_boundary(rope: &Rope, offset: usize) -> bool {
     }
     let char_idx = rope.byte_to_char(offset);
     rope.char_to_byte(char_idx) == offset
+}
+
+fn choose_window_range(
+    rope: &Rope,
+    line_start: usize,
+    line_end: usize,
+    caret: usize,
+    budget: usize,
+) -> TextResult<(usize, usize)> {
+    if line_start == line_end {
+        return Ok((caret, caret));
+    }
+
+    let mut start = caret;
+    let mut end = caret;
+    let left_budget = budget / 2;
+    let right_budget = budget - left_budget;
+
+    while start > line_start {
+        let previous = previous_char_boundary(rope, start);
+        if start - previous > left_budget.saturating_sub(caret - start) {
+            break;
+        }
+        start = previous;
+    }
+    while end < line_end {
+        let next = next_char_boundary(rope, end);
+        if next - end > right_budget.saturating_sub(end - caret) {
+            break;
+        }
+        end = next;
+    }
+
+    // Spend any remaining bytes on either side, retaining complete UTF-8 scalars.
+    loop {
+        let mut extended = false;
+        if start > line_start {
+            let previous = previous_char_boundary(rope, start);
+            if end - previous <= budget {
+                start = previous;
+                extended = true;
+            }
+        }
+        if end < line_end {
+            let next = next_char_boundary(rope, end);
+            if next - start <= budget {
+                end = next;
+                extended = true;
+            }
+        }
+        if !extended {
+            break;
+        }
+    }
+    if start == end {
+        return Err(TextError::InvalidRange {
+            start: caret,
+            end: caret,
+        });
+    }
+    Ok((start, end))
+}
+
+fn previous_char_boundary(rope: &Rope, offset: usize) -> usize {
+    let char_index = rope.byte_to_char(offset);
+    rope.char_to_byte(char_index.saturating_sub(1))
+}
+
+fn next_char_boundary(rope: &Rope, offset: usize) -> usize {
+    let char_index = rope.byte_to_char(offset);
+    rope.char_to_byte((char_index + 1).min(rope.len_chars()))
+}
+
+fn grapheme_boundaries_in_range(rope: &Rope, start: usize, end: usize) -> TextResult<Vec<usize>> {
+    if start == end {
+        return Ok(if is_grapheme_boundary(rope, start)? {
+            vec![start]
+        } else {
+            Vec::new()
+        });
+    }
+    let mut boundary = if is_grapheme_boundary(rope, start)? {
+        start
+    } else {
+        next_grapheme_boundary_for_rope(rope, start)?.unwrap_or(rope.len_bytes())
+    };
+    let mut boundaries = Vec::new();
+    while boundary <= end {
+        boundaries.push(boundary);
+        boundary = match next_grapheme_boundary_for_rope(rope, boundary)? {
+            Some(next) => next,
+            None => break,
+        };
+    }
+    Ok(boundaries)
+}
+
+fn is_grapheme_boundary(rope: &Rope, offset: usize) -> TextResult<bool> {
+    if offset == 0 || offset == rope.len_bytes() {
+        return Ok(true);
+    }
+    let previous = previous_char_boundary(rope, offset);
+    Ok(next_grapheme_boundary_for_rope(rope, previous)? == Some(offset))
+}
+
+fn next_grapheme_boundary_for_rope(rope: &Rope, offset: usize) -> TextResult<Option<usize>> {
+    if offset > rope.len_bytes() {
+        return Err(TextError::ByteOffsetOutOfBounds {
+            offset,
+            len: rope.len_bytes(),
+        });
+    }
+    if !is_char_boundary(rope, offset) {
+        return Err(TextError::NotUtf8Boundary { offset });
+    }
+    if offset == rope.len_bytes() {
+        return Ok(None);
+    }
+    let mut cursor = GraphemeCursor::new(offset, rope.len_bytes(), true);
+    let (mut chunk, mut chunk_start, _, _) = rope.chunk_at_byte(offset);
+    loop {
+        match cursor.next_boundary(chunk, chunk_start) {
+            Ok(boundary) => return Ok(boundary),
+            Err(GraphemeIncomplete::NextChunk) => {
+                let next_start = chunk_start + chunk.len();
+                let (next, actual_start, _, _) =
+                    rope.get_chunk_at_byte(next_start)
+                        .ok_or(TextError::GraphemeSegmentation {
+                            offset,
+                            detail: "next chunk unavailable",
+                        })?;
+                chunk = next;
+                chunk_start = actual_start;
+            }
+            Err(GraphemeIncomplete::PreContext(context_end)) => {
+                provide_grapheme_context_for_rope(rope, &mut cursor, context_end, offset)?;
+            }
+            Err(GraphemeIncomplete::PrevChunk) => {
+                return Err(TextError::GraphemeSegmentation {
+                    offset,
+                    detail: "unexpected previous chunk request",
+                });
+            }
+            Err(GraphemeIncomplete::InvalidOffset) => {
+                return Err(TextError::GraphemeSegmentation {
+                    offset,
+                    detail: "invalid cursor offset",
+                });
+            }
+        }
+    }
+}
+
+fn provide_grapheme_context_for_rope(
+    rope: &Rope,
+    cursor: &mut GraphemeCursor,
+    context_end: usize,
+    offset: usize,
+) -> TextResult<()> {
+    if context_end == 0 || context_end > rope.len_bytes() {
+        return Err(TextError::GraphemeSegmentation {
+            offset,
+            detail: "invalid pre-context request",
+        });
+    }
+    let (chunk, chunk_start, _, _) = rope.chunk_at_byte(context_end - 1);
+    cursor.provide_context(&chunk[..context_end - chunk_start], chunk_start);
+    Ok(())
 }
 
 #[allow(dead_code)]

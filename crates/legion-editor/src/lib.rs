@@ -1031,6 +1031,19 @@ impl EditorEngine {
             .version())
     }
 
+    /// Resolve a logical line and UTF-8 byte column through the authoritative buffer index.
+    pub fn buffer_byte_offset(
+        &self,
+        buffer_id: BufferId,
+        position: TextPosition,
+    ) -> Result<usize, EditorError> {
+        let state = self
+            .buffers
+            .get(&buffer_id)
+            .ok_or(EditorError::BufferNotFound(buffer_id))?;
+        Ok(state.buffer.try_byte_offset(position)?)
+    }
+
     /// Return the current operating mode for a buffer.
     pub fn buffer_mode(&self, buffer_id: BufferId) -> Result<BufferMode, EditorError> {
         Ok(self
@@ -1051,6 +1064,25 @@ impl EditorEngine {
             .ok_or(EditorError::BufferNotFound(buffer_id))?
             .current_snapshot
             .descriptor())
+    }
+
+    /// Return a bounded immutable text window around a caret in the current buffer snapshot.
+    ///
+    /// The text model owns UTF-8, logical-line, and grapheme-boundary validation; this editor
+    /// authority method only resolves the buffer and delegates without materializing full text.
+    pub fn line_window_around_byte(
+        &self,
+        buffer_id: BufferId,
+        caret_byte: usize,
+        max_bytes: usize,
+    ) -> Result<legion_text::TextWindow, EditorError> {
+        let state = self
+            .buffers
+            .get(&buffer_id)
+            .ok_or(EditorError::BufferNotFound(buffer_id))?;
+        Ok(state
+            .current_snapshot
+            .line_window_around_byte(caret_byte, max_bytes)?)
     }
 
     /// Return protocol chunk descriptors for the current snapshot of a buffer.
