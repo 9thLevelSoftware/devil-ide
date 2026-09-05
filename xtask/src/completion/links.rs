@@ -1,10 +1,10 @@
 //! Deterministic metadata joins for completion evidence.
 //!
-//! This module validates only typed register/evidence links.  It does not read
-//! files, hash artifacts, inspect timestamps or reviewers, authenticate a
-//! candidate nomination, or produce a release verdict.  An empty issue list
-//! proves metadata consistency and coverage only; it is not authentic product
-//! acceptance or release readiness.
+//! This module validates typed register/evidence links and run outcome,
+//! reviewer, and timestamp integrity. It does not read files, hash artifacts,
+//! authenticate a candidate nomination, or produce a release verdict. An
+//! empty issue list proves metadata consistency, outcome integrity, and
+//! coverage only; it is not authentic product acceptance or release readiness.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,10 +13,12 @@ use super::schema::{
     RequirementsDocument, Scenario, ScenariosDocument,
 };
 
-/// Validate typed requirement/scenario/configuration/evidence metadata joins.
+/// Validate typed requirement/scenario/configuration/evidence metadata joins
+/// and each run's semantic outcome/review integrity.
 ///
 /// `candidate` is supplied by the caller and is compared literally with every
-/// selected run.  No verifier checkout HEAD or candidate manifest is read.
+/// selected run. No verifier checkout HEAD or candidate manifest is read, and
+/// no artifact bytes are loaded or hashed.
 /// `release` adds required-product acceptance and required-matrix coverage
 /// checks; it does not authenticate evidence or nominate a candidate.
 pub fn validate_metadata_links(
@@ -71,6 +73,7 @@ pub fn validate_metadata_links(
                 continue;
             }
         };
+        issues.extend(super::outcomes::validate_run_outcomes(scenario, run));
         if !config_ids.contains(run.configuration_id.as_str()) {
             issues.push(format!(
                 "evidence run `{}` references unknown configuration `{}`",

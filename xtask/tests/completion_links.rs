@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use xtask::completion::{
     links::validate_metadata_links,
     schema::{
-        Configuration, DependencyExecution, DependencyObservation, EvidenceLayer, EvidenceResult,
-        EvidenceRun, InputRoute, MatrixDocument, OperatingSystem, Requirement, RequirementKind,
-        RequirementsDocument, Scenario, ScenarioCheck, ScenariosDocument, Stage,
+        CheckResult, Configuration, DependencyExecution, DependencyObservation, EvidenceLayer,
+        EvidenceResult, EvidenceRun, InputRoute, MatrixDocument, OperatingSystem, Requirement,
+        RequirementKind, RequirementsDocument, Scenario, ScenarioCheck, ScenariosDocument, Stage,
     },
 };
 
@@ -93,9 +93,28 @@ fn run(id: &str) -> EvidenceRun {
             substitution_reason: String::new(),
         }],
         result: EvidenceResult::Passed,
-        oracle_results: Vec::new(),
-        recovery_results: Vec::new(),
-        artifact_hashes: BTreeMap::new(),
+        oracle_results: vec![CheckResult {
+            id: "oracle".into(),
+            passed: true,
+            artifact_path: "oracle.txt".into(),
+            observed: "observed".into(),
+        }],
+        recovery_results: vec![CheckResult {
+            id: "recovery".into(),
+            passed: true,
+            artifact_path: "recovery.txt".into(),
+            observed: "recovered".into(),
+        }],
+        artifact_hashes: BTreeMap::from([
+            (
+                "oracle.txt".into(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            ),
+            (
+                "recovery.txt".into(),
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            ),
+        ]),
         defect_ids: Vec::new(),
         implementation_owners: vec!["implementer".into()],
         reviewer: "reviewer".into(),
@@ -190,6 +209,52 @@ fn accepted_product_requires_every_reciprocal_pair() {
         false,
     );
     assert!(issues.is_empty(), "{issues:?}");
+}
+
+#[test]
+fn passed_run_with_failed_required_oracle_is_rejected() {
+    let (requirements, matrix, scenarios) = docs(
+        requirement("accepted", true, &["SCN-1"], &["CFG-1"]),
+        scenario(&["REQ-1"], &["CFG-1"]),
+        &["CFG-1"],
+    );
+    let mut evidence = run("run-forged-passed");
+    evidence.oracle_results = vec![CheckResult {
+        id: "oracle".into(),
+        passed: false,
+        artifact_path: "oracle.txt".into(),
+        observed: "external effect failed".into(),
+    }];
+    evidence.recovery_results = vec![CheckResult {
+        id: "recovery".into(),
+        passed: true,
+        artifact_path: "recovery.txt".into(),
+        observed: "recovered".into(),
+    }];
+    evidence.artifact_hashes = BTreeMap::from([
+        (
+            "oracle.txt".into(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        ),
+        (
+            "recovery.txt".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        ),
+    ]);
+    let issues = validate_metadata_links(
+        &requirements,
+        &matrix,
+        &scenarios,
+        &[evidence],
+        "candidate-a",
+        false,
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("oracle") && issue.contains("passed")),
+        "forged passed run was accepted: {issues:?}"
+    );
 }
 
 #[test]
