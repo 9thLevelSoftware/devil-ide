@@ -392,6 +392,212 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
 }
 
 #[test]
+fn daily_editing_contracts_native_delete_routes_all_carets_and_did_change() {
+    fn run(root: &std::path::Path, name: &str, backward: bool) -> String {
+        let file = root.join(name);
+        std::fs::write(&file, "a😀b\ncde\n").expect("seed file");
+        let sink = InMemoryEventSink::new();
+        let mut app = AppComposition::with_event_sink(SharedEventSink::new(sink.clone()));
+        app.open_workspace(
+            root,
+            WorkspaceTrustState::Trusted,
+            PrincipalId("daily-delete".to_string()),
+        )
+        .expect("open workspace");
+        app.open_file(file.to_string_lossy()).expect("open file");
+        let buffer_id = app.active_buffer_id().expect("active buffer");
+        app.dispatch_ui_intent(CommandDispatchIntent::SetCursor {
+            buffer_id,
+            cursor: text_coordinate(0, 1),
+        })
+        .expect("set primary caret");
+        app.dispatch_ui_intent(CommandDispatchIntent::AddCursorBelow { buffer_id })
+            .expect("add second caret");
+        let request_rx = app.set_lsp_request_receiver_for_test(fresh_lsp_health());
+        let before_transactions = app.editor().transaction_log().len();
+        let outcome = app
+            .dispatch_ui_intent(CommandDispatchIntent::DeleteDirectedCarets {
+                buffer_id,
+                backward,
+            })
+            .expect("native delete");
+        let descriptor = match outcome {
+            AppCommandOutcome::Edited(descriptor) => descriptor,
+            other => panic!("expected edited outcome, got {other:?}"),
+        };
+        assert_eq!(
+            app.editor().transaction_log().len(),
+            before_transactions + 1
+        );
+        assert!(app.editor().is_dirty(buffer_id).expect("dirty state"));
+        assert_ne!(descriptor.correlation_id.0, 0);
+        let event = sink
+            .events()
+            .expect("event snapshot")
+            .into_iter()
+            .find(|event| event.event == "editor.transaction_applied")
+            .expect("transaction event");
+        assert_eq!(event.correlation_id, descriptor.correlation_id);
+        let request = request_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("native delete must queue didChange");
+        let legion_app::language::LspWorkerRequest::DidChange { version, text, .. } = request
+        else {
+            panic!("expected didChange request");
+        };
+        assert_eq!(version, descriptor.post_buffer_version.0 as i64);
+        assert_eq!(
+            text,
+            app.editor().text(buffer_id).expect("text").to_string()
+        );
+        text
+    }
+
+    let root = create_root();
+    assert_eq!(run(&root, "backward.txt", true), "😀b\nde\n");
+    assert_eq!(run(&root, "forward.txt", false), "ab\nce\n");
+}
+
+#[test]
+fn daily_editing_contracts_native_delete_noop_has_no_effects() {
+    let root = create_root();
+    let file = root.join("noop.txt");
+    std::fs::write(&file, "abc\ndef\n").expect("seed file");
+    let sink = InMemoryEventSink::new();
+    let mut app = AppComposition::with_event_sink(SharedEventSink::new(sink.clone()));
+    app.open_workspace(
+        &*root,
+        WorkspaceTrustState::Trusted,
+        PrincipalId("daily-delete-noop".to_string()),
+    )
+    .expect("open workspace");
+    app.open_file(file.to_string_lossy()).expect("open file");
+    let buffer_id = app.active_buffer_id().expect("active buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::SetCursor {
+        buffer_id,
+        cursor: text_coordinate(0, 0),
+    })
+    .expect("set primary caret");
+    let before_viewport = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("before projection")
+        .viewport
+        .expect("before viewport");
+    let before_carets = app.editor().cursors(buffer_id).expect("before carets");
+    let request_rx = app.set_lsp_request_receiver_for_test(fresh_lsp_health());
+    let before_transactions = app.editor().transaction_log().len();
+    let outcome = app
+        .dispatch_ui_intent(CommandDispatchIntent::DeleteDirectedCarets {
+            buffer_id,
+            backward: true,
+        })
+        .expect("noop native delete");
+    assert!(matches!(outcome, AppCommandOutcome::Noop));
+    assert_eq!(app.editor().transaction_log().len(), before_transactions);
+    assert!(!app.editor().is_dirty(buffer_id).expect("dirty state"));
+    let after_viewport = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("after projection")
+        .viewport
+        .expect("after viewport");
+    assert_eq!(
+        after_viewport.buffer_version,
+        before_viewport.buffer_version
+    );
+    assert_eq!(after_viewport.snapshot_id, before_viewport.snapshot_id);
+    assert_eq!(
+        app.editor().cursors(buffer_id).expect("after carets"),
+        before_carets
+    );
+    assert!(
+        sink.events()
+            .expect("event snapshot")
+            .into_iter()
+            .all(|event| event.event != "editor.transaction_applied")
+    );
+    assert!(
+        request_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err()
+    );
+}
+
+#[test]
+fn daily_editing_contracts_generic_delete_preserves_explicit_range_with_multiple_carets() {
+    let root = create_root();
+    let file = root.join("range.txt");
+    std::fs::write(&file, "abc\ndef\n").expect("seed file");
+    let mut app = trusted_app(&root);
+    app.open_file(file.to_string_lossy()).expect("open file");
+    let buffer_id = app.active_buffer_id().expect("active buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::SetCursor {
+        buffer_id,
+        cursor: text_coordinate(0, 0),
+    })
+    .expect("set primary caret");
+    app.dispatch_ui_intent(CommandDispatchIntent::AddCursorBelow { buffer_id })
+        .expect("add second caret");
+    let before_carets = app.editor().cursors(buffer_id).expect("before carets");
+    assert_eq!(before_carets.len(), 2);
+    assert_eq!(
+        before_carets[0].position,
+        legion_editor::TextPosition::new(0, 0)
+    );
+    assert_eq!(
+        before_carets[1].position,
+        legion_editor::TextPosition::new(1, 0)
+    );
+    app.dispatch_ui_intent(CommandDispatchIntent::Delete {
+        buffer_id,
+        range: ProtocolTextRange {
+            start: text_coordinate(0, 0),
+            end: text_coordinate(0, 1),
+        },
+    })
+    .expect("explicit range delete");
+    assert_eq!(
+        app.editor().text(buffer_id).expect("text").to_string(),
+        "bc\ndef\n"
+    );
+    let carets = app.editor().cursors(buffer_id).expect("carets");
+    assert_eq!(carets.len(), 2);
+    assert_eq!(carets[0].position, legion_editor::TextPosition::new(0, 0));
+    assert_eq!(carets[1].position, legion_editor::TextPosition::new(1, 0));
+    app.dispatch_ui_intent(CommandDispatchIntent::Undo { buffer_id })
+        .expect("undo explicit range delete");
+    assert_eq!(
+        app.editor().text(buffer_id).expect("undo text").to_string(),
+        "abc\ndef\n"
+    );
+    let undo_carets = app.editor().cursors(buffer_id).expect("undo carets");
+    assert_eq!(undo_carets.len(), 2);
+    assert_eq!(
+        undo_carets[0].position,
+        legion_editor::TextPosition::new(0, 0)
+    );
+    assert_eq!(
+        undo_carets[1].position,
+        legion_editor::TextPosition::new(1, 0)
+    );
+    app.dispatch_ui_intent(CommandDispatchIntent::Redo { buffer_id })
+        .expect("redo explicit range delete");
+    assert_eq!(
+        app.editor().text(buffer_id).expect("redo text").to_string(),
+        "bc\ndef\n"
+    );
+    let redo_carets = app.editor().cursors(buffer_id).expect("redo carets");
+    assert_eq!(redo_carets.len(), 2);
+    assert_eq!(
+        redo_carets[0].position,
+        legion_editor::TextPosition::new(0, 0)
+    );
+    assert_eq!(
+        redo_carets[1].position,
+        legion_editor::TextPosition::new(1, 0)
+    );
+}
+
+#[test]
 fn daily_editing_contracts_directed_carets_survive_tab_switch_per_buffer() {
     let root = create_root();
     let first = root.join("first.txt");

@@ -70,6 +70,16 @@ impl CommandDispatcher {
                 Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
                 Ok(AppCommandRequest::ReplaceDirectedCarets { buffer_id, text })
             }
+            CommandDispatchIntent::DeleteDirectedCarets {
+                buffer_id,
+                backward,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::DeleteDirectedCarets {
+                    buffer_id,
+                    backward,
+                })
+            }
             CommandDispatchIntent::SetDirectedSelection {
                 buffer_id,
                 anchor,

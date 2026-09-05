@@ -1431,8 +1431,11 @@ impl DesktopRuntime {
                     DesktopAction::MoveToBoundary { .. }
                         | DesktopAction::SetDirectedSelection { .. }
                 );
-                let arm_post_action_completion =
-                    matches!(action, DesktopAction::ReplaceDirectedCarets { .. });
+                let arm_post_action_completion = matches!(
+                    action,
+                    DesktopAction::ReplaceDirectedCarets { .. }
+                        | DesktopAction::DeleteDirectedCarets { .. }
+                );
 
                 // T6: dismiss popup and arm debounce on text-edit actions.
                 // Directed replacement collapses a selection at the mapped edit end, so its
@@ -4006,6 +4009,7 @@ fn editor_text_action_blocked_by_palette(
             DesktopAction::InsertText { .. }
                 | DesktopAction::ReplaceRange { .. }
                 | DesktopAction::DeleteRange { .. }
+                | DesktopAction::DeleteDirectedCarets { .. }
                 | DesktopAction::ClipboardPaste { .. }
                 | DesktopAction::ClipboardCut
                 | DesktopAction::ImeCommit { .. }
@@ -4028,6 +4032,9 @@ fn completion_debounce_info(
         | DesktopAction::ClipboardPaste { at, .. }
         | DesktopAction::ImeCommit { at, .. } => *at,
         DesktopAction::ReplaceDirectedCarets { .. } => {
+            snapshot.active_buffer_projection.viewport.as_ref()?.cursor
+        }
+        DesktopAction::DeleteDirectedCarets { .. } => {
             snapshot.active_buffer_projection.viewport.as_ref()?.cursor
         }
         // M5: treat delete/backspace as an edit that re-arms completion.
@@ -5034,19 +5041,21 @@ impl DesktopEframeApp {
                             if let Some(action) = boundary_action_for_event(event, &snapshot) {
                                 self.dispatch_desktop_action(ui, action);
                             } else if *key == egui::Key::Backspace {
-                                if let Some(range) = self.runtime.backspace_delete_range() {
-                                    self.dispatch_desktop_action(
-                                        ui,
-                                        DesktopAction::DeleteRange { range },
-                                    );
-                                }
+                                self.dispatch_desktop_action(
+                                    ui,
+                                    DesktopAction::DeleteDirectedCarets {
+                                        buffer_id: snapshot.active_buffer_projection.buffer_id,
+                                        backward: true,
+                                    },
+                                );
                             } else if *key == egui::Key::Delete {
-                                if let Some(range) = self.runtime.forward_delete_range() {
-                                    self.dispatch_desktop_action(
-                                        ui,
-                                        DesktopAction::DeleteRange { range },
-                                    );
-                                }
+                                self.dispatch_desktop_action(
+                                    ui,
+                                    DesktopAction::DeleteDirectedCarets {
+                                        buffer_id: snapshot.active_buffer_projection.buffer_id,
+                                        backward: false,
+                                    },
+                                );
                             } else if *key == egui::Key::Enter
                                 && !modifiers.command
                                 && !modifiers.alt
@@ -5086,8 +5095,7 @@ impl DesktopEframeApp {
             } else {
                 input.clone()
             };
-            // Tier 1 (A1): synthesize Backspace/Delete/Enter using app buffer text
-            // so ranges are byte-accurate (including cross-line backspace).
+            // Tier 1 (A1): route Backspace/Delete as directional caret intents.
             if editor_input_enabled
                 && !ime_composition_active
                 && !view_state.completion_popup_open
@@ -5095,13 +5103,15 @@ impl DesktopEframeApp {
                 && !boundaries_in_frame
             {
                 if input.key_pressed(egui::Key::Backspace) {
-                    if let Some(range) = self.runtime.backspace_delete_range() {
-                        actions.push(DesktopAction::DeleteRange { range });
-                    }
+                    actions.push(DesktopAction::DeleteDirectedCarets {
+                        buffer_id: snapshot.active_buffer_projection.buffer_id,
+                        backward: true,
+                    });
                 } else if input.key_pressed(egui::Key::Delete) {
-                    if let Some(range) = self.runtime.forward_delete_range() {
-                        actions.push(DesktopAction::DeleteRange { range });
-                    }
+                    actions.push(DesktopAction::DeleteDirectedCarets {
+                        buffer_id: snapshot.active_buffer_projection.buffer_id,
+                        backward: false,
+                    });
                 } else if input.key_pressed(egui::Key::Enter) && !input.modifiers.alt {
                     actions.push(insert_or_replace_with_newline(&snapshot));
                 } else {
@@ -6091,21 +6101,21 @@ fn editor_keyboard_control_actions(
         }
     }
 
-    // Backspace/Delete/Enter for the live frame path are synthesized in
-    // `handle_keyboard` with app buffer text. This pure helper still handles
-    // them for unit/conformance tests that only pass a snapshot: use projected
-    // coordinates (ASCII-safe mid-line) when no app text is available.
+    // Backspace/Delete/Enter for the live frame path are routed as directional
+    // intents; this helper retains only the event ownership gates.
     if !completion_popup_open {
         if input.key_pressed(egui::Key::Backspace) {
-            if let Some(range) = delete_range_for_backspace(snapshot) {
-                actions.push(DesktopAction::DeleteRange { range });
-            }
+            actions.push(DesktopAction::DeleteDirectedCarets {
+                buffer_id: snapshot.active_buffer_projection.buffer_id,
+                backward: true,
+            });
             return actions;
         }
         if input.key_pressed(egui::Key::Delete) {
-            if let Some(range) = delete_range_for_forward_delete(snapshot) {
-                actions.push(DesktopAction::DeleteRange { range });
-            }
+            actions.push(DesktopAction::DeleteDirectedCarets {
+                buffer_id: snapshot.active_buffer_projection.buffer_id,
+                backward: false,
+            });
             return actions;
         }
         if input.key_pressed(egui::Key::Enter) && !input.modifiers.alt {
@@ -6218,6 +6228,7 @@ fn projected_primary_selection(snapshot: &ShellProjectionSnapshot) -> Option<Pro
         .cloned()
 }
 
+#[allow(dead_code)]
 fn delete_range_for_backspace(snapshot: &ShellProjectionSnapshot) -> Option<ProtocolTextRange> {
     if let Some(selection) = projected_primary_selection(snapshot) {
         return Some(selection);
@@ -6244,6 +6255,7 @@ fn delete_range_for_backspace(snapshot: &ShellProjectionSnapshot) -> Option<Prot
     })
 }
 
+#[allow(dead_code)]
 fn delete_range_for_forward_delete(
     snapshot: &ShellProjectionSnapshot,
 ) -> Option<ProtocolTextRange> {
@@ -7299,15 +7311,19 @@ mod tests {
         let backspace = input_state_for_key(egui::Key::Backspace, egui::Modifiers::default());
         assert!(matches!(
             editor_keyboard_control_actions(&backspace, &snapshot, true, false, false).as_slice(),
-            [DesktopAction::DeleteRange { range }]
-                if range.end.byte_offset == Some(2) && range.start.byte_offset == Some(1)
+            [DesktopAction::DeleteDirectedCarets {
+                buffer_id: None,
+                backward: true,
+            }]
         ));
 
         let delete = input_state_for_key(egui::Key::Delete, egui::Modifiers::default());
         assert!(matches!(
             editor_keyboard_control_actions(&delete, &snapshot, true, false, false).as_slice(),
-            [DesktopAction::DeleteRange { range }]
-                if range.start.byte_offset == Some(2) && range.end.byte_offset == Some(3)
+            [DesktopAction::DeleteDirectedCarets {
+                buffer_id: None,
+                backward: false,
+            }]
         ));
 
         let enter = input_state_for_key(egui::Key::Enter, egui::Modifiers::default());

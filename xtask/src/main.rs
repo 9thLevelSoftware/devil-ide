@@ -3012,6 +3012,7 @@ fn run_check_deps(policy_path: &str) -> Result<(), String> {
     let violations = validate_dependency_policy(&packages, &policy);
     let renderer_violations =
         validate_renderer_dependency_gate(&policy_text, &package_dependency_names);
+    let grapheme_violations = validate_grapheme_dependency_gate(&metadata, &policy_text);
     let parser_violations =
         validate_parser_dependency_gate(&policy_text, &package_dependency_names);
     let plugin_runtime_adr = fs::read_to_string(workspace_root.join(PLUGIN_RUNTIME_ADR_PATH)).ok();
@@ -3190,6 +3191,7 @@ fn run_check_deps(policy_path: &str) -> Result<(), String> {
 
     let mut all = violations;
     all.extend(renderer_violations);
+    all.extend(grapheme_violations);
     all.extend(parser_violations);
     all.extend(plugin_runtime_violations);
     all.extend(protocol_violations);
@@ -3333,6 +3335,66 @@ fn validate_dependency_policy(
         }
     }
 
+    issues.sort();
+    issues
+}
+
+fn validate_grapheme_dependency_gate(metadata: &Metadata, policy_text: &str) -> Vec<String> {
+    const DEPENDENCY: &str = "unicode-segmentation";
+    let mut owners = Vec::new();
+    let workspace_members = metadata.workspace_members.iter().collect::<HashSet<_>>();
+    for package in &metadata.packages {
+        if !workspace_members.contains(&package.id) {
+            continue;
+        }
+        for dependency in &package.dependencies {
+            if dependency.name == DEPENDENCY
+                && dependency.kind == cargo_metadata::DependencyKind::Normal
+            {
+                owners.push((package.name.as_str(), dependency.req.to_string()));
+            }
+        }
+    }
+    let owners = owners
+        .into_iter()
+        .map(|(package, req)| (package.to_string(), req))
+        .collect::<Vec<_>>();
+    validate_grapheme_dependency_specs(&owners, policy_text)
+}
+
+fn validate_grapheme_dependency_specs(
+    owners: &[(String, String)],
+    policy_text: &str,
+) -> Vec<String> {
+    const DEPENDENCY: &str = "unicode-segmentation";
+    const REQUIRED: &str = "=1.13.2";
+    let mut issues = Vec::new();
+    if !policy_text.contains("unicode-segmentation = 1.13.2") {
+        issues.push(
+            "`plans/dependency-policy.md` must authorize `unicode-segmentation = 1.13.2` for `legion-text`"
+                .to_string(),
+        );
+    }
+    for (package, req) in owners {
+        if *package != "legion-text" {
+            issues.push(format!(
+                "`{package}` directly depends on `{DEPENDENCY}`; only `legion-text` may own it"
+            ));
+        } else if req != REQUIRED {
+            issues.push(format!(
+                "`legion-text` must pin `{DEPENDENCY}` to `{REQUIRED}`, found `{req}`"
+            ));
+        }
+    }
+    if !owners
+        .iter()
+        .any(|(package, req)| *package == "legion-text" && req == REQUIRED)
+    {
+        issues.push(
+            "`legion-text` must directly depend on pinned `unicode-segmentation = 1.13.2`"
+                .to_string(),
+        );
+    }
     issues.sort();
     issues
 }
@@ -5613,6 +5675,52 @@ Final gate outputs archived from current commands.
                 .contains(&("legion-ui".to_string(), "legion-project".to_string()))
         );
         assert!(policy.protocol_symbols().contains("WorkspaceId"));
+    }
+
+    #[test]
+    fn grapheme_dependency_gate_covers_pin_owner_and_policy_cases() {
+        let policy = "`unicode-segmentation = 1.13.2`";
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-text".to_string(), "=1.13.2".to_string())],
+                policy
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-text".to_string(), "^1.13.2".to_string())],
+                policy
+            )
+            .iter()
+            .any(|issue| issue.contains("must pin"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(&[], policy)
+                .iter()
+                .any(|issue| issue.contains("must directly depend"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-editor".to_string(), "=1.13.2".to_string())],
+                policy
+            )
+            .iter()
+            .any(|issue| issue.contains("only `legion-text`"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(&[], policy)
+                .iter()
+                .all(|issue| !issue.contains("only `legion-text`"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-text".to_string(), "=1.13.2".to_string())],
+                ""
+            )
+            .iter()
+            .any(|issue| issue.contains("dependency-policy.md"))
+        );
     }
 
     #[test]

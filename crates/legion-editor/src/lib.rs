@@ -144,6 +144,15 @@ pub enum BoundaryKind {
     DocumentEnd,
 }
 
+/// Direction for native deletion from collapsed directed carets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteDirection {
+    /// Delete the grapheme immediately before each collapsed caret.
+    Backward,
+    /// Delete the grapheme immediately after each collapsed caret.
+    Forward,
+}
+
 /// A caret with a UTF-8 head and an optional directed anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectedCaret {
@@ -2446,6 +2455,112 @@ impl EditorEngine {
             correlation_id,
             true,
         )
+    }
+
+    /// Delete the selected ranges or adjacent extended graphemes for every
+    /// directed caret in one transaction.
+    ///
+    /// Selection ranges retain their exact byte endpoints. Collapsed carets
+    /// delete a whole grapheme, including the containing grapheme when the
+    /// supplied scalar position is inside one. Ranges are unioned before the
+    /// edit is committed so coincident and touching carets remain one atomic
+    /// operation. Returns `None` when every caret is a boundary no-op.
+    pub fn delete_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        direction: DeleteDirection,
+        correlation_id: Option<CorrelationId>,
+    ) -> Result<Option<TransactionRecord>, EditorError> {
+        let ranges = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            let mut ranges = Vec::new();
+            for caret in &state.carets {
+                let head = state.buffer.try_byte_offset(caret.head)?;
+                let anchor = caret
+                    .anchor
+                    .map(|anchor| state.buffer.try_byte_offset(anchor))
+                    .transpose()?;
+                if let Some(anchor) = anchor {
+                    let (start, end) = (anchor.min(head), anchor.max(head));
+                    if start < end {
+                        ranges.push((start, end));
+                        continue;
+                    }
+                }
+
+                let (start, end) = match direction {
+                    DeleteDirection::Backward => {
+                        let Some(previous) = state.buffer.previous_grapheme_boundary(head)? else {
+                            continue;
+                        };
+                        let end = state
+                            .buffer
+                            .next_grapheme_boundary(previous)?
+                            .unwrap_or(head);
+                        (previous, end)
+                    }
+                    DeleteDirection::Forward => {
+                        let Some(next) = state.buffer.next_grapheme_boundary(head)? else {
+                            continue;
+                        };
+                        let start = state
+                            .buffer
+                            .previous_grapheme_boundary(next)?
+                            .unwrap_or(head);
+                        (start, next)
+                    }
+                };
+                if start < end {
+                    ranges.push((start, end));
+                }
+            }
+            ranges.sort_unstable();
+            let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+            for (start, end) in ranges {
+                if let Some(last) = merged.last_mut()
+                    && start <= last.1
+                {
+                    last.1 = last.1.max(end);
+                    continue;
+                }
+                merged.push((start, end));
+            }
+            merged
+        };
+
+        if ranges.is_empty() {
+            return Ok(None);
+        }
+        let edits = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            ranges
+                .into_iter()
+                .map(|(start, end)| {
+                    Ok(TextEdit::new(
+                        TextRange::new(
+                            state.buffer.try_position(start)?,
+                            state.buffer.try_position(end)?,
+                        ),
+                        String::new(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, EditorError>>()?
+        };
+        self.apply_edits_with_caret_policy(
+            buffer_id,
+            edits,
+            TransactionSource::User,
+            None,
+            correlation_id,
+            true,
+        )
+        .map(Some)
     }
 
     /// Replace transient overlays for a buffer.

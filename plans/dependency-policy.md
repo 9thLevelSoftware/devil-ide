@@ -40,6 +40,12 @@ Every current workspace crate must have an explicit internal dependency policy e
 - `legion-text` may depend on:
   - `legion-protocol`
 
+  `legion-text` may also directly use the workspace-pinned external
+  `unicode-segmentation = 1.13.2` dependency for rope-backed extended grapheme
+  boundary queries. Segmentation remains text-model authority; editor owns
+  directional deletion and editing decisions. No other crate may add this
+  dependency for the S1-04 primitive increment.
+
 - `legion-platform` may depend on:
   - `legion-protocol`
 

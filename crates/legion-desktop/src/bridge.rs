@@ -824,6 +824,13 @@ pub enum DesktopAction {
         /// Replacement or insertion payload.
         text: String,
     },
+    /// Delete each directed caret's selection or adjacent grapheme cluster.
+    DeleteDirectedCarets {
+        /// Optional target buffer; falls back to the active tab.
+        buffer_id: Option<BufferId>,
+        /// Delete toward the document start when true; otherwise toward the end.
+        backward: bool,
+    },
     /// Replace a projected range.
     ReplaceRange {
         /// Projected range to replace.
@@ -2532,6 +2539,15 @@ impl DesktopCommandBridge {
                 .with_active_buffer(snapshot, |buffer_id| {
                     CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text }
                 }),
+            DesktopAction::DeleteDirectedCarets {
+                buffer_id,
+                backward,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::DeleteDirectedCarets {
+                    buffer_id,
+                    backward,
+                }
+            }),
             DesktopAction::MoveToBoundary {
                 buffer_id,
                 boundary,

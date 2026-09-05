@@ -13,6 +13,7 @@ use memchr::memchr;
 use ropey::Rope;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 pub mod binary;
 pub use binary::{BinaryDetectionResult, detect_binary, detect_binary_with_window};
@@ -588,6 +589,14 @@ pub enum TextError {
         kind: std::io::ErrorKind,
         /// Human-readable error description.
         message: String,
+    },
+    /// The rope chunk protocol returned an inconsistent segmentation request.
+    #[error("grapheme segmentation failed at byte offset {offset}: {detail}")]
+    GraphemeSegmentation {
+        /// Offset at which segmentation failed.
+        offset: usize,
+        /// Protocol error returned by `unicode-segmentation`.
+        detail: &'static str,
     },
 }
 
@@ -1350,6 +1359,139 @@ impl TextBuffer {
     /// Returns `true` if the buffer contains no text.
     pub fn is_empty(&self) -> bool {
         self.rope.len_bytes() == 0
+    }
+
+    /// Return the strictly previous extended grapheme boundary before `offset`.
+    ///
+    /// The offset is an absolute UTF-8 byte offset. A valid scalar offset inside a
+    /// grapheme cluster returns the boundary before that cluster.
+    pub fn previous_grapheme_boundary(&self, offset: usize) -> TextResult<Option<usize>> {
+        self.validate_grapheme_offset(offset)?;
+        if offset == 0 {
+            return Ok(None);
+        }
+
+        let mut cursor = GraphemeCursor::new(offset, self.len(), true);
+        let (mut chunk_start, mut chunk) = if offset == self.len() {
+            let (chunk, chunk_start, _, _) = self.rope.chunk_at_byte(offset - 1);
+            (chunk_start, chunk)
+        } else {
+            let (chunk, chunk_start, _, _) = self.rope.chunk_at_byte(offset);
+            (chunk_start, chunk)
+        };
+
+        loop {
+            match cursor.prev_boundary(chunk, chunk_start) {
+                Ok(boundary) => return Ok(boundary),
+                Err(GraphemeIncomplete::PrevChunk) => {
+                    if chunk_start == 0 {
+                        return Err(TextError::GraphemeSegmentation {
+                            offset,
+                            detail: "previous chunk unavailable",
+                        });
+                    }
+                    let (previous, previous_start, _, _) = self.rope.chunk_at_byte(chunk_start - 1);
+                    chunk = previous;
+                    chunk_start = previous_start;
+                }
+                Err(GraphemeIncomplete::PreContext(context_end)) => {
+                    self.provide_grapheme_context(&mut cursor, context_end, offset)?;
+                }
+                Err(GraphemeIncomplete::NextChunk) => {
+                    return Err(TextError::GraphemeSegmentation {
+                        offset,
+                        detail: "unexpected next-chunk request while moving backward",
+                    });
+                }
+                Err(GraphemeIncomplete::InvalidOffset) => {
+                    return Err(TextError::GraphemeSegmentation {
+                        offset,
+                        detail: "invalid cursor offset",
+                    });
+                }
+            }
+        }
+    }
+
+    /// Return the strictly next extended grapheme boundary after `offset`.
+    ///
+    /// The offset is an absolute UTF-8 byte offset. A valid scalar offset inside a
+    /// grapheme cluster returns the boundary after that cluster.
+    pub fn next_grapheme_boundary(&self, offset: usize) -> TextResult<Option<usize>> {
+        self.validate_grapheme_offset(offset)?;
+        if offset == self.len() {
+            return Ok(None);
+        }
+
+        let mut cursor = GraphemeCursor::new(offset, self.len(), true);
+        let (mut chunk, mut chunk_start) = {
+            let (chunk, chunk_start, _, _) = self.rope.chunk_at_byte(offset);
+            (chunk, chunk_start)
+        };
+
+        loop {
+            match cursor.next_boundary(chunk, chunk_start) {
+                Ok(boundary) => return Ok(boundary),
+                Err(GraphemeIncomplete::NextChunk) => {
+                    let next_start = chunk_start + chunk.len();
+                    let (next, actual_start, _, _) = self
+                        .rope
+                        .get_chunk_at_byte(next_start)
+                        .ok_or(TextError::GraphemeSegmentation {
+                            offset,
+                            detail: "next chunk unavailable",
+                        })?;
+                    chunk = next;
+                    chunk_start = actual_start;
+                }
+                Err(GraphemeIncomplete::PreContext(context_end)) => {
+                    self.provide_grapheme_context(&mut cursor, context_end, offset)?;
+                }
+                Err(GraphemeIncomplete::PrevChunk) => {
+                    return Err(TextError::GraphemeSegmentation {
+                        offset,
+                        detail: "unexpected previous-chunk request while moving forward",
+                    });
+                }
+                Err(GraphemeIncomplete::InvalidOffset) => {
+                    return Err(TextError::GraphemeSegmentation {
+                        offset,
+                        detail: "invalid cursor offset",
+                    });
+                }
+            }
+        }
+    }
+
+    fn validate_grapheme_offset(&self, offset: usize) -> TextResult<()> {
+        if offset > self.len() {
+            return Err(TextError::ByteOffsetOutOfBounds {
+                offset,
+                len: self.len(),
+            });
+        }
+        if !is_char_boundary(&self.rope, offset) {
+            return Err(TextError::NotUtf8Boundary { offset });
+        }
+        Ok(())
+    }
+
+    fn provide_grapheme_context(
+        &self,
+        cursor: &mut GraphemeCursor,
+        context_end: usize,
+        offset: usize,
+    ) -> TextResult<()> {
+        if context_end == 0 || context_end > self.len() {
+            return Err(TextError::GraphemeSegmentation {
+                offset,
+                detail: "invalid pre-context request",
+            });
+        }
+        let (chunk, chunk_start, _, _) = self.rope.chunk_at_byte(context_end - 1);
+        let end = context_end - chunk_start;
+        cursor.provide_context(&chunk[..end], chunk_start);
+        Ok(())
     }
 
     /// Return the number of logical lines. Empty buffers have one line.

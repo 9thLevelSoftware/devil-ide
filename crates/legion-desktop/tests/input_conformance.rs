@@ -602,6 +602,61 @@ fn replacement_completion_uses_post_action_cursor_and_buffer() {
 }
 
 #[test]
+fn directional_delete_completion_uses_post_action_cursor_and_noop_stays_disarmed() {
+    let workspace = TempWorkspace::new();
+    let file = workspace.write("completion-delete.txt", "abcd");
+    let mut runtime = open_runtime(workspace.path(), &file);
+    let buffer_id = runtime
+        .projection_snapshot()
+        .active_buffer_projection
+        .buffer_id
+        .expect("active buffer");
+    runtime
+        .handle_action(DesktopAction::SetCursor {
+            buffer_id: Some(buffer_id),
+            cursor: coord(0, 1, 1),
+        })
+        .expect("cursor action");
+    runtime
+        .handle_action(DesktopAction::DeleteDirectedCarets {
+            buffer_id: Some(buffer_id),
+            backward: true,
+        })
+        .expect("backspace action");
+    let events = runtime.lsp_debounce_events_for_test(
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+    );
+    let completion = events
+        .iter()
+        .find(|event| event.kind == LspDebounceKind::Completion)
+        .expect("directional deletion should arm completion");
+    assert_eq!(completion.buffer_id, buffer_id);
+    assert_eq!(completion.position, coord(0, 0, 0));
+
+    runtime
+        .handle_action(DesktopAction::SetCursor {
+            buffer_id: Some(buffer_id),
+            cursor: coord(0, 0, 0),
+        })
+        .expect("reset cursor");
+    runtime
+        .handle_action(DesktopAction::DeleteDirectedCarets {
+            buffer_id: Some(buffer_id),
+            backward: true,
+        })
+        .expect("noop backspace action");
+    let noop_events = runtime.lsp_debounce_events_for_test(
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+    );
+    assert!(
+        noop_events
+            .iter()
+            .all(|event| event.kind != LspDebounceKind::Completion),
+        "noop deletion must not arm completion"
+    );
+}
+
+#[test]
 fn boundary_hover_uses_post_action_cursor() {
     let workspace = TempWorkspace::new();
     let file = workspace.write("hover-boundary.txt", "abcd");

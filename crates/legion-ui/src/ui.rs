@@ -2910,6 +2910,13 @@ pub enum CommandDispatchIntent {
         /// Replacement or insertion payload.
         text: String,
     },
+    /// Delete each directed caret's selection or adjacent grapheme cluster.
+    DeleteDirectedCarets {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Delete toward the document start when true; otherwise toward the end.
+        backward: bool,
+    },
     /// Delete a protocol text range through application/editor authority for the target buffer.
     Delete {
         /// Target buffer identifier.

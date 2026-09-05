@@ -9402,6 +9402,13 @@ pub enum AppCommandRequest {
         /// Replacement or insertion payload.
         text: String,
     },
+    /// Delete each directed caret's selection or adjacent grapheme cluster.
+    DeleteDirectedCarets {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Delete toward the document start when true; otherwise toward the end.
+        backward: bool,
+    },
     /// Set a directed pointer selection while preserving anchor/head order.
     SetDirectedSelection {
         /// Target buffer identifier.
@@ -10179,6 +10186,13 @@ pub trait AppEditorCommandPort {
         text: String,
     ) -> Result<TextTransactionDescriptor, AppCompositionError>;
 
+    /// Delete each directed caret's selection or adjacent grapheme cluster.
+    fn delete_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        backward: bool,
+    ) -> Result<Option<TextTransactionDescriptor>, AppCompositionError>;
+
     /// Undo a buffer through editor authority.
     fn undo(
         &mut self,
@@ -10211,6 +10225,22 @@ impl AppEditorCommandPort for EditorEngine {
         Ok(
             EditorEngine::replace_directed_carets(self, buffer_id, text, None)?
                 .to_protocol_descriptor(),
+        )
+    }
+
+    fn delete_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        backward: bool,
+    ) -> Result<Option<TextTransactionDescriptor>, AppCompositionError> {
+        let direction = if backward {
+            legion_editor::DeleteDirection::Backward
+        } else {
+            legion_editor::DeleteDirection::Forward
+        };
+        Ok(
+            EditorEngine::delete_directed_carets(self, buffer_id, direction, None)?
+                .map(|record| record.to_protocol_descriptor()),
         )
     }
 
@@ -10359,6 +10389,18 @@ impl CommandExecutionService {
                 Ok(Some(AppCommandOutcome::Edited(
                     editor.replace_directed_carets(*buffer_id, text.clone())?,
                 )))
+            }
+            AppCommandRequest::DeleteDirectedCarets {
+                buffer_id,
+                backward,
+            } => {
+                state.ensure_active_buffer(*buffer_id)?;
+                Ok(Some(
+                    match editor.delete_directed_carets(*buffer_id, *backward)? {
+                        Some(descriptor) => AppCommandOutcome::Edited(descriptor),
+                        None => AppCommandOutcome::Noop,
+                    },
+                ))
             }
             AppCommandRequest::Save { .. }
             | AppCommandRequest::ClipboardCopy { .. }
@@ -17796,64 +17838,37 @@ impl AppComposition {
         Ok(Some(outcome))
     }
 
-    /// Delete backwards at every cursor when more than one is active.
-    ///
-    /// The mirror of [`Self::dispatch_multi_cursor_insert`], and needed for the
-    /// same reason: without it, typing reaches every cursor but Backspace
-    /// reaches only the caret, so a multi-cursor edit could be made and not
-    /// unmade. `None` keeps the ordinary single-cursor case on the normal path.
-    ///
-    /// The incoming range is ignored deliberately. It was computed by the
-    /// renderer from the active cursor alone and describes one deletion;
-    /// `delete_before_all` recomputes every position from the text, which is
-    /// the only view that stays valid once the first character is removed.
-    fn dispatch_multi_cursor_delete(
+    /// Route a native directional deletion through editor authority.
+    fn dispatch_directed_caret_delete(
         &mut self,
         intent: &CommandDispatchIntent,
         event_context: &EventContext,
     ) -> Result<Option<AppCommandOutcome>, AppCompositionError> {
-        let CommandDispatchIntent::Delete { buffer_id, .. } = intent else {
+        let CommandDispatchIntent::DeleteDirectedCarets {
+            buffer_id,
+            backward,
+        } = intent
+        else {
             return Ok(None);
         };
-        let cursors: Vec<legion_editor::TextPosition> = self
-            .editor
-            .cursors(*buffer_id)?
-            .iter()
-            .map(|cursor| cursor.position)
-            .collect();
-        if cursors.len() < 2 {
-            return Ok(None);
-        }
-
-        let before = self.editor.text(*buffer_id)?.to_string();
-        let (after, moved) = legion_editor::multi_cursor::delete_before_all(&before, &cursors);
-        if after == before {
-            // No cursor had anything before it to delete. Hard to reach —
-            // `delete_before_all` skips only offset zero, and normalization
-            // leaves at most one cursor there — but an empty edit would push an
-            // undo step that undoes nothing, which is worse than a branch that
-            // rarely runs.
-            return Ok(Some(AppCommandOutcome::Noop));
-        }
-
-        // One whole-buffer edit, for the same reason as the insert path: the
-        // positions are valid only against the text they were computed from.
-        let edit = TextEdit::new(
-            legion_editor::TextRange::new(
-                legion_editor::TextPosition::new(0, 0),
-                end_position(&before),
-            ),
-            after,
-        );
-        let outcome = self.apply_vim_edit(*buffer_id, edit, event_context)?;
-        self.editor.set_cursors(
+        self.active_documents.ensure_active_buffer(*buffer_id)?;
+        let direction = if *backward {
+            legion_editor::DeleteDirection::Backward
+        } else {
+            legion_editor::DeleteDirection::Forward
+        };
+        let Some(record) = self.editor.delete_directed_carets(
             *buffer_id,
-            moved
-                .into_iter()
-                .map(|position| legion_editor::Cursor { position })
-                .collect(),
-        )?;
-        Ok(Some(outcome))
+            direction,
+            Some(event_context.correlation_id),
+        )?
+        else {
+            return Ok(Some(AppCommandOutcome::Noop));
+        };
+        let descriptor = record.to_protocol_descriptor();
+        self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(*buffer_id, &descriptor);
+        Ok(Some(AppCommandOutcome::Edited(descriptor)))
     }
 
     /// Handle a multi-cursor intent, or return `None` if it is not one.
@@ -18276,7 +18291,7 @@ impl AppComposition {
         if let Some(outcome) = self.dispatch_multi_cursor_insert(&intent, &event_context)? {
             return Ok(outcome);
         }
-        if let Some(outcome) = self.dispatch_multi_cursor_delete(&intent, &event_context)? {
+        if let Some(outcome) = self.dispatch_directed_caret_delete(&intent, &event_context)? {
             return Ok(outcome);
         }
 
@@ -18475,6 +18490,15 @@ impl AppComposition {
             _ => {}
         }
 
+        // Explicit range deletion keeps the editor-mapped directed caret vector
+        // when multiple carets are active. The primary-only post-edit cursor
+        // helper is retained for ordinary single-caret compatibility.
+        let preserve_mapped_delete_carets =
+            if let CommandDispatchIntent::Delete { buffer_id, .. } = &intent {
+                self.editor.cursors(*buffer_id)?.len() > 1
+            } else {
+                false
+            };
         let request = CommandDispatcher::route_intent(
             intent,
             AppCommandRouteContext::from_active(&self.active_documents),
@@ -18488,7 +18512,9 @@ impl AppComposition {
                     edit.clone(),
                     event_context.correlation_id,
                 )?;
-                self.set_cursor_after_edit(*buffer_id, edit)?;
+                if !preserve_mapped_delete_carets {
+                    self.set_cursor_after_edit(*buffer_id, edit)?;
+                }
                 self.emit_transaction_event(&descriptor);
                 // PKT-LSP-B T3: notify live LSP session of the buffer change.
                 // `did_change` is a fire-and-forget notification; the underlying

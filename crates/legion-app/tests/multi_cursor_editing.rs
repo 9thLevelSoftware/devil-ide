@@ -26,7 +26,6 @@ fn app_with_text(text: &str) -> (AppComposition, BufferId) {
     std::mem::forget(dir);
     (app, buffer_id)
 }
-
 fn cursor_lines(app: &AppComposition, buffer_id: BufferId) -> Vec<(usize, usize)> {
     app.editor()
         .cursors(buffer_id)
@@ -157,22 +156,17 @@ fn a_multi_cursor_edit_is_one_undoable_change() {
 #[test]
 fn backspace_reaches_every_cursor() {
     // Typing already reached every cursor; deleting did not, so a multi-cursor
-    // edit could be made and not unmade. `delete_before_all` existed in
-    // `legion-editor` with no caller.
+    // edit could be made and not unmade. Native deletion is directional and
+    // resolves every directed caret in editor authority.
     let (mut app, buffer_id) = app_with_text("one\ntwo\nsix\n");
     add_below(&mut app, buffer_id);
     add_below(&mut app, buffer_id);
     insert(&mut app, buffer_id, "X");
     assert_eq!(text_of(&app, buffer_id), "Xone\nXtwo\nXsix\n");
 
-    app.dispatch_ui_intent(CommandDispatchIntent::Delete {
+    app.dispatch_ui_intent(CommandDispatchIntent::DeleteDirectedCarets {
         buffer_id,
-        // Ignored by the multi-cursor path, which recomputes every deletion
-        // from the text. Supplied because the intent requires a range.
-        range: legion_protocol::ProtocolTextRange {
-            start: coordinate(0, 0),
-            end: coordinate(0, 1),
-        },
+        backward: true,
     })
     .expect("delete dispatches");
 
@@ -186,14 +180,4 @@ fn backspace_reaches_every_cursor() {
         vec![(0, 0), (1, 0), (2, 0)],
         "every cursor should step back with its own deletion"
     );
-}
-
-/// A protocol coordinate at a line and column.
-fn coordinate(line: u32, character: u32) -> legion_protocol::TextCoordinate {
-    legion_protocol::TextCoordinate {
-        line,
-        character,
-        byte_offset: None,
-        utf16_offset: None,
-    }
 }

@@ -4674,6 +4674,14 @@ impl AppEditorCommandPort for MockEditorPort {
         Ok(mock_descriptor(buffer_id, FileId(7)))
     }
 
+    fn delete_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        _backward: bool,
+    ) -> Result<Option<TextTransactionDescriptor>, legion_app::AppCompositionError> {
+        Ok(Some(mock_descriptor(buffer_id, FileId(7))))
+    }
+
     fn undo(
         &mut self,
         buffer_id: BufferId,
