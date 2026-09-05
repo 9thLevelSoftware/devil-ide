@@ -139,6 +139,18 @@ pub struct GlyphAllocation {
     pub uv_rect: UvRect,
 }
 
+/// The atlas-independent geometry needed before a glyph is rasterized.
+///
+/// Keeping this separate from [`GlyphAllocation`] makes the physical pen and
+/// subpixel bin deterministic across cold and warm atlas paths.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct PreparedGlyphMetrics {
+    pub(super) glyph_id: skrifa::GlyphId,
+    pub(super) advance_width_px: f32,
+    pub(super) physical_x: i32,
+    pub(super) bin: SubpixelBin,
+}
+
 #[derive(Hash, PartialEq, Eq)]
 struct GlyphCacheKey(u64);
 
@@ -342,6 +354,31 @@ pub struct FontFace {
 }
 
 impl FontFace {
+    pub(super) fn prepare_glyph_metrics(
+        glyph_info: GlyphInfo,
+        chr: char,
+        metrics: &StyledMetrics,
+        h_pos: f32,
+    ) -> Option<PreparedGlyphMetrics> {
+        let glyph_id = glyph_info.id?;
+        let advance_width_px = glyph_info.advance_width_unscaled.0 * metrics.px_scale_factor;
+
+        // CJK scripts contain a lot of characters and could hog the glyph atlas if we stored 4
+        // subpixel offsets per glyph.
+        let (physical_x, bin) = if is_cjk(chr) {
+            (h_pos.round() as i32, SubpixelBin::Zero)
+        } else {
+            SubpixelBin::new(h_pos)
+        };
+
+        Some(PreparedGlyphMetrics {
+            glyph_id,
+            advance_width_px,
+            physical_x,
+            bin,
+        })
+    }
+
     pub fn new(
         options: TextOptions,
         name: String,
@@ -579,40 +616,44 @@ impl FontFace {
         chr: char,
         h_pos: f32,
     ) -> (GlyphAllocation, i32) {
-        let advance_width_px = glyph_info.advance_width_unscaled.0 * metrics.px_scale_factor;
-
-        let Some(glyph_id) = glyph_info.id else {
+        let Some(_) = glyph_info.id else {
             // Invisible.
             return (GlyphAllocation::default(), h_pos as i32);
         };
 
-        // CJK scripts contain a lot of characters and could hog the glyph atlas if we stored 4 subpixel offsets per
-        // glyph.
-        let (h_pos_round, bin) = if is_cjk(chr) {
-            (h_pos.round() as i32, SubpixelBin::Zero)
-        } else {
-            SubpixelBin::new(h_pos)
-        };
+        let prepared = Self::prepare_glyph_metrics(glyph_info, chr, metrics, h_pos)
+            .expect("valid glyph id was checked above");
 
         let entry = match self
             .glyph_alloc_cache
-            .entry(GlyphCacheKey::new(glyph_id, metrics, bin))
+            .entry(GlyphCacheKey::new(prepared.glyph_id, metrics, prepared.bin))
         {
             std::collections::hash_map::Entry::Occupied(glyph_alloc) => {
                 let mut glyph_alloc = *glyph_alloc.get();
-                glyph_alloc.advance_width_px = advance_width_px; // Hack to get `\t` and thin space to work, since they use the same glyph id as ` ` (space).
-                return (glyph_alloc, h_pos_round);
+                glyph_alloc.id = prepared.glyph_id;
+                glyph_alloc.advance_width_px = prepared.advance_width_px; // Hack to get `\t` and thin space to work, since they use the same glyph id as ` ` (space).
+                return (glyph_alloc, prepared.physical_x);
             }
             std::collections::hash_map::Entry::Vacant(entry) => entry,
         };
 
         let allocation = self
             .font
-            .allocate_glyph_uncached(atlas, metrics, &glyph_info, bin, (&metrics.location).into())
-            .unwrap_or_default();
+            .allocate_glyph_uncached(
+                atlas,
+                metrics,
+                &glyph_info,
+                prepared.bin,
+                (&metrics.location).into(),
+            )
+            .unwrap_or(GlyphAllocation {
+                id: prepared.glyph_id,
+                advance_width_px: prepared.advance_width_px,
+                uv_rect: UvRect::default(),
+            });
 
         entry.insert(allocation);
-        (allocation, h_pos_round)
+        (allocation, prepared.physical_x)
     }
 }
 
@@ -798,4 +839,112 @@ pub(super) fn is_cjk(c: char) -> bool {
 pub(super) fn is_cjk_break_allowed(c: char) -> bool {
     // See: https://en.wikipedia.org/wiki/Line_breaking_rules_in_East_Asian_languages#Characters_not_permitted_on_the_start_of_a_line.
     !")]｝〕〉》」』】〙〗〟'\"｠»ヽヾーァィゥェォッャュョヮヵヶぁぃぅぇぉっゃゅょゎゕゖㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ々〻‐゠–〜?!‼⁇⁈⁉・、:;,。.".contains(c)
+}
+
+#[cfg(all(test, feature = "default_fonts"))]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn test_face() -> FontFace {
+        FontFace::new(
+            TextOptions::default(),
+            "test-font".to_owned(),
+            Arc::new(epaint_default_fonts::HACK_REGULAR),
+            0,
+            FontTweak::default(),
+        )
+        .expect("bundled test font parses")
+    }
+
+    #[test]
+    fn prepared_metrics_keep_frozen_geometry_for_normal_cjk_fallback_and_negative_pen() {
+        let face = test_face();
+        let metrics = face.styled_metrics(1.5, 13.0, &VariationCoords::default());
+        let normal = GlyphInfo {
+            id: Some(skrifa::GlyphId::new(7)),
+            advance_width_unscaled: 12.5.into(),
+        };
+
+        let prepared = FontFace::prepare_glyph_metrics(normal, 'A', &metrics, -0.4)
+            .expect("normal glyph is valid");
+        assert_eq!(prepared.glyph_id, skrifa::GlyphId::new(7));
+        assert_eq!(prepared.advance_width_px, 12.5 * metrics.px_scale_factor);
+        assert_eq!(prepared.physical_x, -1);
+        assert_eq!(prepared.bin, SubpixelBin::Two);
+
+        let cjk = FontFace::prepare_glyph_metrics(normal, '界', &metrics, 3.6)
+            .expect("fallback/CJK glyph is valid");
+        assert_eq!(cjk.physical_x, 4);
+        assert_eq!(cjk.bin, SubpixelBin::Zero);
+
+        let tab = GlyphInfo {
+            id: normal.id,
+            advance_width_unscaled: 4.0.into(),
+        };
+        let thin_space = GlyphInfo {
+            id: normal.id,
+            advance_width_unscaled: 2.0.into(),
+        };
+        assert_ne!(
+            FontFace::prepare_glyph_metrics(tab, ' ', &metrics, 0.0)
+                .expect("tab glyph is valid")
+                .advance_width_px,
+            FontFace::prepare_glyph_metrics(thin_space, ' ', &metrics, 0.0)
+                .expect("thin-space glyph is valid")
+                .advance_width_px
+        );
+        assert!(FontFace::prepare_glyph_metrics(GlyphInfo::INVISIBLE, '\u{200B}', &metrics, 2.0)
+            .is_none());
+    }
+
+    #[test]
+    fn failed_outline_keeps_resolved_geometry_on_cold_and_warm_allocation() {
+        let mut face = test_face();
+        let metrics = face.styled_metrics(1.0, 14.0, &VariationCoords::default());
+        let failed = GlyphInfo {
+            id: Some(skrifa::GlyphId::new(u32::MAX)),
+            advance_width_unscaled: 17.0.into(),
+        };
+        let mut atlas = TextureAtlas::new([1024, 1024], TextOptions::default());
+
+        let (cold, cold_x) = face.allocate_glyph(&mut atlas, &metrics, failed, 'x', -0.2);
+        let (warm, warm_x) = face.allocate_glyph(&mut atlas, &metrics, failed, 'x', -0.2);
+
+        assert_eq!(cold.id, failed.id.expect("failed test glyph has an id"));
+        assert_eq!(cold.advance_width_px, 17.0 * metrics.px_scale_factor);
+        assert!(cold.uv_rect.is_nothing());
+        assert_eq!(cold, warm);
+        assert_eq!(cold_x, warm_x);
+    }
+
+    #[test]
+    fn successful_tab_thin_space_and_invisible_allocations_are_cold_warm_stable() {
+        let mut face = test_face();
+        let metrics = face.styled_metrics(1.25, 15.0, &VariationCoords::default());
+        let mut atlas = TextureAtlas::new([1024, 1024], TextOptions::default());
+
+        for (chr, h_pos) in [('A', -0.2), ('\t', 1.3), ('\u{2009}', 2.7)] {
+            let info = face.glyph_info(chr).expect("fixture character has glyph info");
+            let expected = FontFace::prepare_glyph_metrics(info, chr, &metrics, h_pos)
+                .expect("visible fixture character has a glyph id");
+            let (cold, cold_x) = face.allocate_glyph(&mut atlas, &metrics, info, chr, h_pos);
+            let (warm, warm_x) = face.allocate_glyph(&mut atlas, &metrics, info, chr, h_pos);
+            assert_eq!(cold, warm, "allocation changed between cold and warm for {chr:?}");
+            assert_eq!(cold_x, warm_x);
+            assert_eq!(cold.id, expected.glyph_id);
+            assert_eq!(cold.advance_width_px, expected.advance_width_px);
+            assert_eq!(cold_x, expected.physical_x);
+        }
+
+        let invisible = face
+            .glyph_info('\u{200B}')
+            .expect("zero-width space uses the invisible glyph marker");
+        let (cold, cold_x) = face.allocate_glyph(&mut atlas, &metrics, invisible, '\u{200B}', 2.7);
+        let (warm, warm_x) = face.allocate_glyph(&mut atlas, &metrics, invisible, '\u{200B}', 2.7);
+        assert_eq!(cold, GlyphAllocation::default());
+        assert_eq!(cold, warm);
+        assert_eq!(cold_x, 2);
+        assert_eq!(cold_x, warm_x);
+    }
 }
