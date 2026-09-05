@@ -915,6 +915,15 @@ pub enum DesktopAction {
         /// Extend the directed selection from each caret.
         extend: bool,
     },
+    /// Move every active editor caret one grapheme boundary horizontally.
+    MoveHorizontally {
+        /// Optional target buffer; falls back to the active tab.
+        buffer_id: Option<BufferId>,
+        /// Move toward the document start when true, otherwise toward the end.
+        left: bool,
+        /// Extend the directed selections.
+        extend: bool,
+    },
     /// Select the entire target buffer or active buffer.
     SelectAll {
         /// Optional target buffer; falls back to the active tab.
@@ -2556,6 +2565,17 @@ impl DesktopCommandBridge {
                 CommandDispatchIntent::MoveToBoundary {
                     buffer_id,
                     boundary,
+                    extend,
+                }
+            }),
+            DesktopAction::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::MoveHorizontally {
+                    buffer_id,
+                    left,
                     extend,
                 }
             }),

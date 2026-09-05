@@ -53,3 +53,17 @@ This migration supports the full navigation work; S1-04 still requires grapheme 
 4. Verify Unicode/CRLF byte and UTF-16 projections and a streamed buffer over the full-cache limit. Run affected editor/app/desktop tests and dependency ownership gates. Then obtain ordinary native input evidence on each required platform through S1-02; headless tests remain lower-layer evidence.
 
 The implementation must add the corresponding dependency-policy contract note and ownership/contract tests before activating new command variants. For the grapheme-boundary primitive, `legion-text` is authorized to depend directly on the pinned workspace `unicode-segmentation = 1.13.2` crate. Text owns rope-backed Unicode segmentation and byte-boundary validation; editor authority owns directional deletion and all editing decisions. No other new runtime dependency is authorized. The root coordinator owns architecture and final acceptance; Luna workers perform bounded implementation/review under the user's execution policy.
+
+## S1-04f horizontal movement addendum
+
+Horizontal movement is an editor-authority operation over the existing ordered
+`DirectedCaret` vector. `HorizontalDirection::Left` and `Right` resolve each
+head against `TextBuffer`'s strict extended-grapheme boundary APIs, including
+CRLF, streamed buffers, and valid scalar offsets inside a grapheme cluster.
+Plain movement collapses a nonempty selection to its lower or upper byte
+endpoint respectively, without an additional step, and clears anchors.
+Extended movement initializes an absent anchor from the old head and retains
+anchors through reversal and crossing. Every caret is resolved against the
+original text before any state is committed; a failed endpoint conversion
+leaves all carets unchanged. Movement changes neither text, buffer version,
+transaction history, nor change events.

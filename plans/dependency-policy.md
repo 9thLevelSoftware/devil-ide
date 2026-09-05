@@ -46,6 +46,9 @@ Every current workspace crate must have an explicit internal dependency policy e
   directional deletion and editing decisions. No other crate may add this
   dependency for the S1-04 primitive increment.
 
+  The S1-04f editor horizontal movement contract consumes these existing
+  `legion-text` boundary APIs and adds no dependency or new internal edge.
+
 - `legion-platform` may depend on:
   - `legion-protocol`
 

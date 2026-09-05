@@ -523,6 +523,105 @@ fn daily_editing_contracts_native_delete_noop_has_no_effects() {
 }
 
 #[test]
+fn daily_editing_contracts_horizontal_movement_is_caret_only() {
+    let root = create_root();
+    let file = root.join("horizontal.txt");
+    std::fs::write(&file, "a\u{301}😀b\ncd\n").expect("seed file");
+    let sink = InMemoryEventSink::new();
+    let mut app = AppComposition::with_event_sink(SharedEventSink::new(sink.clone()));
+    app.open_workspace(
+        &*root,
+        WorkspaceTrustState::Trusted,
+        PrincipalId("daily-horizontal".to_string()),
+    )
+    .expect("open workspace");
+    app.open_file(file.to_string_lossy()).expect("open file");
+    let buffer_id = app.active_buffer_id().expect("active buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::SetCursor {
+        buffer_id,
+        cursor: text_coordinate(0, 3),
+    })
+    .expect("set initial caret");
+    app.dispatch_ui_intent(CommandDispatchIntent::AddCursorBelow { buffer_id })
+        .expect("add second caret");
+    let before_viewport = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("before projection")
+        .viewport
+        .expect("before viewport");
+    let before_carets = app
+        .editor()
+        .directed_carets(buffer_id)
+        .expect("before directed carets");
+    assert_eq!(
+        before_carets,
+        vec![
+            legion_editor::DirectedCaret::new(legion_editor::TextPosition::new(0, 3), None),
+            legion_editor::DirectedCaret::new(legion_editor::TextPosition::new(1, 2), None),
+        ]
+    );
+    let before_transactions = app.editor().transaction_log().len();
+    let request_rx = app.set_lsp_request_receiver_for_test(fresh_lsp_health());
+
+    let outcome = app
+        .dispatch_ui_intent(CommandDispatchIntent::MoveHorizontally {
+            buffer_id,
+            left: true,
+            extend: true,
+        })
+        .expect("horizontal movement");
+    assert!(matches!(outcome, AppCommandOutcome::CursorSet(id) if id == buffer_id));
+    assert_eq!(app.editor().transaction_log().len(), before_transactions);
+    assert!(!app.editor().is_dirty(buffer_id).expect("dirty state"));
+    assert_eq!(
+        app.editor().buffer_version(buffer_id).expect("version"),
+        before_viewport.buffer_version
+    );
+    let after_carets = app
+        .editor()
+        .directed_carets(buffer_id)
+        .expect("after directed carets");
+    assert_eq!(
+        after_carets,
+        vec![
+            legion_editor::DirectedCaret::new(
+                legion_editor::TextPosition::new(0, 0),
+                Some(legion_editor::TextPosition::new(0, 3)),
+            ),
+            legion_editor::DirectedCaret::new(
+                legion_editor::TextPosition::new(1, 1),
+                Some(legion_editor::TextPosition::new(1, 2)),
+            ),
+        ]
+    );
+    let after_viewport = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("after projection")
+        .viewport
+        .expect("after viewport");
+    assert_eq!(after_viewport.snapshot_id, before_viewport.snapshot_id);
+    assert_eq!(
+        after_viewport.buffer_version,
+        before_viewport.buffer_version
+    );
+    assert_eq!(
+        app.editor().text(buffer_id).expect("text").to_string(),
+        "a\u{301}😀b\ncd\n"
+    );
+    assert!(
+        sink.events()
+            .expect("event snapshot")
+            .into_iter()
+            .all(|event| event.event != "editor.transaction_applied")
+    );
+    assert!(
+        request_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err()
+    );
+}
+
+#[test]
 fn daily_editing_contracts_generic_delete_preserves_explicit_range_with_multiple_carets() {
     let root = create_root();
     let file = root.join("range.txt");

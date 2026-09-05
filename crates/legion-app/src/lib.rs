@@ -9480,6 +9480,15 @@ pub enum AppCommandRequest {
         /// Extend the directed selections.
         extend: bool,
     },
+    /// Move every active caret one grapheme boundary horizontally.
+    MoveHorizontally {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Move toward the document start when true, otherwise toward the end.
+        left: bool,
+        /// Extend the directed selections.
+        extend: bool,
+    },
     /// Update viewport scroll state for a buffer.
     SetViewportScroll {
         /// Target buffer identifier.
@@ -10414,6 +10423,7 @@ impl CommandExecutionService {
             | AppCommandRequest::SetCursor { .. }
             | AppCommandRequest::SetSelection { .. }
             | AppCommandRequest::MoveToBoundary { .. }
+            | AppCommandRequest::MoveHorizontally { .. }
             | AppCommandRequest::SetDirectedSelection { .. }
             | AppCommandRequest::SetViewportScroll { .. }
             | AppCommandRequest::OpenPalette { .. }
@@ -18626,6 +18636,21 @@ impl AppComposition {
                 };
                 self.active_documents.ensure_active_buffer(buffer_id)?;
                 self.editor.move_to_boundary(buffer_id, boundary, extend)?;
+                Ok(AppCommandOutcome::CursorSet(buffer_id))
+            }
+            AppCommandRequest::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                let direction = if left {
+                    legion_editor::HorizontalDirection::Left
+                } else {
+                    legion_editor::HorizontalDirection::Right
+                };
+                self.editor
+                    .move_horizontally(buffer_id, direction, extend)?;
                 Ok(AppCommandOutcome::CursorSet(buffer_id))
             }
             AppCommandRequest::SetDirectedSelection {

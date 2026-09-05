@@ -758,6 +758,130 @@ fn boundary_frame_is_blocked_for_focused_text_control_and_vim_owns_text() {
 }
 
 #[test]
+fn live_palette_owns_left_right_until_closed() {
+    let workspace = TempWorkspace::new();
+    let file = workspace.write("palette-horizontal.txt", "abcd");
+    let runtime = open_runtime(workspace.path(), &file);
+    let mut app = DesktopEframeApp::new(runtime);
+    let buffer_id = app
+        .runtime_snapshot()
+        .active_buffer_projection
+        .buffer_id
+        .expect("active buffer");
+    app.handle_action(DesktopAction::SetCursor {
+        buffer_id: Some(buffer_id),
+        cursor: coord(0, 2, 2),
+    })
+    .expect("cursor action");
+    app.handle_action(DesktopAction::OpenPalette {
+        mode: PaletteMode::Command,
+        query: "ab".to_string(),
+        scope: SearchScopeProjection::Workspace,
+    })
+    .expect("palette action");
+
+    let before = app
+        .runtime_snapshot()
+        .active_buffer_projection
+        .viewport
+        .as_ref()
+        .expect("viewport")
+        .cursor;
+    let _ = app.run_headless_full_frame(frame(
+        vec![
+            key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
+            key_event(
+                egui::Key::ArrowRight,
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+        ],
+        egui::Modifiers::default(),
+    ));
+    assert_eq!(snapshot_text_from_app(&app), Some("abcd".to_string()));
+    assert_eq!(
+        app.runtime_snapshot()
+            .active_buffer_projection
+            .viewport
+            .as_ref()
+            .expect("viewport")
+            .cursor,
+        before,
+        "palette arrows must not move or select in the editor"
+    );
+
+    let _ = app.run_headless_full_frame(frame(
+        vec![key_event(egui::Key::Escape, egui::Modifiers::default())],
+        egui::Modifiers::default(),
+    ));
+    let _ = app.run_headless_full_frame(frame(
+        vec![key_event(egui::Key::ArrowLeft, egui::Modifiers::default())],
+        egui::Modifiers::default(),
+    ));
+    assert_eq!(
+        app.runtime_snapshot()
+            .active_buffer_projection
+            .viewport
+            .as_ref()
+            .expect("viewport")
+            .cursor,
+        coord(0, 1, 1),
+        "editor regains horizontal ownership after palette closes"
+    );
+}
+
+#[test]
+fn live_ime_preedit_owns_left_right_until_commit() {
+    let workspace = TempWorkspace::new();
+    let file = workspace.write("ime-horizontal.txt", "abcd");
+    let runtime = open_runtime(workspace.path(), &file);
+    let mut app = DesktopEframeApp::new(runtime);
+    let buffer_id = app
+        .runtime_snapshot()
+        .active_buffer_projection
+        .buffer_id
+        .expect("active buffer");
+    app.handle_action(DesktopAction::SetCursor {
+        buffer_id: Some(buffer_id),
+        cursor: coord(0, 2, 2),
+    })
+    .expect("cursor action");
+    let _ = app.run_headless_full_frame(frame(
+        vec![
+            egui::Event::Ime(egui::ImeEvent::Enabled),
+            egui::Event::Ime(egui::ImeEvent::Preedit("かな".to_string())),
+            key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
+            key_event(
+                egui::Key::ArrowRight,
+                egui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+            ),
+        ],
+        egui::Modifiers::default(),
+    ));
+    assert_eq!(snapshot_text_from_app(&app), Some("abcd".to_string()));
+    assert_eq!(
+        app.runtime_snapshot()
+            .active_buffer_projection
+            .viewport
+            .as_ref()
+            .expect("viewport")
+            .cursor,
+        coord(0, 2, 2),
+        "active IME preedit must retain editor cursor and selection"
+    );
+    let _ = app.run_headless_full_frame(frame(
+        vec![egui::Event::Ime(egui::ImeEvent::Commit("漢".to_string()))],
+        egui::Modifiers::default(),
+    ));
+    assert_eq!(snapshot_text_from_app(&app), Some("ab漢cd".to_string()));
+}
+
+#[test]
 fn real_terminal_textedit_focus_owns_boundary_frame() {
     let workspace = TempWorkspace::new();
     let file = workspace.write("terminal-focus.txt", "abcd");
@@ -783,11 +907,30 @@ fn real_terminal_textedit_focus_owns_boundary_frame() {
         let _ = app.run_headless_full_frame(egui::RawInput::default());
         app.headless_egui_context()
             .memory_mut(|memory| memory.request_focus(terminal_input));
+        let _ = app.run_headless_full_frame(egui::RawInput::default());
+        assert_eq!(
+            app.headless_egui_context()
+                .memory(|memory| memory.focused()),
+            Some(terminal_input),
+            "terminal fixture must establish real focus before arrow frame"
+        );
+        assert!(
+            app.headless_egui_context().text_edit_focused(),
+            "terminal fixture must register a focused TextEdit before arrow frame"
+        );
         let _ = app.run_headless_full_frame(frame(
             vec![
                 key_event(egui::Key::Home, egui::Modifiers::default()),
                 egui::Event::Text("X".to_string()),
                 key_event(egui::Key::End, egui::Modifiers::default()),
+                key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
+                key_event(
+                    egui::Key::ArrowRight,
+                    egui::Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    },
+                ),
             ],
             egui::Modifiers::default(),
         ));
@@ -846,12 +989,52 @@ fn live_vim_state_owns_boundary_frame_text_and_preserves_buffer() {
     let _ = app.run_headless_full_frame(frame(
         vec![
             key_event(egui::Key::Home, egui::Modifiers::default()),
+            key_event(egui::Key::ArrowLeft, egui::Modifiers::default()),
             egui::Event::Text("j".to_string()),
+            key_event(egui::Key::ArrowRight, egui::Modifiers::default()),
             key_event(egui::Key::End, egui::Modifiers::default()),
         ],
         egui::Modifiers::default(),
     ));
     assert_eq!(snapshot_text_from_app(&app), Some("abcd".to_string()));
+}
+
+#[test]
+fn live_vim_arrow_event_is_owned_by_vim_route() {
+    let workspace = TempWorkspace::new();
+    let file = workspace.write("vim-arrow.txt", "abcd");
+    let runtime = open_runtime(workspace.path(), &file);
+    let mut app = DesktopEframeApp::new(runtime);
+    let buffer_id = app
+        .runtime_snapshot()
+        .active_buffer_projection
+        .buffer_id
+        .expect("active buffer");
+    app.handle_action(DesktopAction::SetCursor {
+        buffer_id: Some(buffer_id),
+        cursor: coord(0, 2, 2),
+    })
+    .expect("cursor action");
+    app.handle_action(DesktopAction::InvokeToastAction {
+        intent: legion_ui::CommandDispatchIntent::SetVimModeEnabled(true),
+    })
+    .expect("enable Vim");
+    app.handle_action(DesktopAction::InvokeToastAction {
+        intent: legion_ui::CommandDispatchIntent::VimChangeMode(legion_ui::EditorInputMode::Normal),
+    })
+    .expect("enter Vim normal mode");
+    let _ = app.run_headless_full_frame(frame(
+        vec![key_event(egui::Key::ArrowLeft, egui::Modifiers::default())],
+        egui::Modifiers::default(),
+    ));
+    let after = app
+        .runtime_snapshot()
+        .active_buffer_projection
+        .viewport
+        .expect("viewport")
+        .cursor;
+    assert_eq!(snapshot_text_from_app(&app), Some("abcd".to_string()));
+    assert_eq!(after, coord(0, 1, 1), "Vim owns and moves the arrow caret");
 }
 
 fn snapshot_text_from_app(app: &DesktopEframeApp) -> Option<String> {
@@ -883,19 +1066,15 @@ fn keyboard_input_moves_the_cursor_through_the_real_egui_context() {
             ui.input(|input| test_editor_keyboard_control_actions(input, &snapshot, true, false));
         assert_eq!(
             actions,
-            vec![DesktopAction::SetCursor {
+            vec![DesktopAction::MoveHorizontally {
                 buffer_id: Some(
                     snapshot
                         .active_buffer_projection
                         .buffer_id
                         .expect("active buffer")
                 ),
-                cursor: TextCoordinate {
-                    line: 0,
-                    character: 1,
-                    byte_offset: None,
-                    utf16_offset: Some(1),
-                },
+                left: false,
+                extend: false,
             }]
         );
     });
@@ -929,22 +1108,15 @@ fn keyboard_selection_input_updates_the_projected_selection_range() {
             ui.input(|input| test_editor_keyboard_control_actions(input, &snapshot, true, false));
         assert_eq!(
             actions,
-            vec![DesktopAction::SetSelection {
+            vec![DesktopAction::MoveHorizontally {
                 buffer_id: Some(
                     snapshot
                         .active_buffer_projection
                         .buffer_id
                         .expect("active buffer")
                 ),
-                range: ProtocolTextRange {
-                    start: coord(0, 0, 0),
-                    end: TextCoordinate {
-                        line: 0,
-                        character: 1,
-                        byte_offset: None,
-                        utf16_offset: Some(1),
-                    },
-                },
+                left: false,
+                extend: true,
             }]
         );
     });

@@ -153,6 +153,15 @@ impl CommandDispatcher {
                 boundary,
                 extend,
             }),
+            CommandDispatchIntent::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            } => Ok(AppCommandRequest::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            }),
             CommandDispatchIntent::SetViewportScroll { buffer_id, scroll } => {
                 Ok(AppCommandRequest::SetViewportScroll { buffer_id, scroll })
             }

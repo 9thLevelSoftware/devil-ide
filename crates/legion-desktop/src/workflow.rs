@@ -1429,6 +1429,7 @@ impl DesktopRuntime {
                 let arm_post_action_hover = matches!(
                     action,
                     DesktopAction::MoveToBoundary { .. }
+                        | DesktopAction::MoveHorizontally { .. }
                         | DesktopAction::SetDirectedSelection { .. }
                 );
                 let arm_post_action_completion = matches!(
@@ -4977,7 +4978,11 @@ impl DesktopEframeApp {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, event)| {
-                    boundary_action_for_event(event, &snapshot).map(|_| index)
+                    if view_state.completion_popup_open || self.runtime.vim_consumes_text_input() {
+                        None
+                    } else {
+                        boundary_action_for_event(event, &snapshot).map(|_| index)
+                    }
                 })
                 .collect::<Vec<_>>();
             let boundaries_in_frame = !boundary_indices.is_empty();
@@ -5942,11 +5947,26 @@ fn boundary_action_for_event(
     else {
         return None;
     };
-    if modifiers.alt || !matches!(key, egui::Key::Home | egui::Key::End) {
+    if modifiers.alt
+        || (modifiers.command && matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight))
+    {
         return None;
     }
     let buffer_id = active_buffer_for_input(snapshot)?;
     let document = modifiers.command;
+    if !document
+        && let Some(left) = match key {
+            egui::Key::ArrowLeft => Some(true),
+            egui::Key::ArrowRight => Some(false),
+            _ => None,
+        }
+    {
+        return Some(DesktopAction::MoveHorizontally {
+            buffer_id: Some(buffer_id),
+            left,
+            extend: modifiers.shift,
+        });
+    }
     let boundary = match (key, document) {
         (egui::Key::Home, true) => EditorBoundaryKind::DocumentStart,
         (egui::Key::End, true) => EditorBoundaryKind::DocumentEnd,
@@ -6124,23 +6144,21 @@ fn editor_keyboard_control_actions(
         }
     }
 
-    if input.key_pressed(egui::Key::ArrowLeft) {
-        actions.push(cursor_or_selection_action(
-            buffer_id,
-            projected_cursor(snapshot),
-            0,
-            -1,
-            input.modifiers.shift,
-        ));
-    }
-    if input.key_pressed(egui::Key::ArrowRight) {
-        actions.push(cursor_or_selection_action(
-            buffer_id,
-            projected_cursor(snapshot),
-            0,
-            1,
-            input.modifiers.shift,
-        ));
+    if !completion_popup_open && !input.modifiers.alt {
+        if input.key_pressed(egui::Key::ArrowLeft) {
+            actions.push(DesktopAction::MoveHorizontally {
+                buffer_id: Some(buffer_id),
+                left: true,
+                extend: input.modifiers.shift,
+            });
+        }
+        if input.key_pressed(egui::Key::ArrowRight) {
+            actions.push(DesktopAction::MoveHorizontally {
+                buffer_id: Some(buffer_id),
+                left: false,
+                extend: input.modifiers.shift,
+            });
+        }
     }
     if input.key_pressed(egui::Key::ArrowUp) {
         actions.push(cursor_or_selection_action(
@@ -7193,9 +7211,10 @@ mod tests {
         let move_left = input_state_for_key(egui::Key::ArrowLeft, egui::Modifiers::default());
         assert_eq!(
             editor_keyboard_control_actions(&move_left, &snapshot, true, false, false),
-            vec![DesktopAction::SetCursor {
+            vec![DesktopAction::MoveHorizontally {
                 buffer_id: Some(BufferId(1)),
-                cursor: coordinate(7, 5),
+                left: true,
+                extend: false,
             }]
         );
 
@@ -7208,12 +7227,10 @@ mod tests {
         );
         assert_eq!(
             editor_keyboard_control_actions(&shift_left, &snapshot, true, false, false),
-            vec![DesktopAction::SetSelection {
+            vec![DesktopAction::MoveHorizontally {
                 buffer_id: Some(BufferId(1)),
-                range: ProtocolTextRange {
-                    start: coordinate(7, 5),
-                    end: coordinate(7, 6),
-                },
+                left: true,
+                extend: true,
             }]
         );
     }

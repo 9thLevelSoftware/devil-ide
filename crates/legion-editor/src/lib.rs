@@ -153,6 +153,15 @@ pub enum DeleteDirection {
     Forward,
 }
 
+/// Direction for semantic horizontal caret movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HorizontalDirection {
+    /// Move to the strictly previous extended grapheme boundary.
+    Left,
+    /// Move to the strictly next extended grapheme boundary.
+    Right,
+}
+
 /// A caret with a UTF-8 head and an optional directed anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectedCaret {
@@ -2575,6 +2584,61 @@ impl EditorEngine {
             .ok_or(EditorError::BufferNotFound(buffer_id))?;
         state.overlays = overlays;
         Ok(())
+    }
+
+    /// Move every directed caret across one extended grapheme boundary.
+    ///
+    /// Movement is resolved against the original buffer and committed only
+    /// after every head and anchor has been validated. Plain movement first
+    /// collapses a nonempty selection; extending movement retains (or creates)
+    /// each caret's anchor.
+    pub fn move_horizontally(
+        &mut self,
+        buffer_id: BufferId,
+        direction: HorizontalDirection,
+        extend: bool,
+    ) -> Result<(), EditorError> {
+        let targets = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            state
+                .carets
+                .iter()
+                .map(|caret| {
+                    let head = state.buffer.try_byte_offset(caret.head)?;
+                    let anchor = caret
+                        .anchor
+                        .map(|anchor| state.buffer.try_byte_offset(anchor))
+                        .transpose()?;
+                    let selection = anchor.is_some_and(|anchor| anchor != head);
+                    if !extend && selection {
+                        let target = match direction {
+                            HorizontalDirection::Left => {
+                                head.min(anchor.expect("selection anchor"))
+                            }
+                            HorizontalDirection::Right => {
+                                head.max(anchor.expect("selection anchor"))
+                            }
+                        };
+                        return Ok(DirectedCaret::new(state.buffer.try_position(target)?, None));
+                    }
+
+                    let target = match direction {
+                        HorizontalDirection::Left => {
+                            state.buffer.previous_grapheme_boundary(head)?
+                        }
+                        HorizontalDirection::Right => state.buffer.next_grapheme_boundary(head)?,
+                    }
+                    .unwrap_or(head);
+                    let target = state.buffer.try_position(target)?;
+                    let retained_anchor = extend.then_some(caret.anchor.unwrap_or(caret.head));
+                    Ok(DirectedCaret::new(target, retained_anchor))
+                })
+                .collect::<Result<Vec<_>, EditorError>>()?
+        };
+        self.set_directed_carets(buffer_id, targets)
     }
 
     fn mode_for_byte_len(&self, len: usize) -> BufferMode {

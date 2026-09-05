@@ -3023,6 +3023,15 @@ pub enum CommandDispatchIntent {
         /// Preserve or initialize directed selection anchors.
         extend: bool,
     },
+    /// Move every active caret one grapheme boundary horizontally.
+    MoveHorizontally {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Move toward the document start when true, otherwise toward the end.
+        left: bool,
+        /// Preserve or initialize directed selection anchors.
+        extend: bool,
+    },
     /// Set viewport scroll through app-owned viewport state.
     SetViewportScroll {
         /// Target buffer identifier.
