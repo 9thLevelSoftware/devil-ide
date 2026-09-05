@@ -7759,75 +7759,555 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-04",
-      "title": "Navigation/search",
       "kind": "product",
       "required": true,
-      "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-04"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
-      ],
       "legacy_ids": [],
       "stage": "S1",
       "package_id": "S1-05",
       "owner_role": "luna_worker",
       "depends_on": [],
-      "implementation": "partial",
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
       "protected_product_ids": [],
-      "defect_ids": []
+      "defect_ids": [],
+      "id": "COMP-NAV-001",
+      "title": "The quick file finder searches the authorized workspace by fuzzy file path, presents ranked real-file results, and opens the selected file through the app/workspace authority with truthful empty and invalid-query states.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "PaletteMode::File and palette_file_results"
+        },
+        {
+          "path": "crates/legion-project/src/lib.rs",
+          "identity": "workspace discovery and file identity used by quick-open"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-002",
+      "title": "The symbol finder searches the authorized symbol universe with a discoverable palette mode, presents symbol-qualified results, and navigates the selected symbol to its owning file and range.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "PaletteMode::Symbol and palette_symbol_results"
+        },
+        {
+          "path": "crates/legion-lsp/src/features.rs",
+          "identity": "documentSymbol request and symbol projection"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-003",
+      "title": "Definition navigation requests the symbol definition at the caret, opens or focuses the returned canonical file and range, and reports stale, unavailable, or empty results without silently changing the active buffer.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "DesktopAction::GoToDefinition routing"
+        },
+        {
+          "path": "crates/legion-app/src/intent_routing.rs",
+          "identity": "CommandDispatchIntent::GoToDefinition routing"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "AppCommandRequest::GoToDefinition handling"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-004",
+      "title": "References navigation lists references for the symbol at the caret with canonical file/range targets, supports opening a selected result, and preserves truthful stale, unavailable, and empty-result states.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "DesktopAction::FindReferences routing"
+        },
+        {
+          "path": "crates/legion-app/src/intent_routing.rs",
+          "identity": "CommandDispatchIntent::FindReferences routing"
+        },
+        {
+          "path": "crates/legion-lsp/src/features.rs",
+          "identity": "references request and ReferencesProjection"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-005",
+      "title": "The recent-buffer switcher provides ranked recent buffers with a discoverable palette mode and opens the selected buffer without losing workspace identity or dirty state.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "PaletteMode::RecentBuffers and palette_recent_buffer_results"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-SEARCH-01-evidence.md",
+          "identity": "SEARCH.06 palette usage history product-path evidence"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-006",
+      "title": "Local history navigation lists canonical-file history entries and restores a selected entry through the proposal/editor authority while reporting missing, untrusted, or unavailable history safely.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "RequestLocalHistoryEntries and RestoreFromLocalHistory handlers"
+        },
+        {
+          "path": "crates/legion-storage/src/lib.rs",
+          "identity": "LocalHistoryMetadataStore and trusted blob paths"
+        },
+        {
+          "path": "crates/legion-ui/src/ui.rs",
+          "identity": "LocalHistoryEntryProjection and history intents"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-007",
+      "title": "Workspace search supports literal and regex patterns with explicit active-file or workspace scope, case and whole-word options, ignore filtering, binary-file handling, bounded result projections, and truthful invalid-pattern diagnostics.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-project/src/lib.rs",
+          "identity": "SearchPattern, WorkspaceSearchFilters, WorkspaceSearchQuery and search_workspace_stream"
+        },
+        {
+          "path": "crates/legion-app/src/search.rs",
+          "identity": "SearchQueryOptions, parse_search_query and run_workspace_search"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-SEARCH-01-evidence.md",
+          "identity": "SEARCH.01 options and SEARCH.12 binary sniff evidence"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-008",
+      "title": "Workspace search streams bounded batches, supports cancellation, surfaces traversal/read failures and degraded limits, and marks superseded results stale while preserving ignored-file and large-workspace safeguards.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-project/src/lib.rs",
+          "identity": "WorkspaceSearchBatch cancellation callback and bounded traversal diagnostics"
+        },
+        {
+          "path": "crates/legion-app/src/search.rs",
+          "identity": "cancel_search and stale search projection handling"
+        },
+        {
+          "path": "crates/legion-desktop/src/search.rs",
+          "identity": "SearchStatusKindProjection and stale/degraded/error rendering"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-SEARCH-01-evidence.md",
+          "identity": "SEARCH.01 cancellation, SEARCH.10 stale markers, P2.F4.T4 50K workload"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-009",
+      "title": "Multi-file replacement produces a complete reviewable preview over the selected literal or regex search matches, identifies every affected canonical file and range, and never treats a partial match set as complete.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/search.rs",
+          "identity": "AppComposition::propose_workspace_replace preview construction"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-SEARCH-01-evidence.md",
+          "identity": "P2.F4.T2 workspace-edit proposal coverage and preview"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-010",
+      "title": "Cancelling a replacement preview withdraws the pending proposal without mutating disk or dirty buffers and leaves the search/replacement surface in a truthful recoverable state.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/search.rs",
+          "identity": "WorkspaceReplaceProposalOutcome preview lifecycle"
+        },
+        {
+          "path": "crates/legion-ui/src/ui.rs",
+          "identity": "replacement preview projection and proposal cancel intent"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05 native manual-refactor-search-review scenario"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-011",
+      "title": "Applying an approved replacement uses the complete workspace-edit proposal route with per-file version preconditions, write safeguards, rollback on partial failure, and independently observable external file effects.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/search.rs",
+          "identity": "workspace replacement proposal payload and complete target coverage"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "apply_workspace_edit_proposal and proposal lifecycle authority"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
+          "identity": "#p1.3 workspace mutation authority and rollback"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-012",
+      "title": "A replacement whose search snapshot is stale, whose target conflicts, or whose file falls outside the authorized workspace is rejected before mutation with a visible reason and preserved user work.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "crates/legion-app/src/search.rs",
+          "identity": "workspace replacement live-buffer and complete-coverage guards"
+        },
+        {
+          "path": "crates/legion-project/src/lib.rs",
+          "identity": "workspace path policy and search generation/file identity"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05 stale snapshot/conflict denial requirement"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-NAV-013",
+      "title": "The packaged navigation/search workflow is exercised on real multi-file trees: navigate symbols, run literal and regex search, inspect replacement diffs, cancel one preview, apply another, trigger an external edit before apply, and record host-observed results and recovery.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-04 Navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05-file-operations-navigation-search-and-reviewable-replacement"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps; P2.F4 navigation/search"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-05 native scenario manual-refactor-search-review"
+        },
+        {
+          "path": "plans/product-readiness-ledger.md",
+          "identity": "#language-debug-test-SCM; product workflow validation and external-tool evidence"
+        },
+        {
+          "path": "crates/legion-project/tests/search_workspace.rs",
+          "identity": "workspace search integration test surface"
+        },
+        {
+          "path": "crates/legion-app/tests/workspace_replace_proposal.rs",
+          "identity": "workspace replacement proposal test surface"
+        }
+      ]
     },
     {
       "id": "COMP-SCOPE-FAMILY-05",
