@@ -199,20 +199,29 @@ pub(crate) fn dispatch_keybindings(
             let Some(key) = key_label_to_egui(&binding.combo.key) else {
                 continue;
             };
-            if !input.key_pressed(key) {
-                continue;
-            }
-            // The keymap's `ctrl` flag represents the platform command
-            // modifier. `egui::Modifiers::command` maps to Ctrl on Windows/
-            // Linux and Cmd on macOS, while `ctrl` is only the physical Ctrl
-            // key and would make the default map fail for Cmd-based input.
-            if binding.combo.ctrl != input.modifiers.command {
-                continue;
-            }
-            if binding.combo.shift != input.modifiers.shift {
-                continue;
-            }
-            if binding.combo.alt != input.modifiers.alt {
+            // Match the modifiers carried by the key event itself. The frame
+            // modifier state may describe a different event in the same
+            // frame, and must not merge two observations into one shortcut.
+            let event_matches = input.events.iter().any(|event| {
+                let egui::Event::Key {
+                    key: event_key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                else {
+                    return false;
+                };
+                *event_key == key
+                    // The keymap's `ctrl` flag represents the platform
+                    // command modifier. `command` is true for Ctrl on
+                    // Windows/Linux and Cmd on macOS; physical `ctrl` and
+                    // `mac_cmd` remain irrelevant to this logical match.
+                    && binding.combo.ctrl == modifiers.command
+                    && binding.combo.shift == modifiers.shift
+                    && binding.combo.alt == modifiers.alt
+            });
+            if !event_matches {
                 continue;
             }
             let action = match binding.action_label.as_str() {
@@ -263,11 +272,205 @@ fn debug_stack_navigation_index(
 
 #[cfg(test)]
 mod tests {
-    use super::{action_label_to_desktop_action, debug_stack_navigation_index};
+    use super::{
+        action_label_to_desktop_action, debug_stack_navigation_index, dispatch_keybindings,
+    };
     use crate::bridge::DesktopAction;
     use legion_ui::{
         GitHunkProjection, GitHunkStageProjection, PaletteMode, SearchScopeProjection, Shell,
     };
+
+    fn dispatch_for(
+        event_modifiers: egui::Modifiers,
+        frame_modifiers: egui::Modifiers,
+        pressed: bool,
+    ) -> Vec<DesktopAction> {
+        dispatch_events(
+            vec![egui::Event::Key {
+                key: egui::Key::S,
+                physical_key: Some(egui::Key::S),
+                pressed,
+                repeat: false,
+                modifiers: event_modifiers,
+            }],
+            frame_modifiers,
+        )
+    }
+
+    fn dispatch_events(
+        events: Vec<egui::Event>,
+        frame_modifiers: egui::Modifiers,
+    ) -> Vec<DesktopAction> {
+        dispatch_events_with_editor(events, frame_modifiers, true)
+    }
+
+    fn dispatch_events_with_editor(
+        events: Vec<egui::Event>,
+        frame_modifiers: egui::Modifiers,
+        editor_input_enabled: bool,
+    ) -> Vec<DesktopAction> {
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput {
+            events,
+            modifiers: frame_modifiers,
+            ..Default::default()
+        });
+        let mut actions = Vec::new();
+        dispatch_keybindings(
+            &ctx,
+            &Shell::empty("keymap dispatch").projection_snapshot(),
+            editor_input_enabled,
+            &mut actions,
+        );
+        let _ = ctx.end_pass();
+        actions
+    }
+
+    #[test]
+    fn keymap_matches_event_modifiers_exactly_for_save_chords() {
+        assert_eq!(
+            dispatch_for(egui::Modifiers::COMMAND, egui::Modifiers::NONE, true),
+            vec![DesktopAction::SaveActive]
+        );
+        assert!(dispatch_for(egui::Modifiers::NONE, egui::Modifiers::COMMAND, true).is_empty());
+        assert_eq!(
+            dispatch_for(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Modifiers::COMMAND,
+                true,
+            ),
+            vec![DesktopAction::SaveAll]
+        );
+        assert_eq!(
+            dispatch_for(
+                egui::Modifiers::COMMAND,
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                true,
+            ),
+            vec![DesktopAction::SaveActive]
+        );
+        assert!(dispatch_for(egui::Modifiers::COMMAND, egui::Modifiers::NONE, false).is_empty());
+    }
+
+    #[test]
+    fn keymap_accepts_platform_command_variants_without_physical_ctrl_matching() {
+        assert_eq!(
+            dispatch_for(
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+                egui::Modifiers::NONE,
+                true
+            ),
+            vec![DesktopAction::SaveActive]
+        );
+        assert_eq!(
+            dispatch_for(
+                egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+                egui::Modifiers::NONE,
+                true
+            ),
+            vec![DesktopAction::SaveActive]
+        );
+    }
+
+    #[test]
+    fn keymap_dispatches_distinct_event_chords_once_each() {
+        let actions = dispatch_events(
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: Some(egui::Key::S),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+                egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: Some(egui::Key::S),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                },
+            ],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(
+            actions,
+            vec![DesktopAction::SaveActive, DesktopAction::SaveAll]
+        );
+    }
+
+    #[test]
+    fn keymap_rejects_unrelated_keys_and_modifiers() {
+        let unrelated = dispatch_events(
+            vec![egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: Some(egui::Key::A),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            egui::Modifiers::NONE,
+        );
+        let extra_modifier = dispatch_for(
+            egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+            egui::Modifiers::NONE,
+            true,
+        );
+        assert!(unrelated.is_empty());
+        assert!(extra_modifier.is_empty());
+    }
+
+    #[test]
+    fn keymap_preserves_repeat_and_at_most_once_per_binding() {
+        let actions = dispatch_events(
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: Some(egui::Key::S),
+                    pressed: true,
+                    repeat: true,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+                egui::Event::Key {
+                    key: egui::Key::S,
+                    physical_key: Some(egui::Key::S),
+                    pressed: true,
+                    repeat: true,
+                    modifiers: egui::Modifiers::COMMAND,
+                },
+            ],
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(actions, vec![DesktopAction::SaveActive]);
+    }
+
+    #[test]
+    fn keymap_keeps_editor_guard_while_allowing_global_save() {
+        let undo = dispatch_events_with_editor(
+            vec![egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: Some(egui::Key::Z),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            egui::Modifiers::NONE,
+            false,
+        );
+        let save = dispatch_events_with_editor(
+            vec![egui::Event::Key {
+                key: egui::Key::S,
+                physical_key: Some(egui::Key::S),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            egui::Modifiers::NONE,
+            false,
+        );
+        assert!(undo.is_empty());
+        assert_eq!(save, vec![DesktopAction::SaveActive]);
+    }
 
     #[test]
     fn debug_stack_navigation_stays_within_rendered_frame_limit() {

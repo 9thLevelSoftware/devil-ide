@@ -299,16 +299,11 @@ impl Drop for TempWorkspace {
 /// across suites; a test that needs a different viewport should say so by
 /// building its own.
 pub fn full_frame_input(events: Vec<egui::Event>) -> egui::RawInput {
-    // Carry the chord's modifiers on the frame as well as on the event.
-    //
-    // egui answers `input.modifiers` from `RawInput::modifiers`, not from
-    // whichever event happens to be in the queue, and the central keybinding
-    // dispatcher tests `input.modifiers.command`. Leaving this at the default
-    // made every modifier chord sent through this helper arrive as a bare
-    // keypress -- so Ctrl+S dispatched nothing, and a test written to check
-    // that Ctrl+S saves would have reported the product broken when the harness
-    // was. Taken from the last pressed key event, which is the chord the frame
-    // is being built for.
+    // Use the last pressed event's modifiers as the frame default. This keeps
+    // the helper useful for the remaining frame-level input consumers while
+    // preserving the event's own modifier record. The keymap dispatcher now
+    // matches event-time modifiers; tests covering mixed event/frame state
+    // override `RawInput::modifiers` explicitly.
     let modifiers = events
         .iter()
         .rev()

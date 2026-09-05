@@ -49,6 +49,14 @@ fn save_chord() -> egui::Event {
     }
 }
 
+/// The event carries the command modifier while the frame reports no held
+/// modifier. This is the native-egui timing shape the dispatcher must handle.
+fn save_event_with_unmodified_frame() -> egui::RawInput {
+    let mut input = full_frame_input(vec![save_chord()]);
+    input.modifiers = egui::Modifiers::NONE;
+    input
+}
+
 /// Open `target.txt` by clicking it, put the caret in the editor, and type.
 ///
 /// Returns the app with the buffer dirty. The typing is proved to have landed
@@ -104,8 +112,14 @@ fn typing_marks_the_tab_and_the_save_chord_clears_it() {
          gets closed away. Frame showed {:?}",
         rendered_text(&dirty)
     );
+    let expected_text = app
+        .runtime_snapshot()
+        .active_buffer_projection
+        .small_buffer_preview
+        .clone()
+        .expect("the edited buffer should expose its complete small-file text");
 
-    let _ = app.run_headless_full_frame(full_frame_input(vec![save_chord()]));
+    let _ = app.run_headless_full_frame(save_event_with_unmodified_frame());
     let saved = app.run_headless_full_frame(full_frame_input(Vec::new()));
 
     assert_eq!(
@@ -120,6 +134,10 @@ fn typing_marks_the_tab_and_the_save_chord_clears_it() {
 
     let on_disk = std::fs::read_to_string(workspace.path().join("target.txt"))
         .expect("the file must still be readable");
+    assert_eq!(
+        on_disk, expected_text,
+        "the save wrote different text than the edited buffer projected"
+    );
     assert_ne!(
         on_disk, original,
         "Ctrl/Cmd+S left the file on disk unchanged. The binding is published in \
