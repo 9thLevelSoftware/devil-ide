@@ -6267,12 +6267,16 @@ mod tests {
                 ViewportLineMetric {
                     byte_length: 13,
                     utf16_length: 13,
+                    line_start_byte_offset: None,
+                    line_start_utf16_offset: None,
                     line_ending_width: 1,
                     exact: true,
                 },
                 ViewportLineMetric {
                     byte_length: 4096,
                     utf16_length: 4096,
+                    line_start_byte_offset: None,
+                    line_start_utf16_offset: None,
                     line_ending_width: 1,
                     exact: true,
                 },

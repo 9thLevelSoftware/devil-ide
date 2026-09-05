@@ -896,3 +896,8 @@ This slice does not add MCP runtime dependencies to `legion-agent`, `legion-ui`,
 ### Directed editor caret authority (ADR-0052)
 
 S1-04 authorizes migration of existing editor cursor/selection state to one directed caret vector under `legion-editor`, as specified by `plans/adrs/ADR-0052-directed-editor-carets.md`. Existing editor mutation, snapshot, undo/redo and projection APIs remain the authority. `legion-ui` and `legion-desktop` may carry semantic requests and derived projections through app composition; neither may own persistent caret/selection state or mutate text directly. The migration adds no crate dependency edge. Editor contract tests must cover validation atomicity, edit mapping, history/retention and streamed text before new navigation commands are connected to the desktop. The S1-04D `MoveToBoundary`, `ReplaceDirectedCarets`, and `SetDirectedSelection` contracts remain existing-layer UI/app/editor ownership seams; their bridge, routing, app-authority, and editor-state tests must accompany activation. This entry records S1-04 implementation authority, not product acceptance.
+
+The S1-04g viewport line-origin metadata addendum adds no dependency edge: the
+editor computes optional absolute snapshot byte and UTF-16 line origins from
+the existing `legion-text` line index, while UI consumers preserve `None` for
+legacy or unavailable origins.

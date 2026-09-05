@@ -839,6 +839,8 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
         line_metrics: vec![ViewportLineMetric {
             byte_length: 8192,
             utf16_length: 8192,
+            line_start_byte_offset: Some(4096),
+            line_start_utf16_offset: Some(4096),
             line_ending_width: 1,
             exact: false,
         }],
@@ -902,6 +904,8 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
             {
                 "byte_length": 8192,
                 "utf16_length": 8192,
+                "line_start_byte_offset": 4096,
+                "line_start_utf16_offset": 4096,
                 "line_ending_width": 1,
                 "exact": false
             }
@@ -972,6 +976,33 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
 
     let mut missing_schema = value;
     remove_required_field::<ViewportProjection>(&mut missing_schema, "schema_version");
+}
+
+#[test]
+fn viewport_line_metric_origins_are_optional_for_legacy_payloads() {
+    let legacy = json!({
+        "byte_length": 8,
+        "utf16_length": 5,
+        "line_ending_width": 2,
+        "exact": true
+    });
+    let decoded: ViewportLineMetric = serde_json::from_value(legacy).expect("legacy metric");
+    assert_eq!(decoded.line_start_byte_offset, None);
+    assert_eq!(decoded.line_start_utf16_offset, None);
+
+    let current = ViewportLineMetric {
+        byte_length: 8,
+        utf16_length: 5,
+        line_start_byte_offset: Some(13),
+        line_start_utf16_offset: Some(9),
+        line_ending_width: 2,
+        exact: true,
+    };
+    let roundtrip: ViewportLineMetric = serde_json::from_value(
+        serde_json::to_value(current).expect("serialize current metric"),
+    )
+    .expect("deserialize current metric");
+    assert_eq!(roundtrip, current);
 }
 
 #[test]

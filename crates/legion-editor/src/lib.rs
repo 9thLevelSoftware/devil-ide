@@ -1153,6 +1153,14 @@ impl EditorEngine {
         let line_metrics = visible_line_slices
             .iter()
             .map(|slice| {
+                let line_start_byte = state
+                    .current_snapshot
+                    .line_index()
+                    .byte_offset(TextPosition::new(slice.line, 0))?;
+                let line_start_utf16 = state
+                    .current_snapshot
+                    .line_index()
+                    .utf16_offset(line_start_byte)?;
                 Ok(ViewportLineMetric {
                     byte_length: state
                         .current_snapshot
@@ -1162,6 +1170,8 @@ impl EditorEngine {
                         .current_snapshot
                         .line_index()
                         .line_utf16_len(slice.line)? as u64,
+                    line_start_byte_offset: Some(line_start_byte as u64),
+                    line_start_utf16_offset: Some(line_start_utf16 as u64),
                     line_ending_width: state
                         .current_snapshot
                         .line_index()

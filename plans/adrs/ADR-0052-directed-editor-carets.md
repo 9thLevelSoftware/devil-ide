@@ -67,3 +67,13 @@ anchors through reversal and crossing. Every caret is resolved against the
 original text before any state is committed; a failed endpoint conversion
 leaves all carets unchanged. Movement changes neither text, buffer version,
 transaction history, nor change events.
+
+## S1-04g viewport line-origin addendum
+
+Viewport line metrics may carry the absolute byte and UTF-16 origins of each
+logical line in the current snapshot. The editor derives both values from its
+snapshot line index without materializing full text, including for streamed
+buffers. A missing origin is legacy or unavailable metadata and must remain
+`None`; consumers must never infer zero. Byte and UTF-16 origins are separate
+coordinates because line-local character metrics cannot recover either absolute
+snapshot origin.

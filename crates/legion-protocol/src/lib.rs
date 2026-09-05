@@ -545,6 +545,18 @@ pub struct ViewportLineMetric {
     pub byte_length: u64,
     /// Total UTF-16 code-unit length for the logical line.
     pub utf16_length: u64,
+    /// Absolute byte offset of the logical line start in the snapshot.
+    ///
+    /// `None` means the producer does not know the snapshot origin; consumers
+    /// must never treat an unknown origin as zero.
+    #[serde(default)]
+    pub line_start_byte_offset: Option<u64>,
+    /// Absolute UTF-16 offset of the logical line start in the snapshot.
+    ///
+    /// `None` means the producer does not know the snapshot origin; consumers
+    /// must never treat an unknown origin as zero.
+    #[serde(default)]
+    pub line_start_utf16_offset: Option<u64>,
     /// Width of the line ending in bytes.
     pub line_ending_width: u8,
     /// Whether the metric is exact rather than estimated.
