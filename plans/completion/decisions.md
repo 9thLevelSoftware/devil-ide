@@ -206,3 +206,52 @@ proposal rows, save-conflict preservation, and the family-15 Stage 0 matrix
 remain canonical owners and are referenced rather than duplicated. All new
 rows remain `acceptance: unassessed`; implementation classifications are
 conservative current-source facts. See `extensions-scope-audit.md`.
+
+## S0-01u remote development scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-18` row is replaced by eighteen atomic
+outcomes `COMP-REMOTE-001..018` in S0-02/S5-05/S5-06/S5-07/S5-15. The rows enumerate
+the approved SSH and dev-container matrix; host authentication, host-key and
+secret handling; remote workspace identity and negotiation; file browsing,
+watching and proposal-mediated save; remote search/tools; terminal/task,
+LSP, build/test/debug, Git, extension/tooling, and port forwarding; cancellation
+and cleanup; disconnect/offline/reconnect; agent upgrade/rollback and recovery;
+privacy/egress and dirty-work preservation; and packaged real-remote
+qualification across Rust, TypeScript/JavaScript, and Python.
+
+Remote-specific rows do not duplicate canonical local outcomes. `COMP-PRES-*`
+owns general save, conflict, restart, and dirty-text preservation; `COMP-LANG-*`
+owns language lifecycle, LSP, build/test, and debug semantics; `COMP-TERM-*`
+owns local terminal behavior; and `COMP-TRUST-*` owns generalized proposal,
+audit, capability, and egress controls. Remote rows cover the remote binding,
+authority, endpoint, and product integration of those outcomes and depend on
+the canonical IDs where needed.
+
+Current source supports only a deterministic, default-off metadata-first
+remote harness. The connection planners parse SSH/dev-container metadata;
+`RemoteSessionRuntime` validates identity, trust, bounded filesystem
+operations, descriptor-only process/PTY/LSP/semantic requests, proposal
+preconditions, cancellation metadata, reconnect/offline transitions, and
+metadata-only audit. `RemoteTransportStateMachine` and the forced-drop tests
+cover transport state, replay, resume, flow control, and mTLS policy helpers.
+There is no current SSH connector, dev-container engine, remote file watcher,
+real remote process/LSP/debug/extension service, port-forwarding product path,
+agent package installer/rollback workflow, desktop remote UX, or packaged
+real-endpoint qualification. Remote Git is a separate `COMP-REMOTE-018` row
+that depends on canonical `COMP-SCM-001/002/003/006/009/010` outcomes and adds
+only the remote repository boundary and evidence. Those rows are therefore
+`partial` only where a
+current source trace exists and otherwise `absent`; every new acceptance value
+remains `unassessed`.
+
+The accepted Phase 7 ADRs and retained reconnect evidence are treated as
+current substrate evidence, not as permanent deferrals. ADR-0025 records the
+production transport direction and its evidence gates; the approved Stage 5
+plan remains the scope authority. See `remote-scope-audit.md`.
+
+The finite remote host/container matrix is explicitly a Stage 0/S0-02
+prerequisite. The review request to replace the selected `luna_worker`
+`owner_role` with generic package implementation owners is rejected for this
+inventory increment: the user instruction selects Luna-only execution. The
+owner field records this bounded inventory owner and does not claim future
+implementation ownership or acceptance authority.
