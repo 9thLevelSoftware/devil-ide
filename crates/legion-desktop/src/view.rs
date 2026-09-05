@@ -6688,6 +6688,13 @@ fn render_terminal_stream(
                 ));
             }
             ui.add_space(theme::tokens().spacing.sm as f32);
+            if terminal.active_session_id.is_none() && soft_button(ui, "Open terminal").clicked() {
+                // Launch the shell only. The command label is audit/status metadata;
+                // no task command is injected into the newly opened PTY.
+                actions.push(DesktopAction::TerminalLaunch {
+                    command_label: "interactive shell".to_string(),
+                });
+            }
             // Tier 1 A8: interactive input line — sends TerminalInput on Enter.
             if terminal.active_session_id.is_some() {
                 interactive_fields::render_terminal_input_line(
@@ -10917,6 +10924,9 @@ fn terminal_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
     }
     if let Some(denial) = &terminal.last_denial {
         rows.push(format!("terminal denial: {denial}"));
+    }
+    if let Some(error) = &terminal.last_error {
+        rows.push(format!("terminal error: {error}"));
     }
     rows.extend(terminal.output_rows.iter().take(5).map(|row| {
         format!(

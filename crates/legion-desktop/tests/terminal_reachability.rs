@@ -10,11 +10,13 @@
 //! part that matters: that a launch reaches a real PTY and its output comes
 //! back to the projection a person is looking at.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
+use std::{fs, panic::AssertUnwindSafe, path::Path};
 
 mod common;
-use common::{TempWorkspace, click_at, clickable_center, full_frame_input};
+use common::{
+    TempWorkspace, click_at, clickable_center, enabled_clickable_center, full_frame_input,
+};
 
 use legion_desktop::{
     bridge::DesktopAction,
@@ -24,6 +26,21 @@ use legion_desktop::{
 fn open_runtime(root: &Path) -> DesktopRuntime {
     DesktopRuntime::open(DesktopLaunchConfig::new(root.to_path_buf(), None))
         .expect("desktop runtime should open workspace")
+}
+
+/// The rendered launch test owns a native child through the runtime. Keep the
+/// cleanup outside the assertion body so a failed assertion cannot strand the
+/// shell process while the test is unwinding.
+fn close_owned_terminal(app: &mut DesktopEframeApp) {
+    // Both actions are idempotent/no-op when no session is active. Issue them
+    // unconditionally so cleanup still attempts termination if the projection
+    // is one frame behind the runtime after a failed assertion.
+    let _ = app
+        .runtime_mut_for_test()
+        .handle_action(DesktopAction::TerminalKill);
+    let _ = app
+        .runtime_mut_for_test()
+        .handle_action(DesktopAction::TerminalClose);
 }
 
 /// Terminal status as the projection reports it.
@@ -60,6 +77,105 @@ fn a_terminal_launch_from_the_ui_reaches_a_real_session() {
     assert!(
         !after.to_lowercase().contains("disabled"),
         "terminal still reports disabled after an explicit launch: {after}"
+    );
+}
+
+#[test]
+fn clicking_open_terminal_launches_shell_and_writes_exact_owned_marker() {
+    let workspace = TempWorkspace::new("legion_desktop_direct_terminal_button");
+    let marker = workspace.path().join("direct-terminal-proof.txt");
+    let mut app = DesktopEframeApp::new(open_runtime(workspace.path()));
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let initial = app.run_headless_full_frame(full_frame_input(Vec::new()));
+        assert!(
+            app.runtime_snapshot()
+                .terminal_panel_projection
+                .active_session_id
+                .is_none(),
+            "the direct-launch proof must begin without an active session"
+        );
+        assert_eq!(
+            app.runtime_snapshot().terminal_panel_projection.status.kind,
+            legion_protocol::TerminalPanelStatusKind::Disabled,
+            "the direct-launch proof must begin in the lazy disabled state"
+        );
+        assert!(
+            common::rendered_text(&initial)
+                .iter()
+                .any(|text| text == "Terminal workflow disabled"),
+            "the idle panel must preserve its disabled status reason"
+        );
+        let open = enabled_clickable_center(&initial, "Open terminal")
+            .expect("idle terminal panel must expose an Open terminal control");
+        let after_click = click_at(&mut app, open);
+        let launched = app.runtime_snapshot().terminal_panel_projection;
+        assert!(
+            launched.active_session_id.is_some(),
+            "Open terminal click did not create a session: status={:?} message={} frame_text={:?}",
+            launched.status.kind,
+            launched.status.message,
+            common::rendered_text(&after_click)
+        );
+        assert!(
+            enabled_clickable_center(&after_click, "Open terminal").is_none(),
+            "Open terminal must be hidden while a session is active"
+        );
+
+        let (command, expected) = if cfg!(windows) {
+            (
+                "echo LEGION_DIRECT_TERMINAL_PROOF>direct-terminal-proof.txt\r",
+                b"LEGION_DIRECT_TERMINAL_PROOF\r\n".as_slice(),
+            )
+        } else {
+            (
+                "printf 'LEGION_DIRECT_TERMINAL_PROOF\\n' > direct-terminal-proof.txt\r",
+                b"LEGION_DIRECT_TERMINAL_PROOF\n".as_slice(),
+            )
+        };
+        let input_result = app
+            .runtime_mut_for_test()
+            .handle_action(DesktopAction::TerminalInput {
+                payload: command.to_string(),
+            });
+        assert!(
+            input_result.is_ok(),
+            "terminal input dispatch failed: {input_result:?}"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            let _ = app.run_headless_full_frame(full_frame_input(Vec::new()));
+            if fs::read(&marker).ok().as_deref() == Some(expected) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let bytes = fs::read(&marker).expect("shell command must create the owned marker file");
+        assert_eq!(
+            bytes,
+            expected,
+            "shell command wrote unexpected bytes; status={:?} error={:?}",
+            app.runtime_snapshot().terminal_panel_projection.status.kind,
+            app.runtime_snapshot().terminal_panel_projection.last_error
+        );
+    }));
+
+    close_owned_terminal(&mut app);
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+    assert!(
+        app.runtime_snapshot()
+            .terminal_panel_projection
+            .active_session_id
+            .is_none(),
+        "owned terminal cleanup must leave no active session"
+    );
+    let reopened = app.run_headless_full_frame(full_frame_input(Vec::new()));
+    assert!(
+        enabled_clickable_center(&reopened, "Open terminal").is_some(),
+        "Open terminal must be reachable again after cleanup"
     );
 }
 
