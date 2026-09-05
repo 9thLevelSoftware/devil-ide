@@ -185,3 +185,24 @@ classifications are `partial` for the authority/projection substrate and
 `absent` for packaged qualification; all acceptance remains `unassessed`.
 Source paths in the replacement rows are literal existing files without
 fragment references. This increment does not claim S0-01 or S0 completion.
+
+## S0-01t extension scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-17` from baseline `ddfb166` is replaced by
+eleven atomic outcomes `COMP-SCOPE-FAMILY-17-01..11` in S5-01/S5-02/S5-03/
+S5-04/S5-15. The rows cover the full host/API/contribution contract, signed
+WASM execution, extension services and proposal mediation, install/update/
+disable/remove/rollback lifecycle, deny-by-default security and isolation,
+workspace/global/secret storage, the supported VS Code Node/web-worker subset,
+webviews, notebooks, custom editors, and packaged Stage 5 qualification.
+
+The approved completion design supersedes the historical metadata-only VSIX
+restriction for required webview, notebook, custom-editor, and storage
+capabilities. ADR-0047 still limits Open VSX to declarative metadata and the
+current compatibility crate remains classification-only; neither metadata nor
+the existing `NodeSidecar` descriptor is treated as runtime acceptance.
+Existing P7.F2 install/permission/tamper/metadata rows, generalized trust and
+proposal rows, save-conflict preservation, and the family-15 Stage 0 matrix
+remain canonical owners and are referenced rather than duplicated. All new
+rows remain `acceptance: unassessed`; implementation classifications are
+conservative current-source facts. See `extensions-scope-audit.md`.

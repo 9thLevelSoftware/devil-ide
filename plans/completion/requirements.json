@@ -13030,70 +13030,252 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-17",
-      "title": "Extensions",
+      "id": "COMP-SCOPE-FAMILY-17-01",
+      "title": "Stage 0 ratifies the complete extension-host contract: supported VS Code API/contribution/version matrix, WASM WIT ABI, Node/web-worker isolation, Tier 3 security, storage scopes, lifecycle states, and versioned host envelopes.",
       "kind": "product",
       "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-17"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required feature families: extensions" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-01 outputs and interfaces" },
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "WS-EXT-01" },
+        { "path": "plans/adrs/ADR-0019-wasm-plugin-runtime.md", "identity": "plugin boundary and ABI" },
+        { "path": "plans/adrs/ADR-0047-extension-distribution.md", "identity": "tiered distribution and compatibility" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-01",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-15-01"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-02",
+      "title": "Signed WASM extensions execute their required WIT contributions through Wasmtime with bounded host calls, declared quotas, no ambient authority, and proposal-mediated workspace effects.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-02 WASM productization" },
+        { "path": "plans/adrs/ADR-0019-wasm-plugin-runtime.md", "identity": "WASM runtime boundary" },
+        { "path": "plans/adrs/ADR-0050-wasmtime-runtime-ratification.md", "identity": "ratified Wasmtime engine" },
+        { "path": "crates/legion-plugin/src/host.rs", "identity": "WasmPluginHost" },
+        { "path": "crates/legion-plugin/wit/grammars.wit", "identity": "grammar contribution ABI" },
+        { "path": "crates/legion-plugin/wit/themes.wit", "identity": "theme contribution ABI" },
+        { "path": "crates/legion-plugin/wit/lsp.wit", "identity": "LSP contribution ABI" }
       ],
       "legacy_ids": [],
       "stage": "S5",
       "package_id": "S5-02",
       "owner_role": "luna_worker",
-      "depends_on": [],
+      "depends_on": ["COMP-SCOPE-FAMILY-17-01"],
       "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-005"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-03",
+      "title": "Extension host services expose versioned bounded request/response envelopes, capability checks, contribution registration, activation events, cancellation, and proposal-only mutation without exposing raw authority to extensions.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-01 proposed host envelopes and services" },
+        { "path": "crates/legion-plugin/src/manifest.rs", "identity": "manifest capability review" },
+        { "path": "crates/legion-plugin/src/host.rs", "identity": "host-call and quota boundary" },
+        { "path": "crates/legion-vscode-compat/src/lib.rs", "identity": "compatibility host-session descriptor" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-01",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-01", "COMP-SCOPE-FAMILY-17-02"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-005"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-04",
+      "title": "Extensions support signed install, enable/disable, update with interruption-safe rollback, remove, restart reactivation, quarantine, and failure recovery from a real artifact source with inspectable provenance.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-02 lifecycle outputs and tests" },
+        { "path": "plans/adrs/ADR-0047-extension-distribution.md", "identity": "hybrid distribution lifecycle" },
+        { "path": "crates/legion-plugin/src/registry.rs", "identity": "SignedExtensionRegistry" },
+        { "path": "plans/evidence/production/P7-F2-signed-extension-install-and-permission-review.md", "identity": "retained install evidence" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-02",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-01", "COMP-SCOPE-FAMILY-17-02"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-001", "COMP-SCOPE-GAP-02"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-05",
+      "title": "Extension security is deny-by-default and auditable: signatures and trust, manifest permissions, capability/quota ceilings, tamper rejection, hostile-module containment, crash quarantine, and no ambient filesystem, environment, process, network, terminal, or direct storage authority.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "plans/adrs/ADR-0019-wasm-plugin-runtime.md", "identity": "no-ambient-authority and manifest validation" },
+        { "path": "plans/adrs/ADR-0047-extension-distribution.md", "identity": "signed runtime and permission review" },
+        { "path": "plans/adrs/ADR-0050-wasmtime-runtime-ratification.md", "identity": "Wasmtime containment rules" },
+        { "path": "crates/legion-plugin/src/manifest.rs", "identity": "permission review and validation" },
+        { "path": "crates/legion-plugin/src/host.rs", "identity": "quotas and import denial" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-02",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-02", "COMP-SCOPE-FAMILY-17-04"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-005", "COMP-P9-F2-T3-1"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-06",
+      "title": "Extensions provide isolated workspace, global, and secret storage with namespaces, quotas, migration, deletion, retention/redaction policy, restart persistence, and no raw-source or secret leakage outside the approved secret scope.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-01 storage contract and S5-02 storage service" },
+        { "path": "plans/adrs/ADR-0019-wasm-plugin-runtime.md", "identity": "scoped plugin storage policy" },
+        { "path": "crates/legion-plugin/src/manifest.rs", "identity": "storage namespace and quota declarations" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-02",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-01", "COMP-SCOPE-FAMILY-17-02"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-004", "COMP-TRUST-005"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-07",
+      "title": "The supported VS Code subset executes its ratified Tier 1 and Tier 2 APIs and contributions through supervised Node and web-worker hosts with version negotiation, activation routing, storage bridge, bounded IPC, explicit unsupported-API diagnostics, and recovery.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-03 Node and web-worker hosts" },
+        { "path": "plans/adrs/ADR-0047-extension-distribution.md", "identity": "VS Code compatibility tiers" },
+        { "path": "crates/legion-vscode-compat/src/lib.rs", "identity": "manifest normalization and host runtime classification" },
+        { "path": "crates/legion-vscode-compat/tests/compat_report.rs", "identity": "compatibility classification tests" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-03",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-01", "COMP-SCOPE-FAMILY-17-04", "COMP-SCOPE-FAMILY-17-06"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-08",
+      "title": "Required extension webviews render through a bounded UI channel with origin/resource/CSP and message permission checks, quotas, lifecycle recovery, and projection-only host interaction.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required webview capability" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-04 webview outputs and tests" },
+        { "path": "crates/legion-vscode-compat/src/lib.rs", "identity": "Tier 3 webview classification" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-04",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-07"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-005"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-09",
+      "title": "Required notebook extensions support document and cell identity, open/edit/run/interrupt/save/restart, bounded kernel execution through task/terminal authority, dirty recovery, and proposal-mediated changes.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required notebook capability" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-04 notebook outputs and tests" },
+        { "path": "crates/legion-vscode-compat/src/lib.rs", "identity": "Tier 3 notebook classification" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-04",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-07"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-005"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-10",
+      "title": "Required custom-editor extensions support document identity, open/edit/save/revert/backup, restart recovery, storage, and conflict-safe proposal-mediated persistence that preserves both versions on failure.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required custom-editor capability" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-04 custom-editor outputs and tests" },
+        { "path": "crates/legion-vscode-compat/src/lib.rs", "identity": "Tier 3 custom-editor classification" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-04",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-07", "COMP-SCOPE-FAMILY-17-06"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-003", "COMP-PRES-008"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-17-11",
+      "title": "Packaged Stage 5 qualification proves named representative WASM, VS Code, webview, notebook, custom-editor, storage, lifecycle, security, and recovery workflows on the ratified matrix with external oracles and no metadata-only substitution.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-15 extension qualification gate" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "extension workflows in qualification campaign" },
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "extension compatibility and evidence rules" }
+      ],
+      "legacy_ids": [],
+      "stage": "S5",
+      "package_id": "S5-15",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-17-02", "COMP-SCOPE-FAMILY-17-04", "COMP-SCOPE-FAMILY-17-05", "COMP-SCOPE-FAMILY-17-06", "COMP-SCOPE-FAMILY-17-07", "COMP-SCOPE-FAMILY-17-08", "COMP-SCOPE-FAMILY-17-09", "COMP-SCOPE-FAMILY-17-10"],
+      "implementation": "absent",
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
