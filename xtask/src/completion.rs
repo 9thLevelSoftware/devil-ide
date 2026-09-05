@@ -1,4 +1,5 @@
 pub mod schema;
+pub mod structure;
 
 /// Returns whether a tuple is eligible for product evidence consideration.
 ///
