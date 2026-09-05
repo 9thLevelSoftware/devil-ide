@@ -8,7 +8,7 @@ use crate::{
     Color32, Mesh, Stroke, Vertex,
     stroke::PathStroke,
     text::{
-        font::{StyledMetrics, is_cjk, is_cjk_break_allowed},
+        font::{FontFace, StyledMetrics, is_cjk, is_cjk_break_allowed},
         fonts::FontFaceKey,
     },
 };
@@ -69,6 +69,32 @@ impl Default for ShapeState {
             cursor_x_px: 0.0,
             last_glyph_id: None,
         }
+    }
+}
+
+impl ShapeState {
+    #[inline]
+    fn apply_kerning(
+        &mut self,
+        font_face: Option<&crate::text::font::FontFace>,
+        font_face_metrics: &StyledMetrics,
+        glyph_id: Option<skrifa::GlyphId>,
+        extra_letter_spacing: f32,
+        pixels_per_point: f32,
+    ) {
+        if let (Some(font_face), Some(last_glyph_id), Some(glyph_id)) =
+            (font_face, self.last_glyph_id, glyph_id)
+        {
+            self.cursor_x_px +=
+                font_face.pair_kerning_pixels(font_face_metrics, last_glyph_id, glyph_id);
+            self.cursor_x_px += extra_letter_spacing * pixels_per_point;
+        }
+    }
+
+    #[inline]
+    fn commit_glyph(&mut self, advance_width_px: f32, glyph_id: skrifa::GlyphId) {
+        self.cursor_x_px += advance_width_px;
+        self.last_glyph_id = Some(glyph_id);
     }
 }
 
@@ -223,6 +249,325 @@ pub enum UnwrappedLayoutError {
     OffsetOverflow,
     OutputBudgetOutOfRange,
     NoProgress,
+}
+
+/// A glyph's atlas-independent geometry for streaming text measurement.
+///
+/// This deliberately has no UV or paintable allocation. The byte range is
+/// absolute in the source passed to [`layout_unwrapped_metrics_chunk`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetricGlyph {
+    pub chr: char,
+    pub source_byte_range: std::ops::Range<u64>,
+    pub physical_x: i32,
+    pub logical_x: f32,
+    pub advance_width: f32,
+    pub line_height: f32,
+    pub font_face_height: f32,
+    pub font_face_ascent: f32,
+    pub font_height: f32,
+    pub font_ascent: f32,
+}
+
+impl MetricGlyph {
+    pub fn byte_range(&self) -> std::ops::Range<u64> {
+        self.source_byte_range.clone()
+    }
+
+    pub fn snapped_x(&self) -> f32 {
+        self.physical_x as f32
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetricLayoutStatus {
+    NeedMoreInput,
+    Complete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetricLayoutError {
+    InvalidFormat,
+    ChangedLayoutKey,
+    InputChunkTooLarge,
+    OffsetOverflow,
+    OutputBudgetOutOfRange,
+    NoProgress,
+}
+
+/// Opaque glyph-free checkpoint for the atlas-independent metric scan.
+#[derive(Clone)]
+pub struct MetricLayoutContinuation {
+    source_key: u128,
+    expected_byte: u64,
+    format: TextFormat,
+    pixels_per_point: f32,
+    metric_identity: Arc<()>,
+    shape: ShapeState,
+    initial_byte: u64,
+}
+
+#[derive(Clone)]
+pub struct MetricLayoutSummary {
+    source_key: u128,
+    initial_byte: u64,
+    final_byte: u64,
+    precise_advance_px: f32,
+    format: TextFormat,
+    pixels_per_point: f32,
+    metric_identity: Arc<()>,
+}
+
+impl MetricLayoutSummary {
+    pub fn byte_span(&self) -> std::ops::Range<u64> {
+        self.initial_byte..self.final_byte
+    }
+
+    pub fn start_byte(&self) -> u64 {
+        self.initial_byte
+    }
+
+    pub fn end_byte(&self) -> u64 {
+        self.final_byte
+    }
+
+    pub fn precise_width(&self) -> f32 {
+        self.precise_advance_px / self.pixels_per_point
+    }
+
+    pub(crate) fn validate_for_layout(
+        &self,
+        source_key: u128,
+        expected_span: std::ops::Range<u64>,
+        format: &TextFormat,
+        pixels_per_point: f32,
+        metric_identity: &Arc<()>,
+    ) -> Result<(), MetricLayoutError> {
+        if self.source_key != source_key
+            || self.byte_span() != expected_span
+            || self.format != *format
+            || self.pixels_per_point != pixels_per_point
+            || !Arc::ptr_eq(&self.metric_identity, metric_identity)
+        {
+            return Err(MetricLayoutError::ChangedLayoutKey);
+        }
+        Ok(())
+    }
+}
+
+pub struct MetricGlyphBatch {
+    pub glyphs: Vec<MetricGlyph>,
+    pub consumed_bytes: usize,
+    pub continuation: Option<MetricLayoutContinuation>,
+    pub status: MetricLayoutStatus,
+    pub summary: Option<MetricLayoutSummary>,
+}
+
+impl std::fmt::Debug for MetricLayoutContinuation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MetricLayoutContinuation")
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for MetricGlyphBatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MetricGlyphBatch")
+            .field("glyph_count", &self.glyphs.len())
+            .field("consumed_bytes", &self.consumed_bytes)
+            .field("has_continuation", &self.continuation.is_some())
+            .field("status", &self.status)
+            .finish()
+    }
+}
+
+/// Scan one bounded, newline-free, single-format chunk without touching the
+/// atlas. Pen and kerning state is retained in a constant-sized checkpoint.
+pub(crate) fn layout_unwrapped_metrics_chunk(
+    fonts: &mut FontsImpl,
+    pixels_per_point: f32,
+    metric_identity: Arc<()>,
+    format: TextFormat,
+    source_key: u128,
+    chunk_start_byte: u64,
+    chunk: &str,
+    is_final_chunk: bool,
+    continuation: Option<MetricLayoutContinuation>,
+    max_output_glyphs: usize,
+) -> Result<MetricGlyphBatch, MetricLayoutError> {
+    const MAX_CHUNK_BYTES: usize = 96 * 1024;
+    if chunk.len() > MAX_CHUNK_BYTES {
+        return Err(MetricLayoutError::InputChunkTooLarge);
+    }
+    let chunk_end = chunk_start_byte
+        .checked_add(chunk.len() as u64)
+        .ok_or(MetricLayoutError::OffsetOverflow)?;
+    if !(1..=4096).contains(&max_output_glyphs) {
+        return Err(MetricLayoutError::OutputBudgetOutOfRange);
+    }
+    if chunk.contains('\n')
+        || !pixels_per_point.is_finite()
+        || pixels_per_point <= 0.0
+        || !format.font_id.size.is_finite()
+        || format.font_id.size <= 0.0
+        || !format.extra_letter_spacing.is_finite()
+    {
+        return Err(MetricLayoutError::InvalidFormat);
+    }
+
+    let mut state = if let Some(state) = continuation {
+        if state.source_key != source_key
+            || state.expected_byte != chunk_start_byte
+            || state.format != format
+            || state.pixels_per_point != pixels_per_point
+            || !Arc::ptr_eq(&state.metric_identity, &metric_identity)
+        {
+            return Err(MetricLayoutError::ChangedLayoutKey);
+        }
+        state
+    } else {
+        MetricLayoutContinuation {
+            source_key,
+            expected_byte: chunk_start_byte,
+            format: format.clone(),
+            pixels_per_point,
+            metric_identity,
+            shape: ShapeState::default(),
+            initial_byte: chunk_start_byte,
+        }
+    };
+
+    let line_height = format.line_height.unwrap_or_else(|| {
+        fonts
+            .font(&format.font_id.family)
+            .styled_metrics(pixels_per_point, format.font_id.size, &format.coords)
+            .row_height
+    });
+    let mut glyphs = Vec::with_capacity(max_output_glyphs.min(chunk.len()));
+    let consumed = shape_metric_chars(
+        &mut fonts.font(&format.font_id.family),
+        pixels_per_point,
+        &format,
+        chunk_start_byte,
+        chunk,
+        line_height,
+        &mut state.shape,
+        &mut glyphs,
+        max_output_glyphs,
+    );
+    if !chunk.is_empty() && consumed == 0 {
+        return Err(MetricLayoutError::NoProgress);
+    }
+    state.expected_byte = chunk_start_byte
+        .checked_add(consumed as u64)
+        .ok_or(MetricLayoutError::OffsetOverflow)?;
+    debug_assert!(state.expected_byte <= chunk_end);
+    let complete = is_final_chunk && consumed == chunk.len();
+    let summary = complete.then(|| MetricLayoutSummary {
+        source_key: state.source_key,
+        initial_byte: state.initial_byte,
+        final_byte: state.expected_byte,
+        precise_advance_px: state.shape.cursor_x_px,
+        format: state.format.clone(),
+        pixels_per_point: state.pixels_per_point,
+        metric_identity: Arc::clone(&state.metric_identity),
+    });
+    if let Some(summary) = &summary {
+        summary.validate_for_layout(
+            state.source_key,
+            state.initial_byte..state.expected_byte,
+            &state.format,
+            state.pixels_per_point,
+            &state.metric_identity,
+        )?;
+    }
+    Ok(MetricGlyphBatch {
+        glyphs,
+        consumed_bytes: consumed,
+        continuation: (!complete).then_some(state),
+        status: complete
+            .then_some(MetricLayoutStatus::Complete)
+            .unwrap_or(MetricLayoutStatus::NeedMoreInput),
+        summary,
+    })
+}
+
+fn shape_metric_chars(
+    font: &mut crate::text::font::Font<'_>,
+    pixels_per_point: f32,
+    format: &TextFormat,
+    source_start_byte: u64,
+    text: &str,
+    line_height: f32,
+    shape: &mut ShapeState,
+    glyphs: &mut Vec<MetricGlyph>,
+    max_glyphs: usize,
+) -> usize {
+    let font_size = format.font_id.size;
+    let font_metrics = font.styled_metrics(pixels_per_point, font_size, &format.coords);
+    let mut current_font = FontFaceKey::INVALID;
+    let mut current_font_face_metrics = StyledMetrics::default();
+    let mut consumed = 0;
+    for (offset, chr) in text.char_indices() {
+        if glyphs.len() >= max_glyphs {
+            break;
+        }
+        let (font_id, glyph_info) = font.glyph_info(chr);
+        let font_face = font.fonts_by_id.get_mut(&font_id);
+        if current_font != font_id {
+            current_font = font_id;
+            current_font_face_metrics = font_face
+                .as_ref()
+                .map(|face| face.styled_metrics(pixels_per_point, font_size, &format.coords))
+                .unwrap_or_default();
+        }
+        shape.apply_kerning(
+            font_face.as_deref(),
+            &current_font_face_metrics,
+            glyph_info.id,
+            format.extra_letter_spacing,
+            pixels_per_point,
+        );
+        let prepared = font_face.as_ref().and_then(|_| {
+            FontFace::prepare_glyph_metrics(
+                glyph_info,
+                chr,
+                &current_font_face_metrics,
+                shape.cursor_x_px,
+            )
+        });
+        let (advance_width_px, physical_x, glyph_id) = if font_face.is_some() {
+            prepared
+                .map(|metrics| {
+                    (
+                        metrics.advance_width_px,
+                        metrics.physical_x,
+                        metrics.glyph_id,
+                    )
+                })
+                .unwrap_or((0.0, shape.cursor_x_px as i32, Default::default()))
+        } else {
+            (0.0, 0, Default::default())
+        };
+        glyphs.push(MetricGlyph {
+            chr,
+            source_byte_range: (source_start_byte + offset as u64)
+                ..(source_start_byte + (offset + chr.len_utf8()) as u64),
+            physical_x,
+            logical_x: physical_x as f32 / pixels_per_point,
+            advance_width: advance_width_px / pixels_per_point,
+            line_height,
+            font_face_height: current_font_face_metrics.row_height,
+            font_face_ascent: current_font_face_metrics.ascent,
+            font_height: font_metrics.row_height,
+            font_ascent: font_metrics.ascent,
+        });
+        shape.commit_glyph(advance_width_px, glyph_id);
+        consumed = offset + chr.len_utf8();
+    }
+    consumed
 }
 
 /// Shape one bounded, newline-free, single-format chunk while preserving the
@@ -507,13 +852,13 @@ fn shape_chars(
                 })
                 .unwrap_or_default();
         }
-        if let (Some(font_face), Some(last_glyph_id), Some(glyph_id)) =
-            (&font_face, shape.last_glyph_id, glyph_info.id)
-        {
-            shape.cursor_x_px +=
-                font_face.pair_kerning_pixels(&current_font_face_metrics, last_glyph_id, glyph_id);
-            shape.cursor_x_px += extra_letter_spacing * pixels_per_point;
-        }
+        shape.apply_kerning(
+            font_face.as_deref(),
+            &current_font_face_metrics,
+            glyph_info.id,
+            extra_letter_spacing,
+            pixels_per_point,
+        );
         let (glyph_alloc, physical_x) = if let Some(font_face) = font_face.as_mut() {
             font_face.allocate_glyph(
                 font.atlas,
@@ -538,8 +883,7 @@ fn shape_chars(
             section_index,
             first_vertex: 0,
         });
-        shape.cursor_x_px += glyph_alloc.advance_width_px;
-        shape.last_glyph_id = Some(glyph_alloc.id);
+        shape.commit_glyph(glyph_alloc.advance_width_px, glyph_alloc.id);
         consumed = offset + chr.len_utf8();
     }
     consumed
@@ -2258,5 +2602,409 @@ mod tests {
             empty.summary.expect("empty final summary").byte_span(),
             42..42
         );
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn metric_scan_matches_unwrapped_geometry_without_touching_atlas() {
+        let text = "A\u{200b}\t 界😀";
+        let format = TextFormat::default();
+        let mut metric_owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let atlas_size = metric_owner.font_image_size();
+        let atlas_before = metric_owner.image();
+        let _initial_delta = metric_owner.font_image_delta();
+        let metrics = {
+            let mut view = metric_owner.with_pixels_per_point(1.25);
+            view.layout_unwrapped_metrics_chunk(format.clone(), 900, 0, text, true, None, 4096)
+                .expect("metric scan")
+        };
+        assert_eq!(metrics.status, MetricLayoutStatus::Complete);
+        assert_eq!(metrics.consumed_bytes, text.len());
+        assert_eq!(metric_owner.font_image_size(), atlas_size);
+        assert_eq!(metric_owner.image(), atlas_before);
+        assert!(metric_owner.font_image_delta().is_none());
+
+        let mut ordinary_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let ordinary_identity = ordinary_fonts.layout_identity();
+        let ordinary = layout_unwrapped_chunk(
+            &mut ordinary_fonts,
+            1.25,
+            ordinary_identity,
+            format,
+            900,
+            0,
+            text,
+            true,
+            None,
+            4096,
+        )
+        .expect("ordinary scan");
+        assert_eq!(metrics.glyphs.len(), ordinary.glyphs.len());
+        for (metric, glyph) in metrics.glyphs.iter().zip(&ordinary.glyphs) {
+            assert_eq!(metric.chr, glyph.chr);
+            assert_eq!(
+                metric.source_byte_range.end - metric.source_byte_range.start,
+                metric.chr.len_utf8() as u64
+            );
+            assert_eq!(metric.logical_x.to_bits(), glyph.pos.x.to_bits());
+            assert_eq!(
+                metric.advance_width.to_bits(),
+                glyph.advance_width.to_bits()
+            );
+            assert_eq!(metric.line_height.to_bits(), glyph.line_height.to_bits());
+        }
+        assert_eq!(
+            metrics.summary.as_ref().unwrap().precise_width().to_bits(),
+            ordinary.summary.as_ref().unwrap().precise_width().to_bits()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn metric_continuation_survives_atlas_only_recreation() {
+        let text = "first chunk then second";
+        let format = TextFormat::default();
+        let options = TextOptions {
+            max_texture_side: 1024,
+            ..TextOptions::default()
+        };
+        let mut owner = Fonts::new(options, FontDefinitions::default());
+        {
+            let chars = {
+                let mut font = owner.fonts.font(&FontFamily::Monospace);
+                font.characters().keys().copied().collect::<String>()
+            };
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout(
+                chars,
+                FontId::monospace(100.0),
+                crate::Color32::WHITE,
+                f32::INFINITY,
+            );
+        }
+        let first = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(
+                format.clone(),
+                901,
+                0,
+                &text[..5],
+                false,
+                None,
+                4096,
+            )
+            .expect("first metric chunk")
+        };
+        let continuation = first.continuation.expect("continuation");
+        let old_layout_identity = owner.fonts.layout_identity();
+        let old_metric_identity = owner.fonts.metric_identity();
+        let old_uv_continuation = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_chunk(format.clone(), 902, 0, &text[..5], false, None, 4096)
+                .expect("first UV chunk")
+                .continuation
+                .expect("UV continuation")
+        };
+        assert!(owner.font_atlas_fill_ratio() > 0.8);
+        owner.begin_pass(options);
+        assert!(!Arc::ptr_eq(
+            &old_layout_identity,
+            &owner.fonts.layout_identity()
+        ));
+        assert!(Arc::ptr_eq(
+            &old_metric_identity,
+            &owner.fonts.metric_identity()
+        ));
+        {
+            let mut view = owner.with_pixels_per_point(1.0);
+            assert!(
+                view.layout_unwrapped_chunk(
+                    format.clone(),
+                    902,
+                    5,
+                    &text[5..],
+                    true,
+                    Some(old_uv_continuation),
+                    4096,
+                )
+                .is_err()
+            );
+        }
+        let second = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(
+                format,
+                901,
+                5,
+                &text[5..11],
+                false,
+                Some(continuation),
+                4096,
+            )
+            .expect("continued metric chunk")
+        };
+        let continuation = second.continuation.expect("second continuation");
+        {
+            let chars = {
+                let mut font = owner.fonts.font(&FontFamily::Monospace);
+                font.characters().keys().copied().collect::<String>()
+            };
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout(
+                chars,
+                FontId::monospace(100.0),
+                crate::Color32::WHITE,
+                f32::INFINITY,
+            );
+        }
+        assert!(owner.font_atlas_fill_ratio() > 0.8);
+        let old_layout_identity = owner.fonts.layout_identity();
+        let old_metric_identity = owner.fonts.metric_identity();
+        owner.begin_pass(options);
+        assert!(!Arc::ptr_eq(
+            &old_layout_identity,
+            &owner.fonts.layout_identity()
+        ));
+        assert!(Arc::ptr_eq(
+            &old_metric_identity,
+            &owner.fonts.metric_identity()
+        ));
+        let third = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(
+                TextFormat::default(),
+                901,
+                11,
+                &text[11..],
+                true,
+                Some(continuation),
+                4096,
+            )
+            .expect("third metric chunk")
+        };
+        assert_eq!(third.status, MetricLayoutStatus::Complete);
+        assert_eq!(
+            third.summary.as_ref().unwrap().byte_span(),
+            0..text.len() as u64
+        );
+        let mut baseline = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let baseline = {
+            let mut view = baseline.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(
+                TextFormat::default(),
+                901,
+                0,
+                text,
+                true,
+                None,
+                4096,
+            )
+            .expect("baseline metric chunk")
+        };
+        assert_eq!(
+            third.summary.unwrap().precise_width().to_bits(),
+            baseline.summary.unwrap().precise_width().to_bits()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn metric_scan_matches_every_utf8_seam_and_budget() {
+        let text = "A界😀\t z";
+        for pixels_per_point in [0.75, 1.0, 1.5, 2.0] {
+            for spacing in [-1.25, 0.0, 0.5] {
+                let format = TextFormat {
+                    extra_letter_spacing: spacing,
+                    ..TextFormat::default()
+                };
+                let mut baseline_owner =
+                    Fonts::new(TextOptions::default(), FontDefinitions::default());
+                let baseline = {
+                    let mut view = baseline_owner.with_pixels_per_point(pixels_per_point);
+                    view.layout_unwrapped_metrics_chunk(
+                        format.clone(),
+                        903,
+                        0,
+                        text,
+                        true,
+                        None,
+                        4096,
+                    )
+                    .expect("baseline metric scan")
+                };
+                for split in text
+                    .char_indices()
+                    .map(|(offset, _)| offset)
+                    .chain([text.len()])
+                {
+                    let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+                    let first = {
+                        let mut view = owner.with_pixels_per_point(pixels_per_point);
+                        view.layout_unwrapped_metrics_chunk(
+                            format.clone(),
+                            903,
+                            0,
+                            &text[..split],
+                            false,
+                            None,
+                            1,
+                        )
+                        .expect("seam first metric scan")
+                    };
+                    let mut continuation = first.continuation;
+                    let mut offset = first.consumed_bytes;
+                    let mut metrics = first.glyphs;
+                    while offset < text.len() {
+                        let batch = {
+                            let mut view = owner.with_pixels_per_point(pixels_per_point);
+                            view.layout_unwrapped_metrics_chunk(
+                                format.clone(),
+                                903,
+                                offset as u64,
+                                &text[offset..],
+                                true,
+                                continuation,
+                                1,
+                            )
+                            .expect("budgeted metric scan")
+                        };
+                        assert!(batch.consumed_bytes > 0);
+                        metrics.extend(batch.glyphs);
+                        offset += batch.consumed_bytes;
+                        continuation = batch.continuation;
+                        if continuation.is_none() {
+                            assert_eq!(batch.status, MetricLayoutStatus::Complete);
+                            assert_eq!(batch.summary.unwrap().byte_span(), 0..text.len() as u64);
+                            break;
+                        }
+                    }
+                    assert_eq!(offset, text.len());
+                    assert_eq!(metrics.len(), baseline.glyphs.len());
+                    for (actual, expected) in metrics.iter().zip(&baseline.glyphs) {
+                        assert_eq!(actual.chr, expected.chr);
+                        assert_eq!(actual.source_byte_range, expected.source_byte_range);
+                        assert_eq!(actual.logical_x.to_bits(), expected.logical_x.to_bits());
+                        assert_eq!(
+                            actual.advance_width.to_bits(),
+                            expected.advance_width.to_bits()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn metric_scan_rejects_changed_keys_and_reports_empty_final() {
+        let format = TextFormat::default();
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let first = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(format.clone(), 904, 0, "ab", false, None, 1)
+                .expect("key validation first chunk")
+        };
+        let continuation = first.continuation.expect("key continuation");
+        {
+            let mut view = owner.with_pixels_per_point(1.0);
+            assert!(
+                view.layout_unwrapped_metrics_chunk(
+                    format.clone(),
+                    905,
+                    1,
+                    "b",
+                    true,
+                    Some(continuation.clone()),
+                    4096,
+                )
+                .is_err()
+            );
+            assert!(
+                view.layout_unwrapped_metrics_chunk(
+                    format.clone(),
+                    904,
+                    2,
+                    "b",
+                    true,
+                    Some(continuation.clone()),
+                    4096,
+                )
+                .is_err()
+            );
+            let changed_format = TextFormat {
+                extra_letter_spacing: 1.0,
+                ..format.clone()
+            };
+            assert!(
+                view.layout_unwrapped_metrics_chunk(
+                    changed_format,
+                    904,
+                    1,
+                    "b",
+                    true,
+                    Some(continuation.clone()),
+                    4096,
+                )
+                .is_err()
+            );
+        }
+        {
+            let mut view = owner.with_pixels_per_point(1.5);
+            assert!(
+                view.layout_unwrapped_metrics_chunk(
+                    format.clone(),
+                    904,
+                    1,
+                    "b",
+                    true,
+                    Some(continuation.clone()),
+                    4096,
+                )
+                .is_err()
+            );
+        }
+        let mut replacement_owner = Fonts::new(TextOptions::default(), FontDefinitions::empty());
+        let mut replacement_view = replacement_owner.with_pixels_per_point(1.0);
+        assert!(
+            replacement_view
+                .layout_unwrapped_metrics_chunk(
+                    format.clone(),
+                    904,
+                    1,
+                    "b",
+                    true,
+                    Some(continuation.clone()),
+                    4096,
+                )
+                .is_err()
+        );
+        drop(replacement_view);
+        let changed_options = TextOptions {
+            max_texture_side: TextOptions::default().max_texture_side + 1024,
+            ..TextOptions::default()
+        };
+        owner.begin_pass(changed_options);
+        let mut changed_options_view = owner.with_pixels_per_point(1.0);
+        assert!(
+            changed_options_view
+                .layout_unwrapped_metrics_chunk(
+                    format.clone(),
+                    904,
+                    1,
+                    "b",
+                    true,
+                    Some(continuation),
+                    4096,
+                )
+                .is_err()
+        );
+        let empty = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(format, 906, 0, "", true, None, 1)
+                .expect("empty final metric scan")
+        };
+        assert_eq!(empty.status, MetricLayoutStatus::Complete);
+        assert!(empty.glyphs.is_empty());
+        assert_eq!(empty.summary.unwrap().byte_span(), 0..0);
     }
 }

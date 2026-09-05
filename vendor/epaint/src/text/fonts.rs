@@ -10,7 +10,8 @@ use std::{
 use crate::{
     TextureAtlas,
     text::{
-        Galley, LayoutJob, LayoutSection, TextFormat, TextOptions, UnwrappedGlyphBatch,
+        Galley, LayoutJob, LayoutSection, MetricGlyphBatch, MetricLayoutContinuation,
+        MetricLayoutError, TextFormat, TextOptions, UnwrappedGlyphBatch,
         UnwrappedLayoutContinuation, UnwrappedLayoutError, VariationCoords,
         font::{Font, FontFace, GlyphInfo},
     },
@@ -535,9 +536,10 @@ impl Fonts {
 
         if needs_recreate {
             let definitions = self.fonts.definitions.clone();
+            let metric_identity = (!text_options_changed).then(|| self.fonts.metric_identity());
 
             *self = Self {
-                fonts: FontsImpl::new(options, definitions),
+                fonts: FontsImpl::new_with_metric_identity(options, definitions, metric_identity),
                 galley_cache: Default::default(),
             };
         }
@@ -727,6 +729,33 @@ impl FontsView<'_> {
         )
     }
 
+    /// Scan a bounded, newline-free, single-format chunk for atlas-independent
+    /// glyph metrics while preserving exact pen and kerning state across calls.
+    pub fn layout_unwrapped_metrics_chunk(
+        &mut self,
+        format: TextFormat,
+        source_key: u128,
+        chunk_start_byte: u64,
+        chunk: &str,
+        is_final_chunk: bool,
+        continuation: Option<MetricLayoutContinuation>,
+        max_output_glyphs: usize,
+    ) -> Result<MetricGlyphBatch, MetricLayoutError> {
+        let identity = self.fonts.metric_identity();
+        super::text_layout::layout_unwrapped_metrics_chunk(
+            self.fonts,
+            self.pixels_per_point,
+            identity,
+            format,
+            source_key,
+            chunk_start_byte,
+            chunk,
+            is_final_chunk,
+            continuation,
+            max_output_glyphs,
+        )
+    }
+
     pub fn num_galleys_in_cache(&self) -> usize {
         self.galley_cache.num_galleys_in_cache()
     }
@@ -789,6 +818,7 @@ impl FontsView<'_> {
 /// Required in order to paint text.
 pub struct FontsImpl {
     identity: Arc<()>,
+    metric_identity: Arc<()>,
     definitions: FontDefinitions,
     atlas: TextureAtlas,
     fonts_by_id: nohash_hasher::IntMap<FontFaceKey, FontFace>,
@@ -800,6 +830,14 @@ impl FontsImpl {
     /// Create a new [`FontsImpl`] for text layout.
     /// This call is expensive, so only create one [`FontsImpl`] and then reuse it.
     pub fn new(options: TextOptions, definitions: FontDefinitions) -> Self {
+        Self::new_with_metric_identity(options, definitions, None)
+    }
+
+    fn new_with_metric_identity(
+        options: TextOptions,
+        definitions: FontDefinitions,
+        metric_identity: Option<Arc<()>>,
+    ) -> Self {
         let texture_width = options.max_texture_side.at_most(16 * 1024);
         let initial_height = 32; // Keep initial font atlas small, so it is fast to upload to GPU. This will expand as needed anyways.
         let atlas = TextureAtlas::new([texture_width, initial_height], options);
@@ -823,6 +861,7 @@ impl FontsImpl {
 
         Self {
             identity: Arc::new(()),
+            metric_identity: metric_identity.unwrap_or_else(|| Arc::new(())),
             definitions,
             atlas,
             fonts_by_id,
@@ -837,6 +876,10 @@ impl FontsImpl {
 
     pub(super) fn layout_identity(&self) -> Arc<()> {
         Arc::clone(&self.identity)
+    }
+
+    pub(super) fn metric_identity(&self) -> Arc<()> {
+        Arc::clone(&self.metric_identity)
     }
 
     /// Get the right font implementation from [`FontFamily`].

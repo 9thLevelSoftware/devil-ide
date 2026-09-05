@@ -25,11 +25,13 @@ source tree under `src/` (`brush.rs`, `color.rs`, `corner_radius.rs`,
 The active Legion patch changes exactly these source files relative to the
 archive:
 
-* `src/text/fonts.rs` — exposes bounded unwrapped chunk layout and retains a
-  per-fonts-instance layout identity. SHA-256: `2cdde05a5c62165f9ff507db4ecc1728660b3a255c9a98250251be0b86edf91d`.
+* `src/text/fonts.rs` — exposes bounded unwrapped chunk layout, atlas-independent
+  metric chunks, and separate layout/metric identities. SHA-256:
+  `5c0c11c053e362af2aadc3d788c6c2aa1662ee217c01f3ea115f7f00f9824361`.
 * `src/text/text_layout.rs` — adds bounded continuation state, glyph-free
-  checkpoint cloning, completed-pass precise summaries, shared shaping,
-  validation, and regression tests. SHA-256: `5ede5186463ed6f0e206283f2be35cc43e52013c40e2dfaec3de8dfefbdee93a`.
+  checkpoint cloning, completed-pass precise summaries, atlas-independent
+  metric descriptors, shared shaping arithmetic, validation, and regression
+  tests. SHA-256: `64d92452e4c71545508fe28630f75827f28d8128091de3d84b9f2217b843f1df`.
 * `src/text/font.rs` — factors atlas-independent glyph metrics and preserves
   resolved ID/advance with empty UVs when rasterization fails. SHA-256:
   `b308014c5c15d1196d3ca1dafc57847e22acb55188ca0413ce9f90804a43f151`.
@@ -49,14 +51,16 @@ tests. It is not a source patch. Current SHA-256:
 Using the bundled Python runtime at
 `C:\Users\dasbl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`,
 the archive member inventory and hashes above were compared against this
-directory. The current standalone command
-`cargo test --manifest-path vendor/epaint/Cargo.toml --lib` passed: 45 passed,
-0 failed, with the aligned lock. The current `font.rs` verification output is
-retained in the plan scratch file
-`s1-04j-stable-glyph-metrics.log`; the matching standalone
-`cargo check --manifest-path vendor/epaint/Cargo.toml --lib` also passed. This
-is source-level vendor evidence only; it does not qualify huge wrapped-line
-continuation or full product readiness.
+directory. The earlier standalone command passed 45 tests and remains
+historical evidence. The current metric-scan standalone command
+`cargo test --manifest-path vendor/epaint/Cargo.toml --lib` passed: 49 passed,
+0 failed; its raw output and exit code are retained in
+`s1-04k-metric-scan-final.log`. The current metric source hash is
+`src/text/text_layout.rs` SHA-256
+`64d92452e4c71545508fe28630f75827f28d8128091de3d84b9f2217b843f1df`. The
+matching standalone `cargo check --manifest-path vendor/epaint/Cargo.toml
+--lib` also passed. This is source-level vendor evidence only; it does not
+qualify huge wrapped-line continuation or full product readiness.
 
 The earlier 40-test vendor run remains historical evidence in
 `s1-04h-vendor-fix-tests.log`.
