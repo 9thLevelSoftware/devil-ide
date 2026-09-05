@@ -11,6 +11,9 @@ use legion_protocol::{
     DebugConfigurationId, DebugSessionId, FileFingerprint, FileId, ProposalPrivacyLabel,
     ProposalRiskLabel, ProtocolTextRange, SnapshotId, TextCoordinate, TimestampMillis,
     ViewportScroll, WorkspaceId,
+    VisualNavigationCaret, VisualNavigationDirection, VisualNavigationLayoutId,
+    VisualNavigationPosition, VisualNavigationRequest, VisualNavigationRow,
+    VisualNavigationSourceRow, VisualNavigationStop, VisualNavigationX,
 };
 use legion_ui::ui::{DailyEditingProjection, EditorTabProjection, EditorTabsProjection};
 use legion_ui::{
@@ -377,6 +380,48 @@ fn intent_bridge_routes_daily_editing_actions() {
         DesktopBridgeOutput::Intent(CommandDispatchIntent::SetCursor {
             buffer_id: BufferId(9),
             cursor,
+        })
+    );
+    let visual_request = VisualNavigationRequest {
+        expected_snapshot_id: SnapshotId(5),
+        expected_buffer_version: BufferVersion(12),
+        expected_carets: vec![VisualNavigationCaret {
+            head: VisualNavigationPosition { line: 0, byte_column: 1 },
+            anchor: None,
+            affinity: legion_protocol::CaretAffinity::Upstream,
+            preferred_x: Some(VisualNavigationX { value: 7.0 }),
+        }],
+        layout_id: VisualNavigationLayoutId(9),
+        direction: VisualNavigationDirection::Down,
+        extend: false,
+        source_rows: vec![VisualNavigationSourceRow {
+            row: VisualNavigationRow {
+                logical_line: 0,
+                row_index: Some(0),
+                row_count: Some(2),
+                start: VisualNavigationPosition { line: 0, byte_column: 0 },
+                end: VisualNavigationPosition { line: 0, byte_column: 2 },
+                stops: vec![VisualNavigationStop {
+                    position: VisualNavigationPosition { line: 0, byte_column: 1 },
+                    x: VisualNavigationX { value: 7.0 },
+                    affinity: legion_protocol::CaretAffinity::Upstream,
+                }],
+            },
+            source_x: VisualNavigationX { value: 7.0 },
+        }],
+        target_rows: Vec::new(),
+    };
+    assert_eq!(
+        bridge.translate(
+            DesktopAction::MoveVertically {
+                buffer_id: None,
+                request: visual_request.clone(),
+            },
+            &snapshot,
+        ),
+        DesktopBridgeOutput::Intent(CommandDispatchIntent::MoveVertically {
+            buffer_id: BufferId(9),
+            request: visual_request,
         })
     );
     assert_eq!(

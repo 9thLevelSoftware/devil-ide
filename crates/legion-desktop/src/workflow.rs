@@ -5,6 +5,7 @@ use std::process::Command;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -26,7 +27,8 @@ use legion_protocol::{
     ProposalLifecycleState, ProposalLifecycleTransition, ProposalResponse, ProtocolTextRange,
     RemoteTransportEnvelope, RemoteWorkspaceSessionDescriptor, RemoteWorkspaceSessionId,
     SessionDockLayout, SessionDockSideLayout, SessionPanelState, TextCoordinate, TimestampMillis,
-    ViewportScroll, WorkspaceSessionRecord, WorkspaceTrustState,
+    ViewportScroll, VisualNavigationDirection, VisualNavigationLayoutId, VisualNavigationPosition,
+    VisualNavigationRequest, VisualNavigationWindow, WorkspaceSessionRecord, WorkspaceTrustState,
 };
 use legion_remote::RemoteOperationOutcome;
 use legion_storage::{
@@ -62,8 +64,9 @@ use crate::{
     view::dock_geometry::{self, DockFractions},
     view::{
         BottomPanelTab, DesktopProjectionViewState, ImeCompositionProjection, ProjectionView,
-        ime_composition_state, ime_composition_state_id,
-        proposal_review::DesktopCheckpointTimelineRow,
+        VisualNavigationRowRequest, ime_composition_state, ime_composition_state_id,
+        proposal_review::DesktopCheckpointTimelineRow, visual_navigation_paint_geometry,
+        visual_navigation_selected_row_for_line,
     },
     windowed_e2e::WindowedGuiE2eConfig,
 };
@@ -72,6 +75,68 @@ const WINDOW_TITLE: &str = PRODUCT_NAME;
 
 fn is_new_definition_response(last_operation_id: Option<&str>, operation_id: Option<&str>) -> bool {
     operation_id.is_some_and(|current| last_operation_id != Some(current))
+}
+
+fn visual_navigation_line_model(
+    window: &VisualNavigationWindow,
+) -> Option<crate::view::DesktopCodeLineViewModel> {
+    let truncation_state = match (window.complete_logical_start, window.complete_logical_end) {
+        (true, true) => legion_protocol::ViewportLineTruncationState::None,
+        (true, false) => legion_protocol::ViewportLineTruncationState::Trailing,
+        (false, true) => legion_protocol::ViewportLineTruncationState::Leading,
+        (false, false) => legion_protocol::ViewportLineTruncationState::Both,
+    };
+    Some(crate::view::DesktopCodeLineViewModel {
+        number: window.line.checked_add(1)?,
+        text: window.text.clone(),
+        highlights: Vec::new(),
+        truncation_state,
+        byte_range: legion_protocol::ByteRange::new(window.start_byte, window.end_byte),
+        utf16_range: legion_protocol::Utf16Range {
+            start: legion_protocol::Utf16Position {
+                line: window.line,
+                character: 0,
+            },
+            end: legion_protocol::Utf16Position {
+                line: window.line,
+                character: window.text.encode_utf16().count() as u32,
+            },
+        },
+        line_start_byte_offset: Some(window.line_start_byte),
+        line_start_utf16_offset: None,
+    })
+}
+
+fn visual_navigation_columns(window: &VisualNavigationWindow) -> Option<Vec<u64>> {
+    let mut columns = window
+        .grapheme_boundaries
+        .iter()
+        .map(|&absolute| absolute.checked_sub(window.line_start_byte))
+        .collect::<Option<Vec<_>>>()?;
+    columns.sort_unstable();
+    columns.dedup();
+    Some(columns)
+}
+
+fn visual_navigation_layout_id(
+    viewport: &legion_protocol::ViewportProjection,
+    wrap_width: f32,
+    settings: &legion_ui::SettingsProjection,
+    pixels_per_point: f32,
+) -> VisualNavigationLayoutId {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    viewport.line_wrapping_policy.hash(&mut hasher);
+    viewport.wrap_column.hash(&mut hasher);
+    viewport.dimensions.width_px.hash(&mut hasher);
+    wrap_width.to_bits().hash(&mut hasher);
+    settings.editor_font_family.hash(&mut hasher);
+    settings.editor_font_size_pt.hash(&mut hasher);
+    settings.theme_preference.as_str().hash(&mut hasher);
+    pixels_per_point.to_bits().hash(&mut hasher);
+    settings.editor.line_wrapping_policy.hash(&mut hasher);
+    settings.editor.wrap_column.hash(&mut hasher);
+    let value = u128::from(hasher.finish());
+    VisualNavigationLayoutId(value.max(1))
 }
 
 /// Process launch configuration for the desktop adapter.
@@ -1616,6 +1681,230 @@ impl DesktopRuntime {
     /// Current shell projection snapshot for rendering and tests.
     pub fn projection_snapshot(&self) -> ShellProjectionSnapshot {
         self.shell.projection_snapshot()
+    }
+
+    /// Build one bounded, renderer-shaped visual movement request.
+    ///
+    /// Complete logical-line windows are required here. Centered partial windows
+    /// are deliberately rejected until the renderer has a wrap-phase checkpoint
+    /// seam; accepting their row/X facts would silently change movement geometry.
+    fn visual_navigation_action(
+        &self,
+        ui: &egui::Ui,
+        direction: VisualNavigationDirection,
+        extend: bool,
+    ) -> Option<DesktopAction> {
+        const WINDOW_BYTES: usize = 96 * 1024;
+        let buffer_id = self
+            .projection_snapshot()
+            .active_buffer_projection
+            .buffer_id?;
+        let viewport = self
+            .projection_snapshot()
+            .active_buffer_projection
+            .viewport?;
+        let projection = match self.app.visual_navigation_projection(buffer_id) {
+            Ok(value) => value,
+            Err(_) => {
+                return None;
+            }
+        };
+        let paint_geometry = visual_navigation_paint_geometry(ui, buffer_id)?;
+        let wrap_width = paint_geometry.wrap_width;
+        let mut source_rows = Vec::with_capacity(projection.carets.len());
+        let mut target_rows = Vec::with_capacity(projection.carets.len());
+        for caret in &projection.carets {
+            let source_window =
+                match self
+                    .app
+                    .visual_navigation_window(buffer_id, caret.head, WINDOW_BYTES)
+                {
+                    Ok(window) => window,
+                    Err(_) => {
+                        return None;
+                    }
+                };
+            if source_window.snapshot_id != projection.snapshot_id
+                || source_window.buffer_version != projection.buffer_version
+                || !source_window.complete_logical_start
+                || !source_window.complete_logical_end
+            {
+                return None;
+            }
+            let source_line = visual_navigation_line_model(&source_window)?;
+            let boundaries = visual_navigation_columns(&source_window)?;
+            let source = visual_navigation_selected_row_for_line(
+                ui,
+                &source_line,
+                wrap_width,
+                &boundaries,
+                VisualNavigationRowRequest::Source {
+                    byte_column: caret.head.byte_column,
+                    affinity: caret.affinity,
+                },
+            )
+            .ok()?;
+            let source_row = source.row.clone();
+            let source_x = source.source_x?;
+            let target_row_index = match direction {
+                VisualNavigationDirection::Up => source_row.row_index?.checked_sub(1),
+                VisualNavigationDirection::Down => source_row
+                    .row_index?
+                    .checked_add(1)
+                    .filter(|&index| source_row.row_count.is_some_and(|count| index < count)),
+            };
+            let source_at_document_edge = match direction {
+                VisualNavigationDirection::Up => {
+                    source_window.line == 0 && source_row.row_index == Some(0)
+                }
+                VisualNavigationDirection::Down => {
+                    source_window.line.saturating_add(1) >= projection.logical_line_count
+                        && source_row.row_index.is_some()
+                        && source_row.row_index
+                            == source_row.row_count.map(|count| count.saturating_sub(1))
+                }
+            };
+            let desired_x = caret.preferred_x.map(|x| x.value).unwrap_or(source_x.value);
+            let source = legion_protocol::VisualNavigationSourceRow {
+                row: source_row,
+                source_x,
+            };
+            let target = if source_at_document_edge {
+                // A caret at the true document edge is an intentional visual
+                // no-op. Keep its row aligned so other carets in the same
+                // request can still move atomically.
+                source.row.clone()
+            } else {
+                let target_line = if target_row_index.is_some() {
+                    source_window.line
+                } else {
+                    match direction {
+                        VisualNavigationDirection::Up => source_window.line.checked_sub(1)?,
+                        VisualNavigationDirection::Down => source_window.line.checked_add(1)?,
+                    }
+                };
+                let target_window = self
+                    .app
+                    .visual_navigation_window(
+                        buffer_id,
+                        VisualNavigationPosition {
+                            line: target_line,
+                            byte_column: 0,
+                        },
+                        WINDOW_BYTES,
+                    )
+                    .ok()?;
+                if target_window.snapshot_id != projection.snapshot_id
+                    || target_window.buffer_version != projection.buffer_version
+                    || !target_window.complete_logical_start
+                    || !target_window.complete_logical_end
+                {
+                    return None;
+                }
+                let target_line_model = visual_navigation_line_model(&target_window)?;
+                let target_boundaries = visual_navigation_columns(&target_window)?;
+                let select = |row_index: u32, preferred_x: f32| {
+                    visual_navigation_selected_row_for_line(
+                        ui,
+                        &target_line_model,
+                        wrap_width,
+                        &target_boundaries,
+                        VisualNavigationRowRequest::Target {
+                            row_index,
+                            preferred_x,
+                        },
+                    )
+                    .ok()
+                };
+                let merge =
+                    |left: crate::view::VisualNavigationSelectedRow,
+                     right: Option<crate::view::VisualNavigationSelectedRow>| {
+                        let mut row = left.row;
+                        if let Some(right) = right {
+                            for stop in right.row.stops {
+                                if !row
+                                    .stops
+                                    .iter()
+                                    .any(|existing| existing.position == stop.position)
+                                {
+                                    row.stops.push(stop);
+                                }
+                            }
+                        }
+                        row
+                    };
+                if let Some(row_index) = target_row_index {
+                    let left = select(row_index, desired_x)?;
+                    let right = caret
+                        .preferred_x
+                        .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
+                        .and_then(|x| select(row_index, x.value));
+                    merge(left, right)
+                } else {
+                    let row_index = if direction == VisualNavigationDirection::Down {
+                        0
+                    } else {
+                        let target_focus = target_window
+                            .logical_end_byte
+                            .saturating_sub(target_window.line_start_byte);
+                        let last = visual_navigation_selected_row_for_line(
+                            ui,
+                            &target_line_model,
+                            wrap_width,
+                            &target_boundaries,
+                            VisualNavigationRowRequest::Source {
+                                byte_column: target_focus,
+                                affinity: legion_protocol::CaretAffinity::Upstream,
+                            },
+                        )
+                        .ok()?;
+                        last.row.row_index?
+                    };
+                    let left = select(row_index, desired_x)?;
+                    let right = caret
+                        .preferred_x
+                        .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
+                        .and_then(|x| select(row_index, x.value));
+                    merge(left, right)
+                }
+            };
+            source_rows.push(source);
+            target_rows.push(target);
+        }
+        let snapshot_for_layout = self.projection_snapshot();
+        let layout_id = visual_navigation_layout_id(
+            &viewport,
+            wrap_width,
+            &snapshot_for_layout.settings_projection,
+            paint_geometry.pixels_per_point,
+        );
+        Some(DesktopAction::MoveVertically {
+            buffer_id: Some(buffer_id),
+            request: VisualNavigationRequest {
+                expected_snapshot_id: projection.snapshot_id,
+                expected_buffer_version: projection.buffer_version,
+                expected_carets: projection.carets,
+                layout_id,
+                direction,
+                extend,
+                source_rows,
+                target_rows,
+            },
+        })
+    }
+
+    fn visual_navigation_geometry_ready(
+        &self,
+        ui: &egui::Ui,
+        buffer_id: BufferId,
+        viewport: &legion_protocol::ViewportProjection,
+    ) -> bool {
+        visual_navigation_paint_geometry(ui, buffer_id).is_some_and(|geometry| {
+            geometry.line_wrapping_policy == viewport.line_wrapping_policy
+                && (viewport.line_wrapping_policy
+                    != legion_protocol::LineWrappingPolicy::FixedColumn
+                    || geometry.wrap_column == viewport.wrap_column)
+        })
     }
 
     /// Test-only access to the app-owned debounce queue. The caller supplies a
@@ -4161,6 +4450,13 @@ pub fn desktop_native_options(title: &str) -> eframe::NativeOptions {
     }
 }
 
+#[derive(Debug)]
+struct DeferredEditorEvents {
+    buffer_id: Option<BufferId>,
+    focus_owner: Option<egui::Id>,
+    events: Vec<egui::Event>,
+}
+
 /// Renderer-backed eframe app wrapping a [`DesktopRuntime`].
 ///
 /// This is the adapter-local root widget. It is intentionally public so the
@@ -4194,6 +4490,8 @@ pub struct DesktopEframeApp {
     /// the following frame -- by which point the event that caused it is gone.
     /// Latched here and spent on the next change.
     focus_navigation_pending: bool,
+    deferred_editor_events: Option<DeferredEditorEvents>,
+    deferred_input_at: Option<Instant>,
 }
 
 impl DesktopEframeApp {
@@ -4205,6 +4503,8 @@ impl DesktopEframeApp {
             focus_owner: None,
             focus_arrived_by_tab: false,
             focus_navigation_pending: false,
+            deferred_editor_events: None,
+            deferred_input_at: None,
             frame_timing: FrameTimingRecorder::new(),
         }
     }
@@ -4258,7 +4558,8 @@ impl DesktopEframeApp {
             // path production uses. The heavy workbench view is intentionally
             // not rendered here: it is irrelevant to input routing and rendering
             // it repeatedly in a headless context is costly.
-            self.handle_keyboard(ui);
+            let keyboard_input = ui.input(|input| input.clone());
+            self.handle_keyboard(ui, keyboard_input, None);
             self.render_command_palette_overlay(ui.ctx());
         })
     }
@@ -4320,6 +4621,12 @@ impl DesktopEframeApp {
         self.focus_navigation_pending
     }
 
+    /// Return renderer timing state for deterministic headless frame tests.
+    #[doc(hidden)]
+    pub fn frame_timing_summary_for_test(&self) -> crate::metrics::FrameTimingSummary {
+        self.frame_timing.summary()
+    }
+
     /// Return the real editor allocation recorded by the last full frame.
     #[doc(hidden)]
     pub fn last_editor_rect_for_test(&self) -> Option<egui::Rect> {
@@ -4359,22 +4666,38 @@ impl DesktopEframeApp {
     /// view, and the command-palette overlay.
     fn render_app_frame(&mut self, ui: &mut egui::Ui) {
         let frame_start = Instant::now();
+        let mut keyboard_input = ui.input(|input| input.clone());
+        // Measure only events delivered by this frame. Deferred events are
+        // replayed below and must not create a second latency sample.
+        let has_keyboard_input = keyboard_input
+            .events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Key { .. } | egui::Event::Text { .. }));
+        let mut replay_input_timestamp = None;
+        if let Some(deferred) = self.deferred_editor_events.take() {
+            let current_snapshot = self.runtime.projection_snapshot();
+            let current_buffer = current_snapshot.active_buffer_projection.buffer_id;
+            let replay_for_editor = current_buffer == deferred.buffer_id
+                && self.runtime.editor_input_enabled(&current_snapshot)
+                && !ui.ctx().text_edit_focused()
+                && ui.memory(|memory| memory.focused()) == deferred.focus_owner;
+            if replay_for_editor {
+                replay_input_timestamp = self.deferred_input_at.take();
+                let mut events = deferred.events;
+                events.append(&mut keyboard_input.events);
+                keyboard_input.events = events;
+            } else {
+                self.deferred_input_at = None;
+            }
+        }
 
         // Record input timing when keyboard events are present this frame.
         // FrameTimingRecorder::record_paint_now (called at the end of this
         // method) only produces a sample when a pending input exists, so
         // frames without keyboard input are effectively no-ops for timing.
-        let has_keyboard_input = ui.input(|input| {
-            input
-                .events
-                .iter()
-                .any(|event| matches!(event, egui::Event::Key { .. } | egui::Event::Text { .. }))
-        });
-        if has_keyboard_input {
-            self.frame_timing.record_input_now();
-        }
+        let raw_input_timestamp = has_keyboard_input.then(Instant::now);
+        let input_timestamp = replay_input_timestamp.or(raw_input_timestamp);
 
-        self.handle_keyboard(ui);
         // Tier 1 A8: poll active terminal every frame so output streams without
         // requiring another user gesture after launch.
         {
@@ -4446,12 +4769,34 @@ impl DesktopEframeApp {
             .runtime
             .view
             .render_with_state(ui, &snapshot, &view_state);
+        // Close the previous input sample at the end of the actual paint,
+        // before post-paint keyboard mutations are dispatched.
+        self.frame_timing.record_paint_now();
         self.runtime
             .persist_bottom_panel_selection(output.selected_bottom_panel);
         self.runtime
             .persist_dock_fractions(output.observed_dock_fractions);
         for action in output.actions {
             self.runtime.dispatch_ui_action(action);
+        }
+        // Render first so visual navigation consumes the measured editor
+        // allocation from this pass. The handler then consumes the input
+        // snapshot captured before egui rendered, preserving text/key order.
+        let had_keyboard_events = !keyboard_input.events.is_empty();
+        self.handle_keyboard(ui, keyboard_input, input_timestamp);
+        if let Some(input_at) = input_timestamp
+            && self.deferred_input_at != Some(input_at)
+        {
+            // Dispatched input is handled after the current snapshot was
+            // painted; deferred input remains outside the recorder until it is
+            // actually replayed.
+            self.frame_timing.record_input(input_at);
+        }
+        if had_keyboard_events {
+            // Keyboard mutations are dispatched after this frame's paint so
+            // navigation can use measured geometry. Paint the resulting
+            // snapshot on the next frame.
+            ui.ctx().request_repaint();
         }
         if let Some(delay) = self.runtime.proposal_observation_retry_delay() {
             ui.ctx().request_repaint_after(delay);
@@ -4461,10 +4806,6 @@ impl DesktopEframeApp {
         }
         self.render_command_palette_overlay(ui.ctx());
 
-        // Close the input-to-paint timing sample. If record_input_now was
-        // called at the top of this frame, this produces a measured sample;
-        // otherwise it is a no-op (no pending input to close).
-        self.frame_timing.record_paint_now();
         self.frame_timing
             .record_frame_duration(frame_start.elapsed());
 
@@ -4473,7 +4814,12 @@ impl DesktopEframeApp {
         }
     }
 
-    fn handle_keyboard(&mut self, ui: &egui::Ui) {
+    fn handle_keyboard(
+        &mut self,
+        ui: &egui::Ui,
+        mut input: egui::InputState,
+        input_timestamp: Option<Instant>,
+    ) {
         let mut actions = Vec::new();
         let mut snapshot = self.runtime.projection_snapshot();
         // Interactive TextEdit widgets (BYOK, terminal input) keep focus across
@@ -4495,6 +4841,57 @@ impl DesktopEframeApp {
         });
         let editor_input_enabled =
             self.runtime.editor_input_enabled(&snapshot) && !interactive_widget_focused;
+        let has_visual_arrow = input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::ArrowUp | egui::Key::ArrowDown,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !modifiers.alt && !modifiers.command
+            )
+        });
+        if has_visual_arrow
+            && editor_input_enabled
+            && let (Some(buffer_id), Some(viewport)) = (
+                snapshot.active_buffer_projection.buffer_id,
+                snapshot.active_buffer_projection.viewport.as_ref(),
+            )
+            && !self
+                .runtime
+                .visual_navigation_geometry_ready(ui, buffer_id, viewport)
+        {
+            let buffer_id = snapshot.active_buffer_projection.buffer_id;
+            let events = input
+                .events
+                .into_iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Text(_) | egui::Event::Key { .. } | egui::Event::Ime(_)
+                    )
+                })
+                .collect();
+            let focus_owner = ui.memory(|memory| memory.focused());
+            if let Some(existing) = self.deferred_editor_events.as_mut()
+                && existing.buffer_id == buffer_id
+                && existing.focus_owner == focus_owner
+            {
+                existing.events.extend(events);
+            } else {
+                self.deferred_editor_events = Some(DeferredEditorEvents {
+                    buffer_id,
+                    focus_owner,
+                    events,
+                });
+            }
+            if self.deferred_input_at.is_none() {
+                self.deferred_input_at = input_timestamp;
+            }
+            ui.ctx().request_repaint();
+            return;
+        }
 
         // Clone the input state up front and release the context lock before
         // doing anything else. `Context::input` takes the context's write lock
@@ -4502,7 +4899,6 @@ impl DesktopEframeApp {
         // `ime_composition_state` re-enter the context via `data_mut`/`data`.
         // Running them inside the closure would deadlock on that lock, so all
         // handling below works from the cloned snapshot instead.
-        let mut input = ui.input(|input| input.clone());
         // Enter and Space belong to a focused control, not to the buffer.
         //
         // Tab to the Canvas rail control and press Enter: this handler ran
@@ -4983,7 +5379,19 @@ impl DesktopEframeApp {
                     if view_state.completion_popup_open || self.runtime.vim_consumes_text_input() {
                         None
                     } else {
-                        boundary_action_for_event(event, &snapshot).map(|_| index)
+                        if matches!(
+                            event,
+                            egui::Event::Key {
+                                key: egui::Key::ArrowUp | egui::Key::ArrowDown,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } if !modifiers.alt && !modifiers.command
+                        ) {
+                            Some(index)
+                        } else {
+                            boundary_action_for_event(event, &snapshot).map(|_| index)
+                        }
                     }
                 })
                 .collect::<Vec<_>>();
@@ -5045,7 +5453,33 @@ impl DesktopEframeApp {
                             && !self.runtime.vim_consumes_text_input()
                         {
                             let one = input_for_editor_event(&input, event);
-                            if let Some(action) = boundary_action_for_event(event, &snapshot) {
+                            let mut visual_attempted = false;
+                            let mut visual_dispatched = false;
+                            if !modifiers.alt
+                                && !modifiers.command
+                                && matches!(key, egui::Key::ArrowUp | egui::Key::ArrowDown)
+                            {
+                                visual_attempted = true;
+                                let direction = if *key == egui::Key::ArrowUp {
+                                    VisualNavigationDirection::Up
+                                } else {
+                                    VisualNavigationDirection::Down
+                                };
+                                if let Some(action) = self.runtime.visual_navigation_action(
+                                    ui,
+                                    direction,
+                                    modifiers.shift,
+                                ) {
+                                    self.dispatch_desktop_action(ui, action);
+                                    snapshot = self.runtime.projection_snapshot();
+                                    visual_dispatched = true;
+                                }
+                            }
+                            if visual_dispatched || visual_attempted {
+                                // Recognized visual arrows are consumed by this
+                                // route, including fail-closed incomplete windows.
+                            } else if let Some(action) = boundary_action_for_event(event, &snapshot)
+                            {
                                 self.dispatch_desktop_action(ui, action);
                             } else if *key == egui::Key::Backspace {
                                 self.dispatch_desktop_action(
@@ -6538,7 +6972,7 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use legion_protocol::{
@@ -6585,6 +7019,87 @@ mod tests {
                     .iter()
                     .any(|(_id, node)| node.label() == Some(label) || node.value() == Some(label))
             })
+    }
+
+    #[test]
+    fn deferred_visual_input_timing_waits_for_replay_and_result_paint() {
+        let workspace = TempWorkspace::new();
+        let file = workspace.path().join("deferred.txt");
+        fs::write(&file, "abc\ndef").expect("fixture should be written");
+        let runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(file.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open fixture");
+        let mut app = DesktopEframeApp::new(runtime);
+        let _ = app.run_headless_full_frame(egui::RawInput {
+            focused: true,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_200.0, 900.0),
+            )),
+            ..egui::RawInput::default()
+        });
+        let raw = palette_test_input(vec![
+            egui::Event::Text("X".to_string()),
+            egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: Some(egui::Key::ArrowDown),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Text("Y".to_string()),
+        ]);
+        let ctx = app.ctx.clone();
+        let _ = ctx.run_ui(raw, |ui| {
+            let snapshot = app.runtime.projection_snapshot();
+            let state = app.runtime.projection_view_state();
+            let _ = app.runtime.view.render_with_state(ui, &snapshot, &state);
+            app.handle_action(DesktopAction::SetLineWrappingPolicy {
+                policy: legion_protocol::LineWrappingPolicy::Viewport,
+                wrap_column: None,
+            })
+            .expect("settings action should be accepted after paint");
+            let input = ui.input(|input| input.clone());
+            app.handle_keyboard(ui, input, Some(Instant::now()));
+        });
+        assert!(app.deferred_editor_events.is_some());
+        assert_eq!(app.frame_timing_summary_for_test().sample_count, 0);
+
+        let _ = app.run_headless_full_frame(egui::RawInput {
+            focused: true,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_200.0, 900.0),
+            )),
+            ..egui::RawInput::default()
+        });
+        assert_eq!(app.frame_timing_summary_for_test().sample_count, 0);
+        assert!(app.deferred_editor_events.is_none());
+        let _ = app.run_headless_full_frame(egui::RawInput {
+            focused: true,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_200.0, 900.0),
+            )),
+            ..egui::RawInput::default()
+        });
+        assert_eq!(app.frame_timing_summary_for_test().sample_count, 1);
+        let text = app
+            .runtime_snapshot()
+            .active_buffer_projection
+            .small_buffer_preview
+            .expect("small fixture should remain projected");
+        assert_eq!(text, "Xabc\ndYef");
+        assert_eq!(text.matches('X').count(), 1);
+        assert_eq!(text.matches('Y').count(), 1);
+        let viewport = app
+            .runtime_snapshot()
+            .active_buffer_projection
+            .viewport
+            .expect("fixture viewport should remain projected");
+        assert_eq!((viewport.cursor.line, viewport.cursor.character), (1, 2));
     }
 
     #[test]

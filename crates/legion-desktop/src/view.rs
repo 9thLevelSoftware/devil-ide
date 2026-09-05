@@ -123,7 +123,8 @@ use legion_protocol::{
     ProposalLifecycleState, ProposalRejectionReason, ProposalRiskLabel, ProtocolDiagnosticSeverity,
     ProtocolTextRange, TextCoordinate, Utf16Range, ViewportLineTruncationState,
     ViewportProjectionMode, ViewportScroll, ViewportSemanticTokenKind,
-    ViewportSemanticTokenOverlay,
+    ViewportSemanticTokenOverlay, VisualNavigationPosition, VisualNavigationRow,
+    VisualNavigationSourceRow, VisualNavigationStop, VisualNavigationX,
 };
 use legion_ui::{
     ActiveBufferProjection, DebugStepKindProjection, DockLayout, DockMode, DockSide,
@@ -3910,13 +3911,28 @@ fn render_code_lines(
                     .viewport
                     .as_ref()
                     .map(|viewport| viewport.snapshot_id);
-                let galley = cached_code_line_galley(
-                    ui,
-                    active_buffer_id,
-                    snapshot_id,
-                    line,
-                    code_line_wrap_width(model, ui.available_width()),
+                let (line_wrapping_policy, wrap_column, wrap_width) = active_code_line_wrap_config(
+                    model.settings.line_wrapping_policy,
+                    model.settings.wrap_column,
+                    viewport.map(|viewport| (viewport.line_wrapping_policy, viewport.wrap_column)),
+                    ui.available_width(),
                 );
+                if let Some(buffer_id) = active_buffer_id {
+                    record_visual_navigation_paint_geometry(
+                        ui,
+                        VisualNavigationPaintGeometry {
+                            buffer_id,
+                            wrap_width,
+                            line_wrapping_policy,
+                            wrap_column,
+                            paint_pass: ui.ctx().cumulative_pass_nr(),
+                            pixels_per_point: ui.ctx().pixels_per_point(),
+                            font_size_bucket: code_line_font_size_bucket(),
+                        },
+                    );
+                }
+                let galley =
+                    cached_code_line_galley(ui, active_buffer_id, snapshot_id, line, wrap_width);
                 let response =
                     ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::click_and_drag()));
                 if let Some(position) = response.interact_pointer_pos()
@@ -4180,15 +4196,105 @@ fn code_char_width() -> f32 {
     theme::tokens().typography.code as f32 * 0.62
 }
 
-fn code_line_wrap_width(model: &DesktopProjectionViewModel, available_width: f32) -> f32 {
-    match model.settings.line_wrapping_policy {
+fn code_line_wrap_width_for_policy(
+    policy: LineWrappingPolicy,
+    wrap_column: Option<u32>,
+    available_width: f32,
+) -> f32 {
+    match policy {
         LineWrappingPolicy::Off => f32::INFINITY,
         LineWrappingPolicy::Viewport => available_width.max(1.0),
         LineWrappingPolicy::FixedColumn => {
-            let column = model.settings.wrap_column.unwrap_or(120).max(1);
+            let column = wrap_column.unwrap_or(120).max(1);
             column as f32 * code_char_width()
         }
     }
+}
+
+fn active_code_line_wrap_config(
+    settings_policy: LineWrappingPolicy,
+    settings_wrap_column: Option<u32>,
+    viewport: Option<(LineWrappingPolicy, Option<u32>)>,
+    available_width: f32,
+) -> (LineWrappingPolicy, Option<u32>, f32) {
+    let (policy, wrap_column) = viewport.unwrap_or((settings_policy, settings_wrap_column));
+    let width = code_line_wrap_width_for_policy(policy, wrap_column, available_width);
+    (policy, wrap_column, width)
+}
+
+/// Return the same wrap width used by the code canvas for visual navigation.
+pub fn visual_navigation_wrap_width(
+    viewport: &legion_protocol::ViewportProjection,
+    available_width: f32,
+    _line_numbers_visible: bool,
+    _item_spacing: f32,
+) -> f32 {
+    match viewport.line_wrapping_policy {
+        LineWrappingPolicy::Off => f32::INFINITY,
+        LineWrappingPolicy::Viewport => {
+            // `available_width` is the width remaining after the row gutters
+            // have been laid out. Do not reconstruct gutter dimensions here:
+            // those values are theme- and renderer-dependent.
+            available_width.max(1.0)
+        }
+        LineWrappingPolicy::FixedColumn => {
+            viewport.wrap_column.unwrap_or(120).max(1) as f32 * code_char_width()
+        }
+    }
+}
+
+/// The layout facts captured while the code row is actually being painted.
+///
+/// Input handlers must use these facts instead of reconstructing the canvas
+/// width from the outer panel (which has already consumed the gutters).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VisualNavigationPaintGeometry {
+    /// Buffer whose code row established this geometry.
+    pub buffer_id: legion_protocol::BufferId,
+    /// Measured galley wrap width after row gutters were laid out.
+    pub wrap_width: f32,
+    /// Wrapping policy used for the painted galley.
+    pub line_wrapping_policy: LineWrappingPolicy,
+    /// Fixed-column value used when applicable.
+    pub wrap_column: Option<u32>,
+    /// Egui cumulative pass in which the row was painted.
+    pub paint_pass: u64,
+    /// Device scale used for the painted layout.
+    pub pixels_per_point: f32,
+    /// Font-size bucket used by the galley cache.
+    pub font_size_bucket: u32,
+}
+
+/// Read paint geometry for a buffer when it belongs to the current egui pass
+/// and font scale. A missing or stale value means callers should request a
+/// fresh paint before shaping input geometry.
+pub fn visual_navigation_paint_geometry(
+    ui: &egui::Ui,
+    buffer_id: legion_protocol::BufferId,
+) -> Option<VisualNavigationPaintGeometry> {
+    let geometry = ui.ctx().data(|data| {
+        data.get_temp::<VisualNavigationPaintGeometry>(egui::Id::new((
+            "legion_desktop_visual_navigation_paint_geometry",
+            buffer_id.0,
+        )))
+    });
+    let geometry = geometry?;
+    (geometry.paint_pass == ui.ctx().cumulative_pass_nr()
+        && geometry.pixels_per_point.to_bits() == ui.ctx().pixels_per_point().to_bits()
+        && geometry.font_size_bucket == code_line_font_size_bucket())
+    .then_some(geometry)
+}
+
+fn record_visual_navigation_paint_geometry(ui: &egui::Ui, geometry: VisualNavigationPaintGeometry) {
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new((
+                "legion_desktop_visual_navigation_paint_geometry",
+                geometry.buffer_id.0,
+            )),
+            geometry,
+        );
+    });
 }
 
 const CODE_LINE_GALLEY_CACHE_LIMIT: usize = 512;
@@ -4297,6 +4403,513 @@ fn shape_code_line_galley(
         wrap_width,
         egui::FontSelection::Default,
     )
+}
+
+/// Failure returned when a bounded renderer fragment cannot provide visual rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualNavigationGeometryError {
+    /// The wrap width is NaN, negative infinity, or a nonpositive finite value.
+    NonFiniteWrapWidth,
+    /// The fragment does not carry an absolute logical byte origin.
+    MissingLineOrigin,
+    /// A requested byte column is not a UTF-8 boundary in the fragment.
+    InvalidBoundary,
+    /// The requested position is outside this bounded fragment and needs a wider window.
+    NeedMoreWindow,
+    /// The caller's stop budget is too small for the selected rows.
+    StopBudgetExceeded,
+    /// The supplied fragment exceeds the renderer's bounded shaping budget.
+    FragmentTooLarge,
+    /// Focused visual navigation requires a complete logical line.
+    PartialFragment,
+    /// A target preferred X must be finite and nonnegative.
+    InvalidPreferredX,
+}
+
+/// Convert one bounded code-line galley into protocol visual-row facts.
+///
+/// `valid_byte_columns` is supplied as logical-line-relative columns by the editor/app window request. The renderer
+/// does not infer grapheme boundaries or materialize an entire logical line: it only
+/// emits stops for those validated logical byte columns that occur on selected rows.
+pub fn visual_navigation_rows_for_line(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    valid_byte_columns: &[u64],
+    stop_budget: usize,
+) -> Result<Vec<VisualNavigationRow>, VisualNavigationGeometryError> {
+    visual_navigation_rows_for_line_with_focus(
+        ui,
+        line,
+        wrap_width,
+        valid_byte_columns,
+        stop_budget,
+        None,
+    )
+}
+
+fn visual_navigation_rows_for_line_with_focus(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    valid_byte_columns: &[u64],
+    stop_budget: usize,
+    focus_byte_column: Option<u64>,
+) -> Result<Vec<VisualNavigationRow>, VisualNavigationGeometryError> {
+    if wrap_width.is_nan()
+        || wrap_width == f32::NEG_INFINITY
+        || (wrap_width.is_finite() && wrap_width <= 0.0)
+    {
+        return Err(VisualNavigationGeometryError::NonFiniteWrapWidth);
+    }
+    let origin = line
+        .line_start_byte_offset
+        .ok_or(VisualNavigationGeometryError::MissingLineOrigin)?;
+    let logical_base = line
+        .byte_range
+        .start
+        .checked_sub(origin)
+        .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+    const MAX_REQUESTED_STOPS: usize = 4_096;
+    if valid_byte_columns.len() > MAX_REQUESTED_STOPS {
+        return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+    }
+    const MAX_FRAGMENT_BYTES: usize = 96 * 1024;
+    if line.text.len() > MAX_FRAGMENT_BYTES {
+        return Err(VisualNavigationGeometryError::FragmentTooLarge);
+    }
+    let galley = shape_code_line_galley(ui, line, wrap_width);
+    let logical_line = line.number.saturating_sub(1);
+    let complete_fragment = matches!(line.truncation_state, ViewportLineTruncationState::None);
+    let mut requested = valid_byte_columns.to_vec();
+    requested.sort_unstable();
+    requested.dedup();
+    if focus_byte_column.is_none() && requested.len() > stop_budget {
+        return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+    }
+    let mut scalar_start = 0usize;
+    let mut rows = Vec::new();
+    let mut remaining_budget = stop_budget;
+    let mut emitted = vec![false; requested.len()];
+
+    for (row_index, row) in galley.rows.iter().enumerate() {
+        let scalar_end = scalar_start + row.char_count_excluding_newline();
+        let start_byte = absolute_byte_at_scalar(line, scalar_start)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let end_byte = absolute_byte_at_scalar(line, scalar_end)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let start_column = logical_base
+            .checked_add(start_byte)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let end_column = logical_base
+            .checked_add(end_byte)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        if requested.last().is_some_and(|&last| start_column > last) {
+            break;
+        }
+        let mut stops = Vec::new();
+        let first = requested.partition_point(|&column| column < start_column);
+        let last = requested.partition_point(|&column| column <= end_column);
+        let row_requested = &requested[first..last];
+        // Keep one stop available for every later shaped row. This preserves
+        // the actual adjacent target row when a complete line has many
+        // boundaries, while the total emitted stops still obey the editor's
+        // 4096-stop validation bound.
+        let rows_remaining = galley.rows.len().saturating_sub(row_index + 1);
+        let row_budget = remaining_budget.saturating_sub(rows_remaining).max(1);
+        let selected = bounded_row_boundary_indices(row_requested, row_budget, focus_byte_column);
+        for offset in selected {
+            let byte_column = row_requested[offset];
+            let request_index = first + offset;
+            let local_byte = byte_column
+                .checked_sub(logical_base)
+                .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+            let Some(scalar) = scalar_for_local_byte(line, local_byte) else {
+                return Err(VisualNavigationGeometryError::InvalidBoundary);
+            };
+            if scalar < scalar_start || scalar > scalar_end {
+                continue;
+            }
+            if remaining_budget == 0 {
+                return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+            }
+            remaining_budget -= 1;
+            emitted[request_index] = true;
+            let affinity = if scalar == scalar_start && row_index > 0 {
+                legion_protocol::CaretAffinity::Downstream
+            } else {
+                legion_protocol::CaretAffinity::Upstream
+            };
+            let x = galley
+                .pos_from_cursor(egui::text::CCursor {
+                    index: scalar,
+                    prefer_next_row: affinity == legion_protocol::CaretAffinity::Downstream,
+                })
+                .min
+                .x;
+            stops.push(VisualNavigationStop {
+                position: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column,
+                },
+                x: VisualNavigationX { value: x },
+                affinity,
+            });
+        }
+        if !stops.is_empty() {
+            rows.push(VisualNavigationRow {
+                logical_line,
+                start: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column: start_column,
+                },
+                end: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column: end_column,
+                },
+                row_index: complete_fragment.then_some(row_index as u32),
+                row_count: complete_fragment.then_some(galley.rows.len() as u32),
+                stops,
+            });
+        }
+        scalar_start = scalar_end;
+    }
+    if rows.is_empty() || emitted.iter().any(|&seen| !seen) {
+        return Err(VisualNavigationGeometryError::NeedMoreWindow);
+    }
+    Ok(rows)
+}
+
+/// Select at most the renderer's stop budget while retaining the source or
+/// preferred-X neighborhood. Complete row spans remain exact even when a
+/// logical line has more than 4096 grapheme boundaries.
+fn bounded_row_boundary_indices(
+    boundaries: &[u64],
+    budget: usize,
+    focus: Option<u64>,
+) -> Vec<usize> {
+    if boundaries.len() <= budget {
+        return (0..boundaries.len()).collect();
+    }
+    if budget == 0 {
+        return Vec::new();
+    }
+    let pivot = focus
+        .map(|value| boundaries.partition_point(|&boundary| boundary < value))
+        .unwrap_or(boundaries.len() / 2)
+        .min(boundaries.len().saturating_sub(1));
+    let start = pivot
+        .saturating_sub(budget / 2)
+        .min(boundaries.len().saturating_sub(budget));
+    (start..start + budget).collect()
+}
+
+/// Build one source-row fact and its preferred rendered X from a bounded galley.
+pub fn visual_navigation_source_row_for_line(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    source_byte_column: u64,
+    source_affinity: legion_protocol::CaretAffinity,
+    valid_byte_columns: &[u64],
+    stop_budget: usize,
+) -> Result<VisualNavigationSourceRow, VisualNavigationGeometryError> {
+    let rows = visual_navigation_rows_for_line_with_focus(
+        ui,
+        line,
+        wrap_width,
+        valid_byte_columns,
+        stop_budget,
+        Some(source_byte_column),
+    )?;
+    for row in rows {
+        let source_x = row
+            .stops
+            .iter()
+            .find(|stop| {
+                stop.position.byte_column == source_byte_column && stop.affinity == source_affinity
+            })
+            .map(|stop| stop.x);
+        if let Some(source_x) = source_x {
+            return Ok(VisualNavigationSourceRow { row, source_x });
+        }
+    }
+    Err(VisualNavigationGeometryError::NeedMoreWindow)
+}
+
+/// Select exactly one shaped row without materializing every stop in a long
+/// complete line. The supplied boundaries remain the sole source of valid
+/// caret positions; the renderer never reconstructs grapheme boundaries.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VisualNavigationRowRequest {
+    /// Select the row containing this byte boundary and affinity.
+    Source {
+        /// Logical-line-relative UTF-8 byte column.
+        byte_column: u64,
+        /// Wrap-side affinity at the source boundary.
+        affinity: legion_protocol::CaretAffinity,
+    },
+    /// Select a shaped visual row and nearest supplied stop to this X.
+    Target {
+        /// Zero-based visual row index.
+        row_index: u32,
+        /// Preferred row-local rendered X.
+        preferred_x: f32,
+    },
+}
+
+/// Result of focused row shaping. `source_x` is populated for a source
+/// request and `target_stop` for a target request. The row contains at most
+/// three stops: the selected stop and any supplied true row endpoints.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualNavigationSelectedRow {
+    /// Exact shaped row span and bounded stops.
+    pub row: VisualNavigationRow,
+    /// Source stop X, when the request selected a source row.
+    pub source_x: Option<VisualNavigationX>,
+    /// Nearest target stop, when the request selected a target row.
+    pub target_stop: Option<VisualNavigationStop>,
+}
+
+/// Shape one source or target row from a complete logical-line fragment.
+///
+/// Unlike `visual_navigation_rows_for_line`, this focused API accepts more
+/// than 4096 supplied boundaries, validates the complete input up front, and
+/// emits only the requested row's source/nearest-X stop plus valid endpoints.
+pub fn visual_navigation_selected_row_for_line(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    valid_byte_columns: &[u64],
+    request: VisualNavigationRowRequest,
+) -> Result<VisualNavigationSelectedRow, VisualNavigationGeometryError> {
+    if wrap_width.is_nan()
+        || wrap_width == f32::NEG_INFINITY
+        || (wrap_width.is_finite() && wrap_width <= 0.0)
+    {
+        return Err(VisualNavigationGeometryError::NonFiniteWrapWidth);
+    }
+    let origin = line
+        .line_start_byte_offset
+        .ok_or(VisualNavigationGeometryError::MissingLineOrigin)?;
+    let logical_base = line
+        .byte_range
+        .start
+        .checked_sub(origin)
+        .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+    const MAX_FRAGMENT_BYTES: usize = 96 * 1024;
+    if line.text.len() > MAX_FRAGMENT_BYTES {
+        return Err(VisualNavigationGeometryError::FragmentTooLarge);
+    }
+    if !matches!(line.truncation_state, ViewportLineTruncationState::None) {
+        return Err(VisualNavigationGeometryError::PartialFragment);
+    }
+    if valid_byte_columns.len() > MAX_FRAGMENT_BYTES + 1 {
+        return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+    }
+    if let VisualNavigationRowRequest::Target { preferred_x, .. } = request
+        && (!preferred_x.is_finite() || preferred_x < 0.0)
+    {
+        return Err(VisualNavigationGeometryError::InvalidPreferredX);
+    }
+    let mut byte_to_scalar = HashMap::with_capacity(line.text.chars().count() + 1);
+    for (scalar, (byte, _)) in line.text.char_indices().enumerate() {
+        byte_to_scalar.insert(byte as u64, scalar);
+    }
+    byte_to_scalar.insert(line.text.len() as u64, line.text.chars().count());
+    let mut requested = valid_byte_columns.to_vec();
+    requested.sort_unstable();
+    requested.dedup();
+    // Validate every supplied boundary before choosing a row. This prevents
+    // a focused request from silently hiding a missing or invalid window edge.
+    for &column in &requested {
+        let local = column
+            .checked_sub(logical_base)
+            .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?;
+        if !byte_to_scalar.contains_key(&local) {
+            return Err(VisualNavigationGeometryError::NeedMoreWindow);
+        }
+    }
+    let galley = shape_code_line_galley(ui, line, wrap_width);
+    let logical_line = line.number.saturating_sub(1);
+    let complete_fragment = matches!(line.truncation_state, ViewportLineTruncationState::None);
+    let wanted_row = match request {
+        VisualNavigationRowRequest::Source { .. } => None,
+        VisualNavigationRowRequest::Target { row_index, .. } => Some(row_index),
+    };
+    let mut scalar_start = 0usize;
+    for (row_index, shaped_row) in galley.rows.iter().enumerate() {
+        let scalar_end = scalar_start + shaped_row.char_count_excluding_newline();
+        let start_column = logical_base
+            .checked_add(
+                absolute_byte_at_scalar(line, scalar_start)
+                    .ok_or(VisualNavigationGeometryError::InvalidBoundary)?,
+            )
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let end_column = logical_base
+            .checked_add(
+                absolute_byte_at_scalar(line, scalar_end)
+                    .ok_or(VisualNavigationGeometryError::InvalidBoundary)?,
+            )
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let source_match = match request {
+            VisualNavigationRowRequest::Source {
+                byte_column,
+                affinity,
+            } => {
+                requested.binary_search(&byte_column).is_ok()
+                    && byte_to_scalar
+                        .get(
+                            &byte_column
+                                .checked_sub(logical_base)
+                                .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?,
+                        )
+                        .is_some_and(|&scalar| {
+                            scalar >= scalar_start
+                                && scalar <= scalar_end
+                                && (affinity == legion_protocol::CaretAffinity::Downstream
+                                    || row_index == 0
+                                    || scalar != scalar_start)
+                        })
+            }
+            VisualNavigationRowRequest::Target { .. } => false,
+        };
+        if matches!(request, VisualNavigationRowRequest::Source { .. }) && !source_match {
+            scalar_start = scalar_end;
+            continue;
+        }
+        if wanted_row.is_some_and(|wanted| wanted != row_index as u32) {
+            scalar_start = scalar_end;
+            continue;
+        }
+        let first = requested.partition_point(|&column| column < start_column);
+        let last = requested.partition_point(|&column| column <= end_column);
+        let mut candidates = Vec::with_capacity(last.saturating_sub(first));
+        for &byte_column in &requested[first..last] {
+            let scalar = *byte_to_scalar
+                .get(
+                    &byte_column
+                        .checked_sub(logical_base)
+                        .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?,
+                )
+                .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?;
+            if scalar < scalar_start || scalar > scalar_end {
+                continue;
+            }
+            let affinity = if scalar == scalar_start && row_index > 0 {
+                legion_protocol::CaretAffinity::Downstream
+            } else {
+                legion_protocol::CaretAffinity::Upstream
+            };
+            let x = galley
+                .pos_from_cursor(egui::text::CCursor {
+                    index: scalar,
+                    prefer_next_row: affinity == legion_protocol::CaretAffinity::Downstream,
+                })
+                .min
+                .x;
+            candidates.push(VisualNavigationStop {
+                position: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column,
+                },
+                x: VisualNavigationX { value: x },
+                affinity,
+            });
+        }
+        let selected = match request {
+            VisualNavigationRowRequest::Source {
+                byte_column,
+                affinity,
+            } => candidates
+                .iter()
+                .find(|stop| stop.position.byte_column == byte_column && stop.affinity == affinity)
+                .cloned(),
+            VisualNavigationRowRequest::Target { preferred_x, .. } if preferred_x.is_finite() => {
+                candidates.iter().cloned().min_by(|left, right| {
+                    let ld = (left.x.value - preferred_x).abs();
+                    let rd = (right.x.value - preferred_x).abs();
+                    ld.partial_cmp(&rd)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| left.position.byte_column.cmp(&right.position.byte_column))
+                })
+            }
+            VisualNavigationRowRequest::Target { .. } => None,
+        };
+        let Some(selected) = selected else {
+            scalar_start = scalar_end;
+            continue;
+        };
+        let mut stops = Vec::with_capacity(3);
+        for stop in candidates.iter().filter(|stop| {
+            stop.position.byte_column == start_column || stop.position.byte_column == end_column
+        }) {
+            if !stops
+                .iter()
+                .any(|existing: &VisualNavigationStop| existing.position == stop.position)
+            {
+                stops.push(stop.clone());
+            }
+        }
+        if !stops.iter().any(|stop| stop.position == selected.position) {
+            stops.push(selected.clone());
+        }
+        stops.sort_by(|left, right| {
+            left.position
+                .byte_column
+                .cmp(&right.position.byte_column)
+                .then_with(|| {
+                    affinity_sort_key(left.affinity).cmp(&affinity_sort_key(right.affinity))
+                })
+        });
+        stops.truncate(3);
+        let row = VisualNavigationRow {
+            logical_line,
+            row_index: complete_fragment.then_some(row_index as u32),
+            row_count: complete_fragment.then_some(galley.rows.len() as u32),
+            start: VisualNavigationPosition {
+                line: logical_line,
+                byte_column: start_column,
+            },
+            end: VisualNavigationPosition {
+                line: logical_line,
+                byte_column: end_column,
+            },
+            stops,
+        };
+        return Ok(VisualNavigationSelectedRow {
+            row,
+            source_x: matches!(request, VisualNavigationRowRequest::Source { .. })
+                .then_some(selected.x),
+            target_stop: matches!(request, VisualNavigationRowRequest::Target { .. })
+                .then_some(selected),
+        });
+    }
+    Err(VisualNavigationGeometryError::NeedMoreWindow)
+}
+
+fn affinity_sort_key(affinity: legion_protocol::CaretAffinity) -> u8 {
+    match affinity {
+        legion_protocol::CaretAffinity::Upstream => 0,
+        legion_protocol::CaretAffinity::Downstream => 1,
+    }
+}
+
+fn absolute_byte_at_scalar(line: &DesktopCodeLineViewModel, scalar: usize) -> Option<u64> {
+    let local = if scalar == line.text.chars().count() {
+        line.text.len()
+    } else {
+        line.text.char_indices().nth(scalar)?.0
+    };
+    Some(local as u64)
+}
+
+fn scalar_for_local_byte(line: &DesktopCodeLineViewModel, local_byte: u64) -> Option<usize> {
+    let local = usize::try_from(local_byte).ok()?;
+    if local > line.text.len() || !line.text.is_char_boundary(local) {
+        return None;
+    }
+    Some(line.text[..local].chars().count())
 }
 
 fn code_line_galley_cache_key(
@@ -5808,10 +6421,9 @@ fn render_settings_panel(
             });
         }
         if view.settings_section == SettingsSection::Editor {
-            // Line wrapping had a projected setting, an intent, and app
-            // handling that `code_line_wrap_width` genuinely reads — and no
-            // control, so the only value reachable in the product was the
-            // default.
+            // Line wrapping has a projected setting, an intent, and app
+            // handling, but no control, so the only value reachable in the
+            // product was the default.
             ui.horizontal_wrapped(|ui| {
                 ui.label(theme::label("Line wrapping"));
                 for (policy, label) in [
@@ -11730,6 +12342,51 @@ mod tests {
         assert_eq!(rows[1].line_start_utf16_offset, Some(2));
         assert!(rows[2].text.is_empty());
         assert_eq!(rows[2].line_start_byte_offset, Some(8));
+    }
+
+    #[test]
+    fn active_viewport_wrap_config_shapes_rows_even_when_settings_differ() {
+        let text = "one two three four five six";
+        let model = DesktopCodeLineViewModel {
+            number: 1,
+            text: text.to_string(),
+            highlights: Vec::new(),
+            truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(0, text.len() as u64),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: text.encode_utf16().count() as u32,
+                },
+            },
+            line_start_byte_offset: Some(0),
+            line_start_utf16_offset: Some(0),
+        };
+        let settings_width =
+            active_code_line_wrap_config(LineWrappingPolicy::Off, None, None, 48.0).2;
+        let (_, _, viewport_width) = active_code_line_wrap_config(
+            LineWrappingPolicy::Off,
+            None,
+            Some((LineWrappingPolicy::Viewport, None)),
+            48.0,
+        );
+        assert!(settings_width.is_infinite());
+        assert_eq!(viewport_width, 48.0);
+        let context = egui::Context::default();
+        let mut row_count = 0;
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            row_count = shape_code_line_galley(ui, &model, viewport_width)
+                .rows
+                .len();
+        });
+        assert!(
+            row_count > 1,
+            "active viewport width must drive actual wrapping"
+        );
     }
 
     #[test]

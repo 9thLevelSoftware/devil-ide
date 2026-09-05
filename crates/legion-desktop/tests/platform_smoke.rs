@@ -115,6 +115,30 @@ fn platform_smoke_metrics_compute_percentiles_and_variance() {
 }
 
 #[test]
+fn platform_smoke_metrics_keep_oldest_input_pending_until_a_later_paint() {
+    let mut recorder = FrameTimingRecorder::new();
+    let start = Instant::now();
+    recorder.record_input(start);
+    recorder.record_input(start + Duration::from_millis(1));
+
+    // One paint closes the grouped pending span using the oldest arrival. The
+    // newer input is already reflected by the same resulting snapshot.
+    recorder.record_paint(start + Duration::from_millis(10));
+    assert_eq!(recorder.input_paint_samples().len(), 1);
+    approx_eq(
+        recorder
+            .input_paint_samples()
+            .next()
+            .expect("first sample")
+            .duration_ms,
+        10.0,
+    );
+
+    recorder.record_paint(start + Duration::from_millis(21));
+    assert_eq!(recorder.input_paint_samples().len(), 1);
+}
+
+#[test]
 fn platform_smoke_report_markdown_contains_required_fields() {
     let report = RendererSmokeReport {
         command: "cargo run -p legion-desktop -- --smoke".to_string(),

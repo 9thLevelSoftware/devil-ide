@@ -12,7 +12,7 @@ use legion_protocol::{
     LegionWorkflowSessionId, LegionWorkflowSignOffId, LegionWorkflowVerificationGateId,
     LineWrappingPolicy, ProposalCancellationReason, ProposalId, ProposalRejectionReason,
     ProposalRollbackReason, ProtocolTextRange, RemoteWorkspaceSessionId, SnapshotId,
-    TerminalSessionId, TextCoordinate, ViewportScroll,
+    TerminalSessionId, TextCoordinate, ViewportScroll, VisualNavigationRequest,
 };
 use legion_protocol::{CapabilityId, PluginContribution, PluginId};
 use legion_ui::{
@@ -934,6 +934,13 @@ pub enum DesktopAction {
         head: TextCoordinate,
         /// Rendered wrap-side affinity for the head.
         head_affinity: CaretAffinity,
+    },
+    /// Move all ordered carets through app-owned shaped visual-row facts.
+    MoveVertically {
+        /// Optional target buffer; falls back to the active tab.
+        buffer_id: Option<BufferId>,
+        /// Renderer-shaped request with snapshot/version and exact caret guards.
+        request: VisualNavigationRequest,
     },
     /// Move every active editor caret to a semantic line/document boundary.
     MoveToBoundary {
@@ -2604,6 +2611,12 @@ impl DesktopCommandBridge {
                     head,
                     head_affinity,
                 }
+            }),
+            DesktopAction::MoveVertically {
+                buffer_id,
+                request,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::MoveVertically { buffer_id, request }
             }),
             DesktopAction::ReplaceDirectedCarets { text } => self
                 .with_active_buffer(snapshot, |buffer_id| {
