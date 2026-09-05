@@ -1,0 +1,54 @@
+# S0-01 inventory decisions
+
+## Authority and status
+
+The approved product completion design (`docs/superpowers/specs/2026-09-04-product-completion-design.md`) governs scope and acceptance. The kanban and historical ledgers remain source history and implementation leads. `acceptance` is `unassessed` for every inventory row; kanban `done` values and retained evidence do not promote acceptance.
+
+The inventory contains 197 rows: 165 current kanban task outcome rows from 163 task IDs plus 32 additional source-scope outcomes (22 approved feature families and GAP-01..GAP-10). Legacy task IDs are retained in `legacy_ids`; source references carry path and stable task/scope identity. S0-02 owns population of scenario/configuration IDs, so those arrays are intentionally empty here.
+
+## Conflict resolutions
+
+- **LSP startup wording:** the user guide's implicit Rust-LSP startup wording conflicts with current source tests and the language evidence showing capability-gated startup. The current source behavior and approved completion design govern implementation facts; the ordinary user workflow must be qualified explicitly before acceptance.
+- **Fixture defaults:** historical fixture/default claims are treated as test setup evidence only. They do not establish a product default or acceptance result; a native scenario must verify the default.
+- **Canvas scope:** existing canvas arrangement evidence is not the full `docs/ui/canvas-workspace-direction.md` promise. The full direction is retained as a separate scope requirement and remains unassessed.
+- **Release capability:** historical release/readiness claims do not establish signed, update-safe product capability. GAP-01 through GAP-10 and the release/escrow sources remain required outcomes. The current dry-run/unsigned limits are implementation facts until qualifying evidence exists.
+- **VSIX metadata restriction:** the full approved completion specification supersedes the historical metadata-only VSIX restriction. The promised extension surface includes the required webview, notebook, custom-editor and storage capabilities. A future authority amendment is still required before Node activation; metadata parsing or installation alone cannot satisfy that promise.
+- **Stale surface-freeze citations:** ADR-0046 freeze citations are retained as historical/deferred-source references. The current project instructions state that the freeze is retired; deferred rows remain requirements only where their own source/evidence requires them.
+
+## Unavailable sources
+
+The backlog documents that `.hermes/plans/2026-06-13_173122-legion-current-to-ga-kanban-plan.md` was removed; it is unavailable and was not inferred. `ENGINEERING_STATUS.md`, `ENGINEERING_AUDIT.yaml`, and `ENGINEERING_PLAN.yaml` are also unavailable after cleanup. Historical `plans/legion-production-master-plan-v0.1.md` and the e2e source package remain supporting leads only; their historical implementation claims were not treated as current truth. The accessible replacement/source trail is the current kanban, completion traceability register, approved completion design, v0.2 master plan, current roadmap/ledgers, installed-product sequence, canvas direction, ADRs, and retained evidence.
+
+## Inventory method
+
+Implementation classifications are conservatively `partial` pending direct current code/evidence review. No classification was copied from kanban status or inferred from filename existence; no row is marked `implemented` or `absent` without a verified trace. This is an inventory signal, not acceptance, and the remaining classification slice is explicitly open for follow-on review.
+
+## S0-01a lossless acceptance extraction (2026-09-04)
+
+This bounded repair used Python 3.12.14 with stdlib `tomllib` to parse `plans/kanban/legion-ga-backlog.toml`. It found 163 task IDs and 165 acceptance strings. Task rows in `requirements.json` now retain their existing fields and stable first IDs, use the exact acceptance string as `title`, and carry an additional `source_refs` entry identifying the exact task and one-based acceptance ordinal (`<task-id> acceptance[<ordinal>]`). The two multi-outcome tasks, `P1.F3.T2` and `P6.F5.T1`, retain their original first requirement ID and receive an additional `-02` row ID. The 32 non-kanban rows were preserved unchanged.
+
+Validation confirmed 197 total rows, 165 task outcome rows, 32 non-kanban rows, exact `(legacy id, ordinal, text)` mapping, unique requirement IDs, zero missing task IDs, and `acceptance = "unassessed"` for all rows. This increment does not mark S0-01 complete.
+
+The other independent S0-01 review items remain explicitly open for separate increments: concrete expansion of family/GAP placeholder rows, implementation classification, stable package definitions/routing, internal-to-product `protected_product_ids`, and the existing internal self-link concern. Duplicating rows did not repair those links; that is outside S0-01a.
+
+## S0-01b package and internal-outcome mapping repair (2026-09-04)
+
+This bounded mapping repair assigns each of the 197 existing rows to a package defined by the Stage 0, Manual/language, AI/team, or production-qualification plan headings. Invented aggregate owners (`S0-BASELINE`, `S1-MANUAL`, `S2-LANGUAGE`, `S3-AI`, `S4-ORCHESTRATION`, and `S5-EXTENSIONS-TEAM`) were replaced with concrete package IDs such as `S1-04`, `S2-02`, `S3-05`, `S4-02`, `S5-09`, and `XQ-01`-family IDs where the qualification plan owns the outcome. Stage values now follow the package's declared implementation stage, including the XQ exceptions (`XQ-02` stage 1, `XQ-03`/`XQ-07`/`XQ-08` stage 0, and `XQ-04`/`XQ-05`/`XQ-06` stage 1).
+
+Routing rationale by legacy family: P0 documentation, governance, and licensing rows route to S0-06; Kanban inventory rows route to S0-01; baseline/build and gate observations route to S0-05. P1 routes by Manual authority, workbench, editing, and evidence outcomes to S1-02/03/04/08. P2 routes language lifecycle/refactoring/debug/test outcomes to S2-02/03/04/05, while terminal, search, and Git outcomes route to S1-06/05/07. P3-P5 route proposal, provider, context, Assist, Delegate, sandbox, and agent-loop outcomes to S3-01/02/04/05/06. P6 routes workflow orchestration to S4-02/03/04/05, with the Canvas outcome owned by S1-03C. P7 routes extension outcomes to S5-01/02/03. P8 routes directly to XQ qualification packages. P9 routes evaluation to S3-07, security audit to XQ-08, collaboration to S5-09/10/11, and training/telemetry to S5-12/13. Family and GAP placeholders receive dominant implementation owners using the same semantic routing; their concrete expansion remains open for a later increment.
+
+Internal rows now reference an existing relevant product requirement through `protected_product_ids`; product rows have empty protected lists. No internal row self-links, no source-extracted title/ID/source-ref fields, and no `acceptance` or `implementation` values were changed. This remains provisional routing metadata and is not implementation or acceptance evidence; no S0-01 completion claim is made.
+
+### S0-01b review-round-1 fixes (2026-09-05)
+
+The review correction keeps `owner_role = "luna_worker"` because the current user instruction explicitly selects Luna execution; this is execution ownership for this bounded inventory repair and does not override the selected package's future implementation/reviewer model.
+
+`P9.F2.T2` now routes to `S3-04`/stage S3 for secret-rule implementation and negative coverage, while `P9.F2.T3` routes to `S5-11`/stage S5 for signed policy bundles, ceilings, retention, and export enforcement. `P9.F2.T1` is an internal security-model requirement owned by `S5-11`; `P9.F2.T4` remains an internal external-audit requirement owned by `XQ-08`. Neither audit nor qualification is treated as construction of the product outcomes.
+
+Internal protection relationships were re-evaluated against the final `kind` assignments. P0.F4.T1/T2 protect documentation-truth GAP-08/GAP-01; P0.F4.T3/T4 protect Manual distribution/package outcomes (FAMILY-22 and GAP-02); P0.F4.T5 protects the GP-1/2/3 product journeys; P0.F4.T6 protects the Rust diagnostics product outcome; P0.F5 protects the recovered SmallCode corpus outcome; P8.F1 protects release/install outcomes (GAP-02 and FAMILY-22); P9.F2 internal rows protect enterprise security policy (FAMILY-19). No internal row points to an internal row or to itself.
+
+`COMP-SCOPE-GAP-06` remains a provisional dominant owner for the Manual/no-egress family only. Its source expansion remains open across S0-05, XQ-01, and later qualification; `XQ-06` alone is not claimed to construct the full artifact or no-egress controls.
+
+### S0-01b review-round-2 fix (2026-09-05)
+
+`P9.F2.T2` is classified as internal because its exact acceptance is fixture/test proof for secret-detection rules. It remains owned by `S3-04` at stage S3 and protects the existing product redaction outcome `COMP-P4-F2-T3-1` (“The bytes sent equal the manifest minus redacted items, with no other delta.”).
