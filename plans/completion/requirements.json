@@ -13654,75 +13654,130 @@
       "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-20",
-      "title": "Training/telemetry",
-      "kind": "product",
-      "required": true,
+      "id": "COMP-TRAIN-001",
+      "title": "Stage 0 publishes a finite telemetry and training matrix naming supported consent modes, retention/export destinations, training corpus and model/runtime configurations, reproducibility thresholds, and Manual/offline privacy rules.",
+      "kind": "product", "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-20"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-20 and Stage 0 matrix contract" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12/S5-13 Stage 0 dependencies" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "EvidenceRun and qualification prerequisites" }
       ],
-      "legacy_ids": [],
-      "stage": "S5",
-      "package_id": "S5-12",
-      "owner_role": "luna_worker",
-      "depends_on": [],
-      "implementation": "partial",
-      "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
-      "defect_ids": []
+      "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-002",
+      "title": "The product separates crash, product, and raw-training consent with default-off state, enterprise ceilings, visible purpose/retention/destination, and revocation that stops future capture or upload.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12 consent controls" },
+        { "path": "crates/legion-telemetry/src/lib.rs", "identity": "telemetry consent and spool substrate" },
+        { "path": "crates/legion-app/src/first_run.rs", "identity": "first-run consent substrate" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-ENT-003", "COMP-P4-F3-T4-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-003",
+      "title": "Each consented capture previews the exact scope, purpose, retention, destination, provenance, and redaction result before upload, and emitted telemetry remains metadata-only unless the corresponding raw-training consent is active.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/ARCHITECTURE_AUTHORITY_BOUNDARIES.md", "identity": "metadata-first observability and explicit raw-trace consent" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12 preview/redaction/provenance output" },
+        { "path": "crates/legion-observability/src/training.rs", "identity": "consent and redaction-boundary substrate" },
+        { "path": "crates/legion-retention/src/training.rs", "identity": "raw trace opt-in retention substrate" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-CTX-005", "COMP-TRUST-004", "COMP-P4-F3-T4-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-004",
+      "title": "Consented telemetry and training data use a recoverable local spool and explicit upload route with network failure retry, expiry/revocation handling, corrupt-spool recovery, and no upload before current consent.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12 local spool/upload/revocation requirements" },
+        { "path": "crates/legion-telemetry/src/lib.rs", "identity": "spool/exporter substrate" },
+        { "path": "crates/legion-retention/src/training.rs", "identity": "consent expiry and retention substrate" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-TRAIN-002", "COMP-TRAIN-003"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-005",
+      "title": "Authorized users can export and delete consented telemetry or raw training bundles, with retention enforcement, ciphertext/key removal, deletion handles, tombstones or receipts, and truthful restart recovery.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12 export/delete/retention output" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "privacy/deletion EvidenceRun oracle" },
+        { "path": "crates/legion-retention/tests/privacy_deletion.rs", "identity": "deletion and tombstone substrate" },
+        { "path": "crates/legion-retention/src/training.rs", "identity": "training retention substrate" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-ENT-004", "COMP-P8-F3-T3-1", "COMP-TRAIN-002"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-006",
+      "title": "The packaged Manual/offline artifact proves no telemetry, provider, update, crash, or training egress regardless of stored consent through OS-level external network capture; Manual never uploads and never falls back to a consented route.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12 Manual/offline no-egress output" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-06 OS-level no-egress qualification" },
+        { "path": "crates/legion-app/tests/manual_zero_egress.rs", "identity": "Manual zero-egress policy substrate" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-P1-F2-T1-1", "COMP-TRUST-005", "COMP-TRAIN-002"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-007",
+      "title": "The current consented corpus export filters denied, missing, expired, and revoked traces, enforces metadata-only redaction and secret scanning, binds source/corpus/dataset fingerprints, and rejects tampering at the trainer boundary.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-13 corpus/export provenance requirements" },
+        { "path": "xtask/src/training_corpus.rs", "identity": "consented corpus export and re-check" },
+        { "path": "crates/legion-observability/src/training.rs", "identity": "training candidate redaction and consent" },
+        { "path": "training/README.md", "identity": "supported training input and consent manifest" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-13", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-P9-F4-T1-1", "COMP-P9-F4-T2-1", "COMP-TRAIN-003"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-008",
+      "title": "A real consent-gated adapter run is reproducible under the ratified model/runtime/hardware matrix and records code, corpus, consent, base revision, tokenizer, seed, hyperparameters, resources, adapter hash, held-out comparison, Legion-Bench comparison, and independent accept/reject review.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-13 QLoRA/evaluation workflow" },
+        { "path": "training/qlora_train.py", "identity": "adapter training entrypoint" },
+        { "path": "training/eval_adapter.py", "identity": "held-out adapter comparison" },
+        { "path": "training/test_qlora_train.py", "identity": "training provenance checks" },
+        { "path": "plans/evidence/training-flywheel/P9-F4-T3-consented-corpus-legion-bench-comparison.md", "identity": "training comparison evidence" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-13", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-TRAIN-007", "COMP-P9-F4-T3-1", "COMP-P9-F1-T1-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-010",
+      "title": "The S5-12 candidate-feedback workflow lets an authorized user review, accept, reject, correct, withdraw, or delete a training candidate while preserving consent, provenance, redaction, retention, and downstream corpus eligibility.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12 candidate-feedback workflow output" },
+        { "path": "crates/legion-observability/src/training.rs", "identity": "training candidate metadata and lifecycle substrate" },
+        { "path": "crates/legion-retention/src/training.rs", "identity": "candidate retention and deletion substrate" },
+        { "path": "training/README.md", "identity": "consented corpus input boundary" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-TRAIN-002", "COMP-TRAIN-003"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-TRAIN-009",
+      "title": "Packaged Stage 5 qualification exercises ordinary consent, preview, redaction, upload, revocation, export, deletion, retention, Manual/offline, corpus, training, evaluation, restart, failure, and recovery journeys with external effect oracles across the ratified matrix.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-20 product acceptance" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12/S5-13 acceptance outputs" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "canonical EvidenceRun qualification" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-15", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-TRAIN-002", "COMP-TRAIN-003", "COMP-TRAIN-004", "COMP-TRAIN-005", "COMP-TRAIN-006", "COMP-TRAIN-007", "COMP-TRAIN-008", "COMP-TRAIN-010", "COMP-ENT-006"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-21",

@@ -289,3 +289,43 @@ that would otherwise dangle: `COMP-P9-F2-T1-1` now protects `COMP-ENT-003`
 `COMP-ENT-006` (packaged Stage-5 enterprise qualification). All other retained
 fields remain byte-decoded equal to baseline; validation covers both
 `depends_on` and `protected_product_ids` referential integrity.
+
+## S0-01w training/telemetry scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-20` from baseline `48ec816` is replaced by
+ten finite product outcomes `COMP-TRAIN-001..010`. The rows cover the required
+S0/S0-02 compatibility matrix; separate crash/product/raw-training consent;
+preview, metadata-first redaction, provenance, spool/upload and revocation;
+export, deletion, retention and tombstones; packaged Manual/offline no-egress
+regardless of stored consent; the S5-12 candidate-feedback workflow; consented corpus export and trainer-boundary checks; reproducible adapter
+training with held-out and Legion-Bench comparisons; and packaged Stage-5
+qualification through external effect oracles.
+
+The approved product-completion design supplies the family promise and finite
+matrix rule. The AI-team plan supplies S5-12/S5-13 workflows, dependencies,
+failure cases, and provenance requirements. The production-qualification plan
+supplies the EvidenceRun and OS-level no-egress/deletion boundaries. Current
+source and retained evidence are classified conservatively: consent service,
+spool/upload, retention, corpus export, and training primitives are `partial`
+where traces exist; finite matrices, packaged Stage-5 qualification, and the
+missing end-to-end consent UI are `absent`. Every new row remains
+`acceptance: unassessed`; substrate or historical evidence is not treated as
+product acceptance.
+
+The new rows preserve canonical ownership instead of duplicating it. Every
+S5-12/S5-13 row depends on `COMP-TRAIN-001`, making the S0/S0-02 matrix an
+explicit prerequisite. Their dependencies retain `COMP-ENT-003`/`COMP-ENT-004` for enterprise policy and
+retention, `COMP-CTX-005` for provenance, `COMP-TRUST-004`/`COMP-TRUST-005`
+for audit and egress, `COMP-P4-F3-T4-1` for metadata-only telemetry,
+`COMP-P8-F3-T3-1` for metadata-only export, and `COMP-P9-F4-T1-1..T3-1` for
+the retained training-flywheel outcomes. `COMP-TRAIN-006` adds the packaged
+Manual/offline network-capture requirement without changing the existing
+Manual owner. No retained row referenced the removed family placeholder, so no
+authorized rewiring was required.
+
+The exact UTF-8 Git blob at `48ec816` was compared object-by-object: all 391
+non-family objects are unchanged, and the register is now 401 rows. Validation
+found unique IDs, zero dangling `depends_on` or `protected_product_ids` edges,
+an acyclic graph, and existing literal source paths for every new row. Existing
+directory-valued historical evidence references remain unchanged as retained
+baseline data; the new inventory uses literal files only.
