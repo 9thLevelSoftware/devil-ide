@@ -154,3 +154,10 @@ Assist/PROV/CTX/P3/P4 owners remain unchanged; exact overlap is mapped in
 proposal, cancellation, cleanup, and projection substrate; durable resume is
 `absent`; packaged native acceptance is `absent`. All acceptance remains
 `unassessed`, and this increment does not claim S0 completion.
+
+
+## S0-01q multi-agent and interoperability scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-14` row from baseline `327bf69` is replaced by twelve atomic rows `COMP-SCOPE-FAMILY-14-01..12`. The rows cover editable plans and dependencies, scheduling and concurrent workers, isolation, budgets, conflict resolution, proposal-only merge readiness, fleet controls, interruption/recovery, truthful command-center projection, production MCP client interoperability, external ACP-agent containment, and packaged native qualification. Shared Delegate, provider, context, proposal, checkpoint, terminal, and build/test promises remain canonical dependencies; no duplicate Assist/Delegate/PROV/CTX/shared rows are introduced. Existing editor routing remains untouched. All acceptance values are `unassessed`; current source classifications are conservative and native qualification is `absent`. Literal source paths and stable identities are recorded in `orchestration-scope-audit.md`.
+
+Family-14-10 classification correction: current `crates/legion-ai-providers/src/lib.rs` contains bounded `McpClient<T>` behavior for registry validation, list/reload, resource/prompt/tool request construction, and permission-gated tool calls. This supports `implementation = partial`; the complete named-peer supervision, reconnect, and packaged qualification promise remains unproven, and acceptance remains `unassessed`.

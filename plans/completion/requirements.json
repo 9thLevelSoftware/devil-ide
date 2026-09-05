@@ -12146,71 +12146,522 @@
       "depends_on": ["COMP-PROV-011", "COMP-CTX-010", "COMP-SCOPE-FAMILY-13-06", "COMP-SCOPE-FAMILY-13-08", "COMP-SCOPE-FAMILY-13-09"], "implementation": "absent", "acceptance": "unassessed",
       "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-PROV-011", "COMP-CTX-010"], "defect_ids": []
     },
-    {
-      "id": "COMP-SCOPE-FAMILY-14",
-      "title": "Multi-agent workflows",
+{
+      "id": "COMP-SCOPE-FAMILY-14-01",
+      "title": "Editable multi-agent plans define ordered workers, dependencies, scopes, permissions, budgets, approval policy, and resumable state.",
       "kind": "product",
       "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-14"
-        },
         {
           "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
           "identity": "required feature families"
         },
         {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
         },
         {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
         },
         {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
+          "path": "crates/legion-agent/src/plan.rs",
+          "identity": "editable plan types"
         },
         {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
+          "path": "crates/legion-agent/src/dag.rs",
+          "identity": "dependency graph types"
         },
         {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
+          "path": "crates/legion-agent/src/state.rs",
+          "identity": "workflow state"
         }
       ],
       "legacy_ids": [],
       "stage": "S4",
       "package_id": "S4-02",
-      "owner_role": "luna_worker",
-      "depends_on": [],
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-13-01",
+        "COMP-SCOPE-FAMILY-13-08"
+      ],
       "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-02",
+      "title": "Dependency scheduling executes ready workers in order, runs independent lane mates concurrently, and blocks dependents after failed or conflicted prerequisites.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-agent/src/coordinator.rs",
+          "identity": "worker coordination"
+        },
+        {
+          "path": "crates/legion-agent/src/scheduler.rs",
+          "identity": "dependency scheduler"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-01"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-03",
+      "title": "Each worker runs in an isolated disposable worktree or copy with enforced scope, tool permissions, and process cleanup.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-agent/src/scope.rs",
+          "identity": "worker scope enforcement"
+        },
+        {
+          "path": "crates/legion-agent/src/worktree.rs",
+          "identity": "isolated worker workspace"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-02",
+        "COMP-P5-F2-T2-1",
+        "COMP-P5-F2-T4-1"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-04",
+      "title": "The fleet enforces aggregate and per-worker time, token, tool, output, and process budgets with truthful exhaustion outcomes.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-agent/src/coordinator.rs",
+          "identity": "worker budget coordination"
+        },
+        {
+          "path": "crates/legion-agent/src/scheduler.rs",
+          "identity": "scheduler limits"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-02",
+        "COMP-PROV-006"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-05",
+      "title": "Overlapping or conflicting worker edits are detected, pause affected dependents, and produce a reviewable conflict-resolution proposal.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-agent/src/merge_readiness.rs",
+          "identity": "merge readiness and conflicts"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "workflow conflict supervision substrate"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-02",
+        "COMP-P3-F2-T1-1"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-06",
+      "title": "Worker outputs and multi-file changes remain proposal-mediated; final merge readiness includes complete evidence and per-hunk approval before mutation.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-agent/src/merge_readiness.rs",
+          "identity": "proposal merge readiness"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "proposal ownership substrate"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-05",
+        "COMP-P3-F2-T1-1",
+        "COMP-P3-F2-T2-1",
+        "COMP-P3-F2-T3-1",
+        "COMP-P3-F2-T4-1"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-07",
+      "title": "Fleet controls expose permission grants and revocation, graceful stop, hard kill, cancellation, and denial outcomes without further unauthorized calls.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/fleet_board.rs",
+          "identity": "fleet controls"
+        },
+        {
+          "path": "crates/legion-desktop/src/workflow.rs",
+          "identity": "workflow control routing"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-03",
+      "owner_role": "terra_worker",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-02",
+        "COMP-SCOPE-FAMILY-14-03"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-08",
+      "title": "Interrupted work persists checkpoints and resumes deterministically after cancellation, crash, or restart without replaying completed workers or duplicating effects.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-agent/src/state.rs",
+          "identity": "worker checkpoint state"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "workflow recovery substrate"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-02",
+        "COMP-SCOPE-FAMILY-14-06",
+        "COMP-P3-F3-T1-1",
+        "COMP-P3-F3-T2-1",
+        "COMP-P3-F3-T3-1",
+        "COMP-P3-F3-T4-1"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-09",
+      "title": "The command center truthfully projects plan, dependency, worker, scope, budget, evidence, permission, conflict, and recovery state for inspection.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/plan_editor.rs",
+          "identity": "plan editor projection"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/fleet_card.rs",
+          "identity": "worker and fleet projection"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/agent_comm.rs",
+          "identity": "agent communication projection"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-03",
+      "owner_role": "terra_worker",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-01",
+        "COMP-SCOPE-FAMILY-14-05",
+        "COMP-SCOPE-FAMILY-14-08"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-10",
+      "title": "Legion acts as a production MCP client with named-server handshake, capability discovery, bounded per-tool invocation, permission and revocation, cancellation, audit, reconnect, and real resources/prompts/tools.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-ai-providers/src/lib.rs",
+          "identity": "bounded McpClient<T> registry, request, and permission substrate"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-04",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-01",
+        "COMP-SCOPE-FAMILY-14-02"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-11",
+      "title": "Legion interoperates with a named external ACP agent through negotiated identity and capabilities, scoped task/context exchange, streaming progress, proposal/evidence return, cancellation, restart, and equivalent containment.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "crates/legion-app/src/acp_host.rs",
+          "identity": "ACP host boundary"
+        },
+        {
+          "path": "crates/legion-agent/src/external.rs",
+          "identity": "external agent boundary"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-05",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-01",
+        "COMP-SCOPE-FAMILY-14-02",
+        "COMP-SCOPE-FAMILY-14-03"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+{
+      "id": "COMP-SCOPE-FAMILY-14-12",
+      "title": "Packaged native qualification demonstrates a real multi-worker cross-file task, conflict and approval handling, interruption/recovery, named MCP and ACP peers, external verification, and zero process or sandbox leaks.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "Complete multi-agent workflows"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 — Complete multi-agent workflows and interoperability"
+        },
+        {
+          "path": "xtask/src/main.rs",
+          "identity": "existing xtask acceptance command surface; Stage 4 collector absent"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 multi-agent scenario promise"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "Stage 4 MCP/ACP scenario promise"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-06",
+      "owner_role": "terra_worker",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-14-07",
+        "COMP-SCOPE-FAMILY-14-10",
+        "COMP-SCOPE-FAMILY-14-11"
+      ],
+      "implementation": "absent",
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
