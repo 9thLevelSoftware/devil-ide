@@ -7301,62 +7301,449 @@
       ]
     },
     {
-      "id": "COMP-SCOPE-FAMILY-03",
-      "title": "Canvas",
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-001",
+      "title": "The spatial Canvas provides bounded world pan and zoom controls with a stable viewport transform, discoverable reset/scale interaction, and predictable navigation across the arranged node surface.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/canvas_workspace.rs",
+          "identity": "render_canvas_workspace Scene pan/zoom transform"
+        },
+        {
+          "path": "crates/legion-desktop/tests/canvas_workspace.rs",
+          "identity": "panning_away_from_a_focused_card_is_not_undone; focusing_a_card_off_screen_brings_the_view_to_it"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-002",
+      "title": "Canvas nodes expose accessible pointer and keyboard movement that updates authoritative arrangement state, keeps the moved node visible, and preserves focus semantics during navigation.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "DesktopAction MoveCanvasNode and PlaceCanvasNodes"
+        },
+        {
+          "path": "crates/legion-desktop/src/workflow.rs",
+          "identity": "DesktopAction::MoveCanvasNode arrangement handling"
+        },
+        {
+          "path": "crates/legion-desktop/tests/canvas_workspace.rs",
+          "identity": "a_focused_card_can_be_moved_with_the_keyboard; dragging_a_card_moves_it_and_the_runtime_records_where"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-003",
+      "title": "Canvas connection ports let a person create, inspect, and remove typed edges between distinct cards through pointer or accessible activation, while rejecting self-connections and incomplete source/target gestures visibly.",
+      "implementation": "implemented",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "DesktopAction ConnectCanvasNodes and DisconnectCanvasNodes"
+        },
+        {
+          "path": "crates/legion-desktop/src/workflow.rs",
+          "identity": "DesktopAction::ConnectCanvasNodes and DisconnectCanvasNodes handling"
+        },
+        {
+          "path": "crates/legion-desktop/tests/canvas_workspace.rs",
+          "identity": "connecting_two_cards_records_an_edge; drawing_the_same_connection_again_removes_it; connection_ports_answer_activation_and_not_only_dragging"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-004",
+      "title": "The Canvas renders the promised spatial node kinds for files, tests, terminals, proposals, and Assist suggestions with truthful status and action affordances for each kind.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#node-kinds; File node, Test node, Terminal node, Proposal card, Assist suggestion card"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/canvas_workspace.rs",
+          "identity": "CanvasNode file-card projection; no non-file node-kind implementation"
+        },
+        {
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "render_fleet_canvas and render_delegated_canvas workflow surfaces"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-005",
+      "title": "The Canvas provides labeled visual groups, a graph-scope indicator, and a fixed navigator/minimap that remain coherent with the current node set and viewport.",
+      "implementation": "absent",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#edges-and-groups; groups and #screen-space-overlays; graph scope chip and navigator minimap"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/canvas_workspace.rs",
+          "identity": "current canvas renderer has no group or minimap projection"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-006",
+      "title": "Activating a Canvas card navigates to and focuses its owning buffer without creating a second editor authority, while keyboard and assistive traversal can reach cards, ports, and the Canvas surface with distinct names.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-deliberately-is-not; card focuses existing buffer and editor remains authority"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/canvas_workspace.rs",
+          "identity": "CanvasNode accessible_name and active-buffer projection"
+        },
+        {
+          "path": "crates/legion-desktop/tests/canvas_workspace.rs",
+          "identity": "cards_and_ports_are_published_as_controls; the_card_owning_the_active_buffer_is_marked_as_such"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-007",
+      "title": "Canvas workflow nodes expose real review and execution controls for proposals, tests, terminals, and delegated work, with actions routed through their owning workflow authority and visible lifecycle results.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#node-kinds; proposal/test/terminal workflow cards"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-fleet-01; workflow command-center execution, evidence, stop and merge readiness"
+        },
+        {
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "render_fleet_canvas and render_delegated_canvas workflow projections"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-008",
+      "title": "Derived relationship edges, when enabled by the accepted Canvas contract, carry explicit provenance, freshness, invalidation, and inspection state rather than being guessed or silently treated as person-drawn edges.",
+      "implementation": "absent",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#where-edges-and-groups-would-come-from; derived edge provenance and resolution gaps"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03b; derived-edge authority/provenance/staleness contract"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-deliberately-is-not; derived edges require a separate decision"
+        }
+      ]
+    },
+    {
+      "kind": "product",
+      "required": true,
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-03C",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": [],
+      "id": "COMP-CAN-009",
+      "title": "Each required Canvas journey records native per-configuration acceptance with real external effects, accessibility and performance evidence, and recovery results for focus loss, cancel, stale data, restart, and unavailable dependencies.",
+      "implementation": "partial",
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-03 Canvas"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c; native-product-acceptance Canvas scenarios and EvidenceRun"
+        },
+        {
+          "path": "plans/product-readiness-ledger.md",
+          "identity": "#performance-ui-accessibility; renderer-backed Canvas and cross-OS evidence limits"
+        },
+        {
+          "path": "crates/legion-desktop/tests/canvas_workspace.rs",
+          "identity": "rendered Canvas arrangement and accessibility tests; no native EvidenceRun acceptance"
+        }
+      ]
+    },
+    {
+      "id": "COMP-CAN-010",
+      "title": "The Canvas offers discoverable controls to add promised spatial working-set nodes, including files and terminals, and routes creation through the owning workspace or workflow authority with visible result and recovery.",
       "kind": "product",
       "required": true,
       "source_refs": [
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-03"
-        },
-        {
           "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
+          "identity": "#required-feature-families; family-03 Canvas"
         },
         {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-03c-implement-and-qualify-every-stage-1-canvas-outcome"
         },
         {
           "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
+          "identity": "#the-canvas-surface; full-vision spatial canvas"
+        },
+        {
+          "path": "plans/adrs/ADR-0051-canvas-workspace-surface.md",
+          "identity": "#what-the-canvas-is; authority and persistence"
+        },
+        {
+          "path": "docs/ui/canvas-workspace-direction.md",
+          "identity": "#screen-space-overlays; toolbar + File and + Terminal node creation controls"
+        },
+        {
+          "path": "crates/legion-desktop/src/view/canvas_workspace.rs",
+          "identity": "current file-card construction from open buffers"
         }
       ],
       "legacy_ids": [],
