@@ -150,12 +150,16 @@ fn release_rejects_required_unaccepted_rows_and_uncovered_matrix() {
     );
     let issues =
         validate_metadata_links(&requirements, &matrix, &scenarios, &[], "candidate-a", true);
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("REQ-1") && issue.contains("not accepted")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("CFG-1") && issue.contains("no eligible")));
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("REQ-1") && issue.contains("not accepted"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("CFG-1") && issue.contains("no eligible"))
+    );
 }
 
 #[test]
@@ -246,9 +250,11 @@ fn candidate_identity_is_case_sensitive() {
         "candidate-a",
         false,
     );
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("does not match selected candidate")));
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("does not match selected candidate"))
+    );
     assert!(issues.iter().any(|issue| issue.contains("lacks eligible")));
 }
 
@@ -261,15 +267,17 @@ fn failed_run_does_not_cancel_a_passed_run_for_same_candidate_pair() {
     );
     let mut failed = run("run-failed");
     failed.result = EvidenceResult::Failed;
-    assert!(validate_metadata_links(
-        &requirements,
-        &matrix,
-        &scenarios,
-        &[failed, run("run-passed")],
-        "candidate-a",
-        false,
-    )
-    .is_empty());
+    assert!(
+        validate_metadata_links(
+            &requirements,
+            &matrix,
+            &scenarios,
+            &[failed, run("run-passed")],
+            "candidate-a",
+            false,
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -365,12 +373,16 @@ fn unknown_requirement_scope_is_reported_from_a_known_scenario() {
         "candidate-a",
         false,
     );
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("unknown requirement scope")));
-    assert!(!issues
-        .iter()
-        .any(|issue| issue.contains("unknown scenario")));
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("unknown requirement scope"))
+    );
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| issue.contains("unknown scenario"))
+    );
 }
 
 #[test]
@@ -419,9 +431,11 @@ fn only_product_native_passed_real_required_runs_qualify() {
             "candidate-a",
             false,
         );
-        assert!(issues
-            .iter()
-            .any(|issue| issue.contains("REQ-1") && issue.contains("lacks eligible")));
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("REQ-1") && issue.contains("lacks eligible"))
+        );
     }
     let (requirements, matrix, scenarios) = docs(
         requirement("accepted", true, &["SCN-1"], &["CFG-1"]),
@@ -431,27 +445,31 @@ fn only_product_native_passed_real_required_runs_qualify() {
     let mut substituted = run("run-optional");
     substituted.dependencies[0].required_for_outcome = false;
     substituted.dependencies[0].execution = DependencyExecution::Substituted;
-    assert!(validate_metadata_links(
-        &requirements,
-        &matrix,
-        &scenarios,
-        &[substituted],
-        "candidate-a",
-        false
-    )
-    .is_empty());
+    assert!(
+        validate_metadata_links(
+            &requirements,
+            &matrix,
+            &scenarios,
+            &[substituted],
+            "candidate-a",
+            false
+        )
+        .is_empty()
+    );
     let mut substituted = run("run-required");
     substituted.dependencies[0].execution = DependencyExecution::Substituted;
-    assert!(validate_metadata_links(
-        &requirements,
-        &matrix,
-        &scenarios,
-        &[substituted],
-        "candidate-a",
-        false
-    )
-    .iter()
-    .any(|issue| issue.contains("lacks eligible")));
+    assert!(
+        validate_metadata_links(
+            &requirements,
+            &matrix,
+            &scenarios,
+            &[substituted],
+            "candidate-a",
+            false
+        )
+        .iter()
+        .any(|issue| issue.contains("lacks eligible"))
+    );
 }
 
 #[test]
@@ -479,18 +497,26 @@ fn bad_run_metadata_is_reported_even_without_accepted_rows() {
         false,
     );
     assert!(issues.iter().any(|issue| issue.contains("id is empty")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("duplicate evidence run id `run-duplicate`")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("candidate") && issue.contains("does not match")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("unknown scenario")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("unknown configuration")));
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("duplicate evidence run id `run-duplicate`"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("candidate") && issue.contains("does not match"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("unknown scenario"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("unknown configuration"))
+    );
 }
 
 #[test]
@@ -509,9 +535,11 @@ fn out_of_scope_and_nonreciprocal_metadata_cannot_satisfy_row() {
         false,
     );
     assert!(issues.iter().any(|issue| issue.contains("not reciprocal")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("no applicable scenario/configuration pair")));
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("no applicable scenario/configuration pair"))
+    );
 
     let (requirements, matrix, scenarios) = docs(
         requirement("accepted", true, &["SCN-1"], &["CFG-1"]),
@@ -526,10 +554,14 @@ fn out_of_scope_and_nonreciprocal_metadata_cannot_satisfy_row() {
         "candidate-a",
         false,
     );
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("outside scenario")));
-    assert!(issues
-        .iter()
-        .any(|issue| issue.contains("no applicable scenario/configuration pair")));
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("outside scenario"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("no applicable scenario/configuration pair"))
+    );
 }

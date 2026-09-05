@@ -1,3 +1,4 @@
+pub mod artifact_files;
 pub mod links;
 pub mod schema;
 pub mod structure;
