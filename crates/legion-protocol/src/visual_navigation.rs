@@ -165,6 +165,8 @@ pub struct VisualNavigationProjection {
     pub snapshot_id: SnapshotId,
     /// Current buffer version.
     pub buffer_version: BufferVersion,
+    /// Total logical lines in the current snapshot.
+    pub logical_line_count: u32,
     /// Exact ordered editor carets.
     pub carets: Vec<VisualNavigationCaret>,
 }

@@ -29,14 +29,21 @@ impl Drop for TempRoot {
 }
 
 fn app_with_file() -> (TempRoot, AppComposition, legion_protocol::BufferId) {
+    app_with_content("a\nb\nc\n", "vertical")
+}
+
+fn app_with_content(
+    content: &str,
+    name: &str,
+) -> (TempRoot, AppComposition, legion_protocol::BufferId) {
     let root = std::env::temp_dir().join(format!(
         "legion-vertical-navigation-{}-{}",
         std::process::id(),
         TEMP_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir(&root).expect("create temporary workspace");
-    let path = root.join("vertical.txt");
-    std::fs::write(&path, "a\nb\nc\n").expect("seed temporary file");
+    let path = root.join(format!("{name}.txt"));
+    std::fs::write(&path, content).expect("seed temporary file");
     let mut app = AppComposition::new();
     app.open_workspace(
         &root,
@@ -132,6 +139,25 @@ fn visual_navigation_projection_preserves_exact_caret_freshness() {
     assert_ne!(projection.snapshot_id, SnapshotId(0));
     assert_eq!(projection.carets.len(), 1);
     assert_eq!(projection.carets[0].head, pos(0, 0));
+    assert_eq!(projection.logical_line_count, 4);
+}
+
+#[test]
+fn visual_navigation_projection_reports_empty_document_line_count() {
+    let (_root, app, buffer_id) = app_with_content("", "empty");
+    let projection = app
+        .visual_navigation_projection(buffer_id)
+        .expect("visual navigation projection");
+    assert_eq!(projection.logical_line_count, 1);
+}
+
+#[test]
+fn visual_navigation_projection_reports_exact_trailing_newline_count() {
+    let (_root, app, buffer_id) = app_with_content("a\nb\n", "trailing");
+    let projection = app
+        .visual_navigation_projection(buffer_id)
+        .expect("visual navigation projection");
+    assert_eq!(projection.logical_line_count, 3);
 }
 
 #[test]

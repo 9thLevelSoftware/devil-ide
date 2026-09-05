@@ -18465,7 +18465,6 @@ impl AppComposition {
         buffer_id: BufferId,
     ) -> Result<VisualNavigationProjection, AppCompositionError> {
         let snapshot = self.editor.current_snapshot(buffer_id)?;
-        let metadata = self.editor.buffer_metadata(buffer_id)?;
         let carets = self
             .editor
             .directed_carets(buffer_id)?
@@ -18474,7 +18473,12 @@ impl AppComposition {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(VisualNavigationProjection {
             snapshot_id: snapshot.snapshot_id,
-            buffer_version: metadata.buffer_version,
+            buffer_version: snapshot.buffer_version,
+            logical_line_count: u32::try_from(snapshot.line_count).map_err(|_| {
+                AppCompositionError::Editor(EditorError::InvalidEdit(
+                    "visual navigation line count overflows wire coordinate",
+                ))
+            })?,
             carets,
         })
     }

@@ -45,6 +45,21 @@ fn visual_navigation_request_roundtrips_with_full_layout_identity() {
 }
 
 #[test]
+fn visual_navigation_projection_roundtrips_logical_line_count() {
+    let projection = VisualNavigationProjection {
+        snapshot_id: SnapshotId(0x1234),
+        buffer_version: BufferVersion(7),
+        logical_line_count: 3,
+        carets: vec![],
+    };
+    let value = serde_json::to_value(&projection).expect("projection serializes");
+    assert_eq!(value["logical_line_count"], 3);
+    let decoded: VisualNavigationProjection =
+        serde_json::from_value(value).expect("projection deserializes");
+    assert_eq!(decoded, projection);
+}
+
+#[test]
 fn visual_navigation_x_equality_is_bitwise_and_reflexive() {
     let nan = VisualNavigationX { value: f32::NAN };
     assert_eq!(nan, nan);
