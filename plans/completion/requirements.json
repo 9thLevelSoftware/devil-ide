@@ -13780,75 +13780,123 @@
       "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-21",
-      "title": "Platform quality",
-      "kind": "product",
-      "required": true,
+      "id": "COMP-PLAT-001",
+      "title": "Stage 0 publishes a finite native platform matrix naming supported Windows, macOS, and Linux versions/architectures, reference hardware, display/DPI classes, input and accessibility tools, and explicit unavailable or blocked configurations.",
+      "kind": "product", "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-21"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-21 and finite OS/hardware/accessibility matrix" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-02/XQ-03 matrix prerequisites" },
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "platform quality and supported platform direction" }
       ],
-      "legacy_ids": [],
-      "stage": "S0",
-      "package_id": "S0-05",
-      "owner_role": "luna_worker",
-      "depends_on": [],
-      "implementation": "partial",
-      "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
-      "defect_ids": []
+      "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-002",
+      "title": "The packaged native input path carries keyboard, pointer, text, clipboard, IME/CJK, and command input through the authoritative UI/app route with correct focus, Unicode behavior, dirty state, and no duplicate or bypassed actions on each supported platform.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "native-input acceptance boundary" },
+        { "path": "crates/legion-desktop/src/platform.rs", "identity": "desktop platform adapter" },
+        { "path": "crates/legion-desktop/tests/input_conformance.rs", "identity": "input/clipboard conformance substrate" },
+        { "path": "crates/legion-desktop/tests/ime_smoke.rs", "identity": "IME smoke substrate" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "S1-02", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-EDIT-002", "COMP-EDIT-006", "COMP-EDIT-007", "COMP-EDIT-008"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-003",
+      "title": "The packaged native UI exposes a usable accessibility tree and keyboard-reachable focus order with supported Windows UIA/Narrator, macOS AX/VoiceOver, and Linux AT-SPI/Orca configurations, including truthful unavailable or blocked results.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-02 native accessibility EvidenceRun" },
+        { "path": "crates/legion-desktop/tests/accessibility.rs", "identity": "desktop accessibility substrate" },
+        { "path": "scripts/a11y-uia-walk.ps1", "identity": "Windows UIA walk" },
+        { "path": "scripts/a11y-ax-walk.sh", "identity": "macOS AX walk" },
+        { "path": "scripts/a11y-atspi-walk.sh", "identity": "Linux AT-SPI walk" },
+        { "path": "plans/evidence/production/M5/WS18-T2-accesskit-product-pass.md", "identity": "historical accessibility evidence" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-02", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-P1-F2-T3-1", "COMP-P8-F5-T1-1", "COMP-P8-F5-T2-1", "COMP-P8-F5-T3-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-004",
+      "title": "Native window lifecycle preserves workspace identity, active focus, tabs, docks, layout, DPI scaling, font sizing, floating windows, and multi-monitor placement through resize, display changes, restart, and recovery on every supported OS.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-21 focus/DPI/window-restore scope" },
+        { "path": "crates/legion-desktop/src/windowed_e2e.rs", "identity": "native window lifecycle harness" },
+        { "path": "crates/legion-desktop/src/view.rs", "identity": "focus/layout projection and renderer state" },
+        { "path": "plans/evidence/production/M5/WS18-T4-multi-window-dpi-smoke.md", "identity": "historical multi-window/DPI evidence" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "S1-08", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-WB-005", "COMP-WB-009", "COMP-P1-F2-T4-1", "COMP-PRES-004"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-005",
+      "title": "Packaged startup and ordinary interaction remain responsive: cold and warm launch, first usable frame, input-to-paint, scrolling, resize, focus transitions, and cancellation meet declared per-platform budgets with truthful failure or blocked states.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-03 startup/input-to-paint workload qualification" },
+        { "path": "crates/legion-desktop/src/metrics.rs", "identity": "renderer metrics substrate" },
+        { "path": "crates/legion-desktop/tests/manual_perf.rs", "identity": "Manual renderer performance substrate" },
+        { "path": "plans/evidence/production/WS-MANUAL-01/editor-latency-budgets.md", "identity": "historical renderer budget" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-03", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-P8-F4-T1-1", "COMP-WB-009"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-006",
+      "title": "Product performance qualification enforces calibrated per-OS budgets for renderer-backed input-to-paint, scroll, search cancellation, terminal throughput, large files/workspaces, startup, and memory plateau using measured reference hardware rather than synthetic or headless stand-ins.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-03 calibrated product-performance contract" },
+        { "path": "crates/legion-desktop/src/manual_perf.rs", "identity": "renderer-backed workload substrate" },
+        { "path": "crates/legion-app/src/bin/product_perf.rs", "identity": "product performance driver" },
+        { "path": "plans/evidence/production/WS-MANUAL-01/editor-latency-budgets.md", "identity": "performance budget evidence" }
+      ],
+      "legacy_ids": [], "stage": "S0", "package_id": "XQ-03", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-P8-F4-T1-1", "COMP-P8-F4-T2-1", "COMP-P8-F4-T3-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-007",
+      "title": "Sustained native use stays within declared CPU, memory, file-descriptor, worker, and event-loop bounds for editing, navigation, terminal, diagnostics, search, and rendering, with cancellation, degradation, cleanup, and recovery preserving user work.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "resource bounds and sustained-use scope" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-03 sustained 30-minute workload" },
+        { "path": "crates/legion-desktop/tests/large_file_guardrails.rs", "identity": "large-file resource guardrails" },
+        { "path": "crates/legion-desktop/tests/operational_health.rs", "identity": "operational health substrate" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "S1-08", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-PLAT-006", "COMP-PRES-011"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-008",
+      "title": "Required native integrations use the declared platform boundary for file dialogs, clipboard, IME/CJK, keyring, PTY/ConPTY, filesystem watchers, menus, shortcuts, and display/input adapters, reporting unsupported or unavailable facilities without silently substituting headless fixtures.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "plans/evidence/platform-parity/P8-F5-T3-platform-parity-report.md", "identity": "platform integration scope" },
+        { "path": "crates/legion-desktop/src/platform.rs", "identity": "desktop platform adapter" },
+        { "path": "crates/legion-desktop/tests/platform_integration.rs", "identity": "platform integration substrate" },
+        { "path": "crates/legion-desktop/tests/clipboard_smoke.rs", "identity": "clipboard integration substrate" },
+        { "path": "crates/legion-desktop/tests/ime_smoke.rs", "identity": "IME integration substrate" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "S1-08", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-EDIT-006", "COMP-EDIT-007", "COMP-TERM-014"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PLAT-009",
+      "title": "Packaged native platform qualification runs the ordinary user journeys and externally checks input, paint, focus, accessibility, layout/DPI, integrations, performance, resource, restart, cancellation, and recovery effects on every ratified Windows/macOS/Linux configuration; missing native access records blocked rather than passed.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-02/XQ-03 canonical EvidenceRun qualification" },
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "product acceptance and supported OS contract" },
+        { "path": "crates/legion-desktop/src/windowed_e2e.rs", "identity": "ordinary native window journey harness" },
+        { "path": "plans/evidence/production/WS-MANUAL-01/WS-MANUAL-01-evidence.md", "identity": "historical Manual product evidence" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-02", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-002", "COMP-PLAT-003", "COMP-PLAT-004", "COMP-PLAT-005", "COMP-PLAT-006", "COMP-PLAT-007", "COMP-PLAT-008", "COMP-P8-F5-T1-1", "COMP-P8-F5-T2-1", "COMP-P8-F5-T3-1"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-22",

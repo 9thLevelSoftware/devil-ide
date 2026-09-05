@@ -329,3 +329,37 @@ found unique IDs, zero dangling `depends_on` or `protected_product_ids` edges,
 an acyclic graph, and existing literal source paths for every new row. Existing
 directory-valued historical evidence references remain unchanged as retained
 baseline data; the new inventory uses literal files only.
+
+## S0-01x platform quality scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-21` from baseline `f4630b4` is replaced by
+nine finite product outcomes `COMP-PLAT-001..009`. They cover the required
+S0/S0-02 native OS/version/architecture/reference-hardware/accessibility matrix;
+packaged native input and IME/clipboard behavior; UIA/AX/AT-SPI accessibility
+and keyboard focus; window/layout/DPI/multi-monitor restore; startup and
+renderer responsiveness; calibrated performance and memory/resource bounds;
+platform adapters for dialogs/keyring/PTY/watchers/menus; and packaged native
+qualification with external oracles.
+
+The completion design governs the family and finite matrix. XQ-02 governs
+packaged native input/accessibility EvidenceRuns and blocked outcomes. XQ-03
+governs calibrated per-OS renderer/product workloads and sustained use. Current
+desktop source, tests, and historical evidence support only conservative
+`partial` classifications; the matrix and complete packaged qualification are
+`absent`. No headless fixture or historical three-OS record promotes current
+product acceptance, and native GUI was not run because macOS/Linux access is
+unavailable locally.
+
+The new rows preserve canonical ownership through dependencies. Text semantics
+remain `COMP-EDIT-*`; workbench/layout and persistence remain `COMP-WB-*` and
+`COMP-PRES-*`; terminal parity remains `COMP-TERM-014`; existing performance
+and accessibility contracts remain `COMP-P8-F4-T1-1..T3-1` and
+`COMP-P8-F5-T1-1..T3-1`; distribution/operations remain family22/XQ-owned.
+No existing row referenced the removed family21 placeholder, so no authorized
+rewiring was required. All new rows use `owner_role: luna_worker` and
+`acceptance: unassessed`.
+
+The exact UTF-8 Git blob at `f4630b4` was compared object-by-object: all 400
+non-family objects are unchanged, and the register is now 409 rows. Validation
+found unique IDs, zero dangling `depends_on` or `protected_product_ids` edges,
+an acyclic graph, and existing literal source paths for every new row.
