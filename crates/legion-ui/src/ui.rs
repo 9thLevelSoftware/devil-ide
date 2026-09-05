@@ -2,11 +2,11 @@
 
 use legion_protocol::{
     AgentRunId, ArtifactLedgerProjection, AssistedAiProjection, BufferId, BufferVersion,
-    CanonicalPath, CapabilityId, CheckpointRollbackProjection, CollaborationGuiProjection,
-    CollaborationParticipantId, CollaborationPresenceProjection, CollaborationSessionId,
-    CommandRegistryProjection, ContextManifestEgressStatus, ContextManifestProjection,
-    ContextManifestPurpose, ContextManifestRecord, DebugBreakpointId, DebugConfigurationId,
-    DebugSessionId, DebugSessionState, DelegatedTaskProjection,
+    CanonicalPath, CapabilityId, CaretAffinity, CheckpointRollbackProjection,
+    CollaborationGuiProjection, CollaborationParticipantId, CollaborationPresenceProjection,
+    CollaborationSessionId, CommandRegistryProjection, ContextManifestEgressStatus,
+    ContextManifestProjection, ContextManifestPurpose, ContextManifestRecord, DebugBreakpointId,
+    DebugConfigurationId, DebugSessionId, DebugSessionState, DelegatedTaskProjection,
     DelegatedTaskProposalHunkDisposition, DelegatedTaskRuntimeActivationState,
     DelegatedTaskToolPermissionDecision, ExtensionCatalogEntry, FileFingerprint, FileId,
     LanguageToolingProjection, LegionCloudLaneProjection, LegionWorkflowConflictId,
@@ -2941,6 +2941,34 @@ pub enum CommandDispatchIntent {
         anchor: TextCoordinate,
         /// Current selection head.
         head: TextCoordinate,
+    },
+    /// Place the visual cursor using the rendered wrap-side affinity and layout identity.
+    SetVisualCursor {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Cursor coordinate from projection space.
+        cursor: TextCoordinate,
+        /// Rendered wrap-side affinity.
+        affinity: CaretAffinity,
+    },
+    /// Place a visual directed selection using the rendered wrap-side affinity.
+    SetVisualDirectedSelection {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+        /// Rendered wrap-side affinity for the head.
+        head_affinity: CaretAffinity,
     },
     /// Copy the current editor selection through app-owned metadata-only clipboard authority.
     ClipboardCopy {

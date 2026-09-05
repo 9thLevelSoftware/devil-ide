@@ -8,8 +8,9 @@ use legion_editor::{TextEdit, TextPosition};
 use legion_memory::{MemoryCandidateRecord, MemoryConsentState, MemoryService};
 use legion_observability::{InMemoryEventSink, SharedEventSink};
 use legion_protocol::{
-    AgentRunId, CausalityId, CorrelationId, PrincipalId, ProtocolTextRange, TextCoordinate,
-    ViewportScroll, ViewportSemanticTokenKind, WorkspaceTrustState,
+    AgentRunId, BufferVersion, CaretAffinity, CausalityId, CorrelationId, PrincipalId,
+    ProtocolTextRange, SnapshotId, TextCoordinate, ViewportScroll, ViewportSemanticTokenKind,
+    WorkspaceTrustState,
 };
 use legion_storage::HotExitStore;
 use legion_ui::{CommandDispatchIntent, ShellLayoutProjection};
@@ -159,6 +160,171 @@ fn daily_editing_contracts_tabs_switch_active_buffer() {
     assert_eq!(viewport.cursor.character, 5);
     assert_eq!(viewport.selections.len(), 1);
     assert_eq!(viewport.scroll.left_column, 2);
+}
+
+#[test]
+fn daily_editing_visual_cursor_route_is_stale_and_atomic() {
+    let root = create_root();
+    let first = root.join("first.txt");
+    let second = root.join("second.txt");
+    std::fs::write(&first, "wrapped\n").expect("seed first");
+    std::fs::write(&second, "other\n").expect("seed second");
+    let mut app = trusted_app(&root);
+    app.open_file(first.to_string_lossy()).expect("open first");
+    let first_buffer = app.active_buffer_id().expect("first buffer");
+    app.open_file(second.to_string_lossy())
+        .expect("open second");
+    let second_buffer = app.active_buffer_id().expect("second buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: first_buffer,
+    })
+    .expect("activate first");
+    let viewport = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("active projection")
+        .viewport
+        .expect("viewport");
+    let before_text = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("active projection")
+        .small_buffer_text()
+        .expect("small text")
+        .to_string();
+    let before_version = viewport.buffer_version;
+    let before_dirty = app.editor().is_dirty(first_buffer).expect("dirty state");
+    let before_transactions = app.editor().transaction_log().len();
+    let head = text_coordinate(0, 3);
+    let visual = |buffer_id, expected_snapshot_id, expected_buffer_version, cursor, affinity| {
+        CommandDispatchIntent::SetVisualCursor {
+            buffer_id,
+            expected_snapshot_id,
+            expected_buffer_version,
+            cursor,
+            affinity,
+        }
+    };
+    app.dispatch_ui_intent(visual(
+        first_buffer,
+        viewport.snapshot_id,
+        viewport.buffer_version,
+        head,
+        CaretAffinity::Downstream,
+    ))
+    .expect("valid visual placement");
+    let placed = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("projection after placement")
+        .viewport
+        .expect("viewport after placement");
+    assert_eq!(placed.cursors[0].line, head.line);
+    assert_eq!(placed.cursors[0].character, head.character);
+    assert_eq!(placed.cursor_affinities, vec![CaretAffinity::Downstream]);
+    assert_eq!(
+        app.active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+            .expect("projection after placement")
+            .small_buffer_text(),
+        Some(before_text.as_str())
+    );
+    assert_eq!(placed.buffer_version, before_version);
+
+    let selection = CommandDispatchIntent::SetVisualDirectedSelection {
+        buffer_id: first_buffer,
+        expected_snapshot_id: placed.snapshot_id,
+        expected_buffer_version: placed.buffer_version,
+        anchor: text_coordinate(0, 1),
+        head: text_coordinate(0, 4),
+        head_affinity: CaretAffinity::Downstream,
+    };
+    app.dispatch_ui_intent(selection)
+        .expect("valid visual selection placement");
+    let selected = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("projection after selection")
+        .viewport
+        .expect("viewport after selection");
+    assert_eq!(selected.selections.len(), 1);
+    assert_eq!(selected.selections[0].start.line, 0);
+    assert_eq!(selected.selections[0].start.character, 1);
+    assert_eq!(selected.selections[0].end.line, 0);
+    assert_eq!(selected.selections[0].end.character, 4);
+    assert_eq!(selected.selections[0].start.byte_offset, Some(1));
+    assert_eq!(selected.selections[0].end.byte_offset, Some(4));
+    assert_eq!(selected.cursor_affinities, vec![CaretAffinity::Downstream]);
+    assert_eq!(selected.buffer_version, before_version);
+    assert_eq!(
+        app.editor().is_dirty(first_buffer).expect("dirty state"),
+        before_dirty
+    );
+    assert_eq!(app.editor().transaction_log().len(), before_transactions);
+
+    let stale = app.dispatch_ui_intent(visual(
+        first_buffer,
+        SnapshotId(viewport.snapshot_id.0.saturating_add(1)),
+        viewport.buffer_version,
+        text_coordinate(0, 1),
+        CaretAffinity::Upstream,
+    ));
+    assert!(stale.is_err(), "stale snapshot must reject");
+    let stale_version = app.dispatch_ui_intent(visual(
+        first_buffer,
+        selected.snapshot_id,
+        BufferVersion(selected.buffer_version.0.saturating_add(1)),
+        text_coordinate(0, 1),
+        CaretAffinity::Upstream,
+    ));
+    assert!(stale_version.is_err(), "stale buffer version must reject");
+    let inactive = app.dispatch_ui_intent(visual(
+        second_buffer,
+        viewport.snapshot_id,
+        viewport.buffer_version,
+        text_coordinate(0, 1),
+        CaretAffinity::Upstream,
+    ));
+    assert!(inactive.is_err(), "inactive buffer must reject");
+    let invalid = app.dispatch_ui_intent(visual(
+        first_buffer,
+        viewport.snapshot_id,
+        viewport.buffer_version,
+        text_coordinate(0, 99),
+        CaretAffinity::Upstream,
+    ));
+    assert!(invalid.is_err(), "invalid endpoint must reject");
+    let invalid_anchor =
+        app.dispatch_ui_intent(CommandDispatchIntent::SetVisualDirectedSelection {
+            buffer_id: first_buffer,
+            expected_snapshot_id: selected.snapshot_id,
+            expected_buffer_version: selected.buffer_version,
+            anchor: text_coordinate(0, 99),
+            head: text_coordinate(0, 2),
+            head_affinity: CaretAffinity::Upstream,
+        });
+    assert!(
+        invalid_anchor.is_err(),
+        "invalid anchor must reject atomically"
+    );
+    let unchanged = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("projection after rejects")
+        .viewport
+        .expect("viewport after rejects");
+    assert_eq!(unchanged.cursors[0].line, head.line);
+    assert_eq!(unchanged.cursors[0].character, 4);
+    assert_eq!(unchanged.cursor_affinities, vec![CaretAffinity::Downstream]);
+    assert_eq!(unchanged.selections.len(), 1);
+    assert_eq!(unchanged.selections[0].start.byte_offset, Some(1));
+    assert_eq!(unchanged.selections[0].end.byte_offset, Some(4));
+    assert_eq!(unchanged.buffer_version, before_version);
+    assert_eq!(
+        app.editor().is_dirty(first_buffer).expect("dirty state"),
+        before_dirty
+    );
+    assert_eq!(app.editor().transaction_log().len(), before_transactions);
+    assert_eq!(
+        app.active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+            .expect("projection after rejects")
+            .small_buffer_text(),
+        Some(before_text.as_str())
+    );
 }
 
 #[test]

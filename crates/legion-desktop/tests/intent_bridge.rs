@@ -381,6 +381,25 @@ fn intent_bridge_routes_daily_editing_actions() {
     );
     assert_eq!(
         bridge.translate(
+            DesktopAction::SetVisualCursor {
+                buffer_id: None,
+                expected_snapshot_id: SnapshotId(5),
+                expected_buffer_version: BufferVersion(12),
+                cursor,
+                affinity: legion_protocol::CaretAffinity::Downstream,
+            },
+            &snapshot,
+        ),
+        DesktopBridgeOutput::Intent(CommandDispatchIntent::SetVisualCursor {
+            buffer_id: BufferId(9),
+            expected_snapshot_id: SnapshotId(5),
+            expected_buffer_version: BufferVersion(12),
+            cursor,
+            affinity: legion_protocol::CaretAffinity::Downstream,
+        })
+    );
+    assert_eq!(
+        bridge.translate(
             DesktopAction::SetSelection {
                 buffer_id: Some(BufferId(10)),
                 range: range(1, 4),

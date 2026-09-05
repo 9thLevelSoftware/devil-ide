@@ -5,13 +5,14 @@ use std::path::PathBuf;
 
 use legion_project::git_pull_request_url;
 use legion_protocol::{
-    AgentRunId, AssistantRailCommand, BufferId, CollaborationParticipantId, CollaborationSessionId,
-    DebugConfigurationId, DebugSessionId, DelegatedTaskPlanId,
-    DelegatedTaskProposalHunkDisposition, DelegatedTaskToolPermissionDecision, EditablePlanSection,
-    FileId, InlinePredictionRequestId, LegionWorkflowConflictId, LegionWorkflowSessionId,
-    LegionWorkflowSignOffId, LegionWorkflowVerificationGateId, LineWrappingPolicy,
-    ProposalCancellationReason, ProposalId, ProposalRejectionReason, ProposalRollbackReason,
-    ProtocolTextRange, RemoteWorkspaceSessionId, TerminalSessionId, TextCoordinate, ViewportScroll,
+    AgentRunId, AssistantRailCommand, BufferId, BufferVersion, CaretAffinity,
+    CollaborationParticipantId, CollaborationSessionId, DebugConfigurationId, DebugSessionId,
+    DelegatedTaskPlanId, DelegatedTaskProposalHunkDisposition, DelegatedTaskToolPermissionDecision,
+    EditablePlanSection, FileId, InlinePredictionRequestId, LegionWorkflowConflictId,
+    LegionWorkflowSessionId, LegionWorkflowSignOffId, LegionWorkflowVerificationGateId,
+    LineWrappingPolicy, ProposalCancellationReason, ProposalId, ProposalRejectionReason,
+    ProposalRollbackReason, ProtocolTextRange, RemoteWorkspaceSessionId, SnapshotId,
+    TerminalSessionId, TextCoordinate, ViewportScroll,
 };
 use legion_protocol::{CapabilityId, PluginContribution, PluginId};
 use legion_ui::{
@@ -905,6 +906,34 @@ pub enum DesktopAction {
         anchor: TextCoordinate,
         /// Current selection head.
         head: TextCoordinate,
+    },
+    /// Set the visual cursor while preserving the rendered wrap-side affinity.
+    SetVisualCursor {
+        /// Optional target buffer.
+        buffer_id: Option<BufferId>,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Cursor coordinate in projection space.
+        cursor: TextCoordinate,
+        /// Rendered wrap-side affinity.
+        affinity: CaretAffinity,
+    },
+    /// Set a visual directed selection while preserving rendered affinity.
+    SetVisualDirectedSelection {
+        /// Optional target buffer.
+        buffer_id: Option<BufferId>,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+        /// Rendered wrap-side affinity for the head.
+        head_affinity: CaretAffinity,
     },
     /// Move every active editor caret to a semantic line/document boundary.
     MoveToBoundary {
@@ -2542,6 +2571,38 @@ impl DesktopCommandBridge {
                     buffer_id,
                     anchor,
                     head,
+                }
+            }),
+            DesktopAction::SetVisualCursor {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                cursor,
+                affinity,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::SetVisualCursor {
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    cursor,
+                    affinity,
+                }
+            }),
+            DesktopAction::SetVisualDirectedSelection {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                anchor,
+                head,
+                head_affinity,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::SetVisualDirectedSelection {
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    anchor,
+                    head,
+                    head_affinity,
                 }
             }),
             DesktopAction::ReplaceDirectedCarets { text } => self

@@ -2,10 +2,12 @@ use legion_desktop::view::{
     DesktopCodeLineViewModel, drag_anchor_for_line_pointer_with_galley, drag_selection_range,
     editor_coordinate_from_galley_pointer, editor_cursor_rect_for_galley,
     editor_galley_for_geometry, editor_selection_columns_for_line,
-    editor_selection_rects_for_galley, line_range_for_code_line, word_range_for_coordinate,
+    editor_selection_rects_for_galley, editor_visual_coordinate_from_galley_pointer,
+    line_range_for_code_line, word_range_for_coordinate,
 };
 use legion_protocol::{
-    ByteRange, TextCoordinate, Utf16Position, Utf16Range, ViewportLineTruncationState,
+    ByteRange, CaretAffinity, TextCoordinate, Utf16Position, Utf16Range,
+    ViewportLineTruncationState,
 };
 
 fn line(text: &str) -> DesktopCodeLineViewModel {
@@ -122,6 +124,66 @@ fn wrapped_second_row_has_actual_cursor_and_split_selection_geometry() {
             .windows(2)
             .all(|rows| rows[0].bottom() <= rows[1].top())
     );
+}
+
+#[test]
+fn wrapped_boundary_pointer_preserves_visual_affinity_and_paints_row() {
+    let context = egui::Context::default();
+    let model = line("one two three four five");
+    let galley = editor_galley_for_geometry(&context, &model, 36.0);
+    assert!(galley.rows.len() >= 2);
+    let origin = egui::Pos2::ZERO;
+    let (upstream_coordinate, upstream_affinity) = editor_visual_coordinate_from_galley_pointer(
+        &model,
+        &galley,
+        egui::pos2(
+            galley.rows[0].rect().right() - 0.1,
+            galley.rows[0].rect().center().y,
+        ),
+        origin,
+    )
+    .expect("preceding wrapped row should map");
+    let (downstream_coordinate, downstream_affinity) =
+        editor_visual_coordinate_from_galley_pointer(
+            &model,
+            &galley,
+            egui::pos2(
+                galley.rows[1].rect().left() + 0.1,
+                galley.rows[1].rect().center().y,
+            ),
+            origin,
+        )
+        .expect("following wrapped row should map");
+    assert_eq!(upstream_affinity, CaretAffinity::Upstream);
+    assert_eq!(downstream_affinity, CaretAffinity::Downstream);
+    assert_eq!(upstream_coordinate.line, downstream_coordinate.line);
+    assert_eq!(
+        upstream_coordinate.character,
+        downstream_coordinate.character
+    );
+    assert_eq!(
+        upstream_coordinate.byte_offset,
+        downstream_coordinate.byte_offset
+    );
+    let boundary_byte = upstream_coordinate
+        .byte_offset
+        .expect("shaped boundary should carry an absolute byte offset");
+    let boundary = model.text[..boundary_byte as usize].chars().count();
+    let upstream_rect = legion_desktop::view::editor_cursor_rect_for_galley_with_affinity(
+        &model,
+        &galley,
+        origin,
+        boundary,
+        upstream_affinity,
+    );
+    let downstream_rect = legion_desktop::view::editor_cursor_rect_for_galley_with_affinity(
+        &model,
+        &galley,
+        origin,
+        boundary,
+        downstream_affinity,
+    );
+    assert!(downstream_rect.top() > upstream_rect.top());
 }
 
 #[test]

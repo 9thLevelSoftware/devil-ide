@@ -192,7 +192,7 @@ use legion_protocol::{
     AssistedAiProviderInvocationState, BatchProposalPayload, BufferId, BufferVersion, ByteRange,
     CancellationTokenId, CanonicalPath, CapabilityBrokerPort, CapabilityDecision,
     CapabilityDecisionId, CapabilityId, CapabilityNamespace, CapabilityRequest,
-    CapabilityRequestContext, CapabilityResponse, CausalityId, CheckpointAuditEvent,
+    CapabilityRequestContext, CapabilityResponse, CaretAffinity, CausalityId, CheckpointAuditEvent,
     CheckpointAuditRecord, CollaborationAcknowledgementStatus, CollaborationAuditRecord,
     CollaborationDocumentBinding, CollaborationDocumentEpoch, CollaborationDocumentOperation,
     CollaborationDocumentOperationKind, CollaborationGuiProjection, CollaborationParticipant,
@@ -259,11 +259,12 @@ use legion_protocol::{
     SaveIntent, SemanticGrammarVersion, SemanticModelVersion, SemanticPrivacyScope,
     SemanticQueryFreshnessPolicy, SemanticQueryId, SemanticQueryKind, SemanticQueryRequest,
     SemanticQueryScope, SessionDirtyIndicator, SessionPanelState, SessionTab, SessionTabGroup,
-    SpecArtifact, StorageRepositoryPort, StorageRepositoryRequest, StorageRepositoryResponse,
-    SymbolFileMapRecord, TaskGraphArtifact, TerminalInput, TerminalKillEscalation,
-    TerminalKillRequest, TerminalOutputRowProjection, TerminalPanelProjection, TerminalPanelStatus,
-    TerminalPanelStatusKind, TerminalPolicyProjection, TerminalResize, TerminalRuntimeState,
-    TerminalScrollbackProjection, TerminalSearchProjection, TerminalSessionId, TextCoordinate,
+    SnapshotId, SpecArtifact, StorageRepositoryPort, StorageRepositoryRequest,
+    StorageRepositoryResponse, SymbolFileMapRecord, TaskGraphArtifact, TerminalInput,
+    TerminalKillEscalation, TerminalKillRequest, TerminalOutputRowProjection,
+    TerminalPanelProjection, TerminalPanelStatus, TerminalPanelStatusKind,
+    TerminalPolicyProjection, TerminalResize, TerminalRuntimeState, TerminalScrollbackProjection,
+    TerminalSearchProjection, TerminalSessionId, TextCoordinate,
     TextEdit as ProtocolWorkspaceTextEdit, TextRange as ProtocolEditTextRange,
     TextTransactionDescriptor, TimestampMillis, TransactionSource, TrustDecisionContext,
     Utf16Position, Utf16Range, VersionContext, ViewportLineSlice, ViewportProjection,
@@ -9418,6 +9419,34 @@ pub enum AppCommandRequest {
         /// Current selection head.
         head: TextCoordinate,
     },
+    /// Place a visual cursor with stale-layout protection and wrap-side affinity.
+    SetVisualCursor {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Cursor coordinate from projection space.
+        cursor: TextCoordinate,
+        /// Rendered wrap-side affinity.
+        affinity: CaretAffinity,
+    },
+    /// Place a visual directed selection with stale-layout protection.
+    SetVisualDirectedSelection {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+        /// Rendered wrap-side affinity for the head.
+        head_affinity: CaretAffinity,
+    },
     /// Copy the current selection and return metadata-only clipboard evidence.
     ClipboardCopy {
         /// Target buffer identifier.
@@ -10425,6 +10454,8 @@ impl CommandExecutionService {
             | AppCommandRequest::MoveToBoundary { .. }
             | AppCommandRequest::MoveHorizontally { .. }
             | AppCommandRequest::SetDirectedSelection { .. }
+            | AppCommandRequest::SetVisualCursor { .. }
+            | AppCommandRequest::SetVisualDirectedSelection { .. }
             | AppCommandRequest::SetViewportScroll { .. }
             | AppCommandRequest::OpenPalette { .. }
             | AppCommandRequest::ClosePalette
@@ -18615,6 +18646,51 @@ impl AppComposition {
             }
             AppCommandRequest::SetSelection { buffer_id, range } => {
                 self.set_buffer_selection(buffer_id, range)?;
+                Ok(AppCommandOutcome::SelectionSet(buffer_id))
+            }
+            AppCommandRequest::SetVisualCursor {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                cursor,
+                affinity,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.set_visual_directed_carets(
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    vec![
+                        legion_editor::DirectedCaret::new(
+                            CommandDispatcher::editor_position(cursor),
+                            None,
+                        )
+                        .with_affinity(affinity),
+                    ],
+                )?;
+                Ok(AppCommandOutcome::CursorSet(buffer_id))
+            }
+            AppCommandRequest::SetVisualDirectedSelection {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                anchor,
+                head,
+                head_affinity,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.set_visual_directed_carets(
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    vec![
+                        legion_editor::DirectedCaret::new(
+                            CommandDispatcher::editor_position(head),
+                            Some(CommandDispatcher::editor_position(anchor)),
+                        )
+                        .with_affinity(head_affinity),
+                    ],
+                )?;
                 Ok(AppCommandOutcome::SelectionSet(buffer_id))
             }
             AppCommandRequest::MoveToBoundary {

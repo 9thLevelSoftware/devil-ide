@@ -1431,6 +1431,8 @@ impl DesktopRuntime {
                     DesktopAction::MoveToBoundary { .. }
                         | DesktopAction::MoveHorizontally { .. }
                         | DesktopAction::SetDirectedSelection { .. }
+                        | DesktopAction::SetVisualCursor { .. }
+                        | DesktopAction::SetVisualDirectedSelection { .. }
                 );
                 let arm_post_action_completion = matches!(
                     action,

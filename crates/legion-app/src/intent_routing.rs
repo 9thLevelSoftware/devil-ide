@@ -92,6 +92,40 @@ impl CommandDispatcher {
                     head,
                 })
             }
+            CommandDispatchIntent::SetVisualCursor {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                cursor,
+                affinity,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::SetVisualCursor {
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    cursor,
+                    affinity,
+                })
+            }
+            CommandDispatchIntent::SetVisualDirectedSelection {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                anchor,
+                head,
+                head_affinity,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::SetVisualDirectedSelection {
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    anchor,
+                    head,
+                    head_affinity,
+                })
+            }
             CommandDispatchIntent::Delete { buffer_id, range } => Self::edit_request(
                 active,
                 buffer_id,

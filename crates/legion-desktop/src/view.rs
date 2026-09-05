@@ -113,7 +113,7 @@ use components::{
 
 use legion_protocol::{
     AssistedAiProviderAvailabilityState, BufferId, ByteRange, CANONICAL_PRODUCT_MODES,
-    CanonicalPath, CanonicalProductMode, ContextManifestEgressStatus,
+    CanonicalPath, CanonicalProductMode, CaretAffinity, ContextManifestEgressStatus,
     ContextManifestInclusionState, DelegatedTaskProposalHunkDisposition,
     DelegatedTaskRiskTolerance, DelegatedTaskRuntimeActivationState, DelegatedTaskScope,
     DelegatedTaskScopeTargetKind, DelegatedTaskToolPermissionDecision, FileId,
@@ -3922,7 +3922,7 @@ fn render_code_lines(
                 if let Some(position) = response.interact_pointer_pos()
                     && let Some(buffer_id) = active_buffer_id
                 {
-                    let Some(coordinate) = editor_coordinate_from_galley_pointer(
+                    let Some((coordinate, affinity)) = editor_visual_coordinate_from_galley_pointer(
                         line,
                         galley.as_ref(),
                         position,
@@ -3935,14 +3935,16 @@ fn render_code_lines(
                         let drag_delta = response
                             .total_drag_delta()
                             .unwrap_or_else(|| response.drag_delta());
-                        let Some(anchor) = drag_anchor_for_line_pointer_with_galley(
-                            line,
-                            galley.as_ref(),
-                            position.x,
-                            drag_delta,
-                            position.y,
-                            response.rect.min,
-                        ) else {
+                        let Some((anchor, _anchor_affinity)) =
+                            drag_anchor_for_line_pointer_with_galley_visual(
+                                line,
+                                galley.as_ref(),
+                                position.x,
+                                drag_delta,
+                                position.y,
+                                response.rect.min,
+                            )
+                        else {
                             return;
                         };
                         response
@@ -3967,20 +3969,30 @@ fn render_code_lines(
                         actions.push(DesktopAction::GoToDefinition {
                             position: coordinate,
                         });
-                    } else if response.clicked() {
-                        actions.push(DesktopAction::SetCursor {
+                    } else if response.clicked()
+                        && let Some(viewport) = viewport
+                    {
+                        actions.push(DesktopAction::SetVisualCursor {
                             buffer_id: Some(buffer_id),
+                            expected_snapshot_id: viewport.snapshot_id,
+                            expected_buffer_version: viewport.buffer_version,
                             cursor: coordinate,
+                            affinity,
                         });
                     }
-                    if response.drag_started() || response.dragged() {
+                    if (response.drag_started() || response.dragged())
+                        && let Some(viewport) = viewport
+                    {
                         let anchor = response
                             .ctx
                             .data_mut(|data| data.get_temp::<TextCoordinate>(drag_anchor_id));
-                        actions.push(DesktopAction::SetDirectedSelection {
+                        actions.push(DesktopAction::SetVisualDirectedSelection {
                             buffer_id: Some(buffer_id),
+                            expected_snapshot_id: viewport.snapshot_id,
+                            expected_buffer_version: viewport.buffer_version,
                             anchor: anchor.unwrap_or(current_cursor),
                             head: coordinate,
+                            head_affinity: affinity,
                         });
                     }
                     if response.drag_stopped() {
@@ -4006,11 +4018,34 @@ fn render_code_lines(
                 // multi-cursor edit look like it came from nowhere.
                 match viewport {
                     Some(viewport) if viewport.cursors.len() > 1 => {
-                        for cursor in &viewport.cursors {
-                            paint_code_cursor(ui, line, &response, *cursor, galley.as_ref());
+                        for (index, cursor) in viewport.cursors.iter().enumerate() {
+                            let affinity = viewport
+                                .cursor_affinities
+                                .get(index)
+                                .copied()
+                                .unwrap_or(CaretAffinity::Upstream);
+                            paint_code_cursor(
+                                ui,
+                                line,
+                                &response,
+                                *cursor,
+                                affinity,
+                                index == 0,
+                                galley.as_ref(),
+                            );
                         }
                     }
-                    _ => paint_code_cursor(ui, line, &response, current_cursor, galley.as_ref()),
+                    _ => paint_code_cursor(
+                        ui,
+                        line,
+                        &response,
+                        current_cursor,
+                        viewport
+                            .and_then(|projection| projection.cursor_affinities.first().copied())
+                            .unwrap_or(CaretAffinity::Upstream),
+                        true,
+                        galley.as_ref(),
+                    ),
                 }
                 paint_find_match_highlights(
                     ui,
@@ -4095,6 +4130,9 @@ fn render_code_lines(
                         line,
                         &response,
                         current_cursor,
+                        viewport
+                            .and_then(|projection| projection.cursor_affinities.first().copied())
+                            .unwrap_or(CaretAffinity::Upstream),
                         galley.as_ref(),
                         ime_composition,
                     );
@@ -4248,9 +4286,14 @@ fn shape_code_line_galley(
     line: &DesktopCodeLineViewModel,
     wrap_width: f32,
 ) -> Arc<egui::Galley> {
+    let wrap_mode = if wrap_width.is_finite() {
+        Some(egui::TextWrapMode::Wrap)
+    } else {
+        Some(egui::TextWrapMode::Extend)
+    };
     egui::WidgetText::from(code_line_layout_job(line)).into_galley(
         ui,
-        None,
+        wrap_mode,
         wrap_width,
         egui::FontSelection::Default,
     )
@@ -4415,6 +4458,8 @@ fn paint_code_cursor(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     cursor: TextCoordinate,
+    affinity: CaretAffinity,
+    primary: bool,
     galley: &egui::Galley,
 ) {
     if cursor.line != line.number.saturating_sub(1) {
@@ -4424,17 +4469,25 @@ fn paint_code_cursor(
     let Some(scalar_index) = local_scalar_for_coordinate(line, cursor) else {
         return;
     };
-    let cursor_rect = editor_cursor_rect_for_galley(line, galley, response.rect.min, scalar_index);
+    let cursor_rect = editor_cursor_rect_for_galley_with_affinity(
+        line,
+        galley,
+        response.rect.min,
+        scalar_index,
+        affinity,
+    );
     let to_global = ui
         .ctx()
         .layer_transform_to_global(ui.layer_id())
         .unwrap_or_default();
-    ui.output_mut(|output| {
-        output.ime = Some(egui::output::IMEOutput {
-            rect: to_global * response.rect,
-            cursor_rect: to_global * cursor_rect,
+    if primary {
+        ui.output_mut(|output| {
+            output.ime = Some(egui::output::IMEOutput {
+                rect: to_global * response.rect,
+                cursor_rect: to_global * cursor_rect,
+            });
         });
-    });
+    }
     let blink_on = ui
         .ctx()
         .input(|input| ((input.time * 2.0) as i64).rem_euclid(2) == 0);
@@ -4499,9 +4552,29 @@ pub fn editor_coordinate_from_galley_pointer(
     pointer: egui::Pos2,
     origin: egui::Pos2,
 ) -> Option<TextCoordinate> {
+    editor_visual_coordinate_from_galley_pointer(line, galley, pointer, origin)
+        .map(|(coordinate, _)| coordinate)
+}
+
+/// Map a pointer in a rendered line label to its protocol coordinate and wrap-side affinity.
+pub fn editor_visual_coordinate_from_galley_pointer(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer: egui::Pos2,
+    origin: egui::Pos2,
+) -> Option<(TextCoordinate, CaretAffinity)> {
     let cursor = galley.cursor_from_pos(pointer - origin);
     let scalar_index = cursor.index.min(line.text.chars().count());
-    text_coordinate_for_line_scalar(line, scalar_index)
+    text_coordinate_for_line_scalar(line, scalar_index).map(|coordinate| {
+        (
+            coordinate,
+            if cursor.prefer_next_row {
+                CaretAffinity::Downstream
+            } else {
+                CaretAffinity::Upstream
+            },
+        )
+    })
 }
 
 /// Map a drag anchor through the rendered galley, including wrapped-row Y.
@@ -4514,6 +4587,26 @@ pub fn drag_anchor_for_line_pointer_with_galley(
     origin: egui::Pos2,
 ) -> Option<TextCoordinate> {
     editor_coordinate_from_galley_pointer(
+        line,
+        galley,
+        egui::pos2(
+            pointer_x - total_drag_delta.x,
+            pointer_y - total_drag_delta.y,
+        ),
+        origin,
+    )
+}
+
+/// Map a drag anchor through the rendered galley, retaining wrap-side affinity.
+pub fn drag_anchor_for_line_pointer_with_galley_visual(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer_x: f32,
+    total_drag_delta: egui::Vec2,
+    pointer_y: f32,
+    origin: egui::Pos2,
+) -> Option<(TextCoordinate, CaretAffinity)> {
+    editor_visual_coordinate_from_galley_pointer(
         line,
         galley,
         egui::pos2(
@@ -4589,10 +4682,30 @@ pub fn editor_cursor_rect_for_galley(
     origin: egui::Pos2,
     scalar_index: usize,
 ) -> egui::Rect {
+    editor_cursor_rect_for_galley_with_affinity(
+        line,
+        galley,
+        origin,
+        scalar_index,
+        CaretAffinity::Upstream,
+    )
+}
+
+/// Return a caret rectangle using the projected wrap-side affinity.
+pub fn editor_cursor_rect_for_galley_with_affinity(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    scalar_index: usize,
+    affinity: CaretAffinity,
+) -> egui::Rect {
     let scalar_index = scalar_index.min(line.text.chars().count());
     let position = if galley.rows.is_empty()
         || galley
-            .pos_from_cursor(egui::text::CCursor::new(scalar_index))
+            .pos_from_cursor(egui::text::CCursor {
+                index: scalar_index,
+                prefer_next_row: affinity == CaretAffinity::Downstream,
+            })
             .height()
             <= 0.0
     {
@@ -4601,7 +4714,10 @@ pub fn editor_cursor_rect_for_galley(
             egui::vec2(0.0, code_line_fallback_height()),
         )
     } else {
-        galley.pos_from_cursor(egui::text::CCursor::new(scalar_index))
+        galley.pos_from_cursor(egui::text::CCursor {
+            index: scalar_index,
+            prefer_next_row: affinity == CaretAffinity::Downstream,
+        })
     };
     egui::Rect::from_min_max(
         origin + position.min.to_vec2(),
@@ -4905,6 +5021,7 @@ fn paint_ime_composition(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     cursor: TextCoordinate,
+    affinity: CaretAffinity,
     source_galley: &egui::Galley,
     ime_composition: &ImeCompositionProjection,
 ) {
@@ -4919,8 +5036,13 @@ fn paint_ime_composition(
     let Some(scalar_index) = local_scalar_for_coordinate(line, cursor) else {
         return;
     };
-    let cursor_rect =
-        editor_cursor_rect_for_galley(line, source_galley, response.rect.min, scalar_index);
+    let cursor_rect = editor_cursor_rect_for_galley_with_affinity(
+        line,
+        source_galley,
+        response.rect.min,
+        scalar_index,
+        affinity,
+    );
     let font_id = egui::FontId::monospace(theme::tokens().typography.code as f32);
     let galley =
         ui.painter()
