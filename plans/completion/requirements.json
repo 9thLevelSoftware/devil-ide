@@ -6171,63 +6171,291 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-01",
-      "title": "Text editing",
+      "id": "COMP-EDIT-001",
+      "title": "The editor supports selecting a range and applying an edit to exactly that selected range, with the resulting cursor/selection state projected back to the user.",
       "kind": "product",
       "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-01"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; selection/edit/undo chain"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; multi-cursor and rectangular selection; keyboard focus"},
+        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::SetSelection"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-002",
+      "title": "The editor preserves Unicode text and treats cursor, selection, insertion, deletion, and conversion boundaries consistently for UTF-8/UTF-16 text and user-perceived grapheme sequences.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; Unicode/graphemes"},
+        {"path": "plans/foundational-core-ide-platform-roadmap-v0.1.md", "identity": "#phase-4-production-text-model-and-editor-transactions; UTF8/UTF16 conversions"},
+        {"path": "crates/legion-text/src/lib.rs", "identity": "TextSnapshot and coordinate conversion APIs"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-003",
+      "title": "The editor records ordinary edits as reversible transactions: undo restores the prior buffer state and redo reapplies it while preserving transaction groups, overlays, and dirty-state invariants.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; Unicode selection/edit/undo chain"},
+        {"path": "plans/foundational-core-ide-platform-roadmap-v0.1.md", "identity": "#phase-4-production-text-model-and-editor-transactions; transaction groups, undo/redo, overlays, dirty-state"},
+        {"path": "crates/legion-editor/src/lib.rs", "identity": "EditorEngine::undo and EditorEngine::redo"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-004",
+      "title": "The editor preserves indentation semantics when inserting, deleting, or replacing text across lines, including the configured indentation behavior exposed by the Manual editor.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; ordinary editing; focused editing tests"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; input/rendering editor feel"},
+        {"path": "crates/legion-editor/src/lib.rs", "identity": "EditorEngine transaction/edit authority"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-005",
+      "title": "The editor applies a declared line-wrapping policy with stable viewport and cursor math, while preserving the underlying text and edit coordinates.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; wrapping"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; line wrapping policy with stable viewport math"},
+        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::SetLineWrapping"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-006",
+      "title": "The editor supports copy, cut, paste, and select-all through the authoritative editor path, preserving selected text and applying pasted text without bypassing focus or mutation rules.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; clipboard"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; clipboard copy/cut/paste/select-all integration"},
+        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::ClipboardCopy/ClipboardCut"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-007",
+      "title": "The editor accepts an IME composition commit after focus changes and inserts the committed Unicode text exactly once into the authoritative buffer, with qualification across supported Windows, macOS, and Linux configurations where automatable.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; IME commit after focus change"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; IME smoke tests and keyboard focus; Windows/macOS/Linux where automatable"},
+        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::ImeCommit"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-008",
+      "title": "Manual editor input is predictable: each native key, pointer, clipboard, IME, or Vim action reaches one authoritative editing route, preserves focus and dirty state, and does not both act and insert an unintended duplicate character.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; input methods and Vim route"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; keyboard focus and input-to-paint"},
+        {"path": "plans/control-first-adaptive-ide-technical-design-v0.1.md", "identity": "#manual-edit-and-save-flow; native input -> UI intent -> App -> Editor authority"},
+        {"path": "crates/legion-desktop/src/workflow.rs", "identity": "DesktopEframeApp input boundary"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-009",
+      "title": "The editor supports rectangular selection as an editor operation with stable keyboard or pointer gestures, range semantics, and rendered feedback, distinct from spatial selection of Canvas nodes.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; multi-cursor and rectangular selection"},
+        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; selection"},
+        {"path": "crates/legion-editor/src/multi_cursor.rs", "identity": "editor cursor/selection implementation trace"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-010",
+      "title": "Vim modal editing supports motions that move the authoritative editor cursor through the desktop key feed without inserting normal-mode keys as text.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: motions"},
+        {"path": "crates/legion-ui/src/vim_motion.rs", "identity": "Vim motion parser"},
+        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimSession cursor conversion"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-011",
+      "title": "Vim modal editing supports operators that apply the requested operation to the authoritative buffer through the desktop key feed and preserve the resulting edit state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: operators"},
+        {"path": "crates/legion-ui/src/vim_intent.rs", "identity": "Vim operator intent"},
+        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimSession modal state"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-012",
+      "title": "Vim modal editing preserves a register for operator-driven text movement and exposes register behavior through the authoritative editor route.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: register"},
+        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimRegister"}
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-EDIT-013",
+      "title": "Vim modal editing supports explicit insert-mode entry and routes inserted text to the authoritative buffer without also applying the normal-mode command.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
+        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: insert entry"},
+        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimSession::display_mode and modal state"},
+        {"path": "crates/legion-app/tests/vim_modal_editing.rs", "identity": "Vim modal editing test path"}
       ],
       "legacy_ids": [],
       "stage": "S1",

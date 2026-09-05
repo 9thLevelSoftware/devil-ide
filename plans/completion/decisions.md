@@ -64,3 +64,29 @@ The native exploratory lead for `P1.F2.T3` exposed a current-source gap: the des
 The independent S0-01c review corrected three classifications against the exact legacy caveats: `P7.F2.T4` is implemented metadata-only VSIX reporting (`NodeSidecar` is classification data, not execution), `P8.F1.T2` is implemented through explicit unsigned-beta/dry-run release descriptors and tests, and `P8.F3.T2` is implemented for the amended v1 consented Rust-panic capture contract. `P8.F1.T3` and `P9.F2.T4` remain absent because the fresh-VM result and archived external audit report are missing.
 
 Round-two source review keeps `P0.F1.T1` and `P0.F1.T2` partial. The canonical mode table and labels exist, but no gate proves every mode-mentioning page links `docs/MODES.md`, and stale labels remain in `mockups/design.md`, `mockups/src/imports/design.md`, and `docs/LEGION_PIVOT.md`; current docs-hygiene checks only exact stale headings.
+
+## S0-01d text-editing scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-01` row is replaced by thirteen atomic rows
+`COMP-EDIT-001..013` in package `S1-04`. Each new
+row retains the approved `family-01` source identity and remains
+`acceptance = unassessed` with empty scenario/configuration coverage. Exact
+existing outcomes are mapped in `plans/completion/text-editing-scope-audit.md`
+instead of duplicated: multi-cursor is `COMP-P1-F3-T2-1-02`, Vim is
+`COMP-P1-F3-T5-1` for generic key-feed safety while named motions, operators,
+register, and insert-entry capabilities are explicit `COMP-EDIT-010..013`
+companions, and large-file behavior is covered by
+`COMP-P1-F4-T2-1` through `COMP-P1-F4-T5-1`.
+
+The approved S1-04 deliverable is the governing text-editing expansion. The
+full-vision rectangular editor selection is retained as `COMP-EDIT-009` and
+is distinguished from spatial Canvas selection. Historical implementation/status
+claims do not promote any new row; the audit records baseline `1895fda2` code
+traces and explicit evidence limits. New source paths are literal files with
+section locators in identities. This increment does not claim full S0-01 or
+full S0 completion.
+
+The large-file mapping preserves `P1.F4.T5` as the committed
+`implementation = implemented` classification: the standard harness wiring is
+implemented, while renderer measurement and product acceptance remain
+unassessed. The audit does not weaken that existing legacy row.
