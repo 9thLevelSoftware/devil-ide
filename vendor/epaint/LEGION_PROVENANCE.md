@@ -27,8 +27,9 @@ archive:
 
 * `src/text/fonts.rs` — exposes bounded unwrapped chunk layout and retains a
   per-fonts-instance layout identity. SHA-256: `2cdde05a5c62165f9ff507db4ecc1728660b3a255c9a98250251be0b86edf91d`.
-* `src/text/text_layout.rs` — adds bounded continuation state, shared shaping,
-  validation, and regression tests. SHA-256: `0181a3b586d7674d190f8d1be5f8d469d30b2f10dfe7c2e71027efd82fa0aa75`.
+* `src/text/text_layout.rs` — adds bounded continuation state, glyph-free
+  checkpoint cloning, completed-pass precise summaries, shared shaping,
+  validation, and regression tests. SHA-256: `5ede5186463ed6f0e206283f2be35cc43e52013c40e2dfaec3de8dfefbdee93a`.
 
 The upstream SHA-256 values for those same files are:
 
