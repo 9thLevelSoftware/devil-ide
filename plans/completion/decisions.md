@@ -47,7 +47,7 @@ The review correction keeps `owner_role = "luna_worker"` because the current use
 
 `P9.F2.T2` now routes to `S3-04`/stage S3 for secret-rule implementation and negative coverage, while `P9.F2.T3` routes to `S5-11`/stage S5 for signed policy bundles, ceilings, retention, and export enforcement. `P9.F2.T1` is an internal security-model requirement owned by `S5-11`; `P9.F2.T4` remains an internal external-audit requirement owned by `XQ-08`. Neither audit nor qualification is treated as construction of the product outcomes.
 
-Internal protection relationships were re-evaluated against the final `kind` assignments. P0.F4.T1/T2 protect documentation-truth GAP-08/GAP-01; P0.F4.T3/T4 protect Manual distribution/package outcomes (FAMILY-22 and GAP-02); P0.F4.T5 protects the GP-1/2/3 product journeys; P0.F4.T6 protects the Rust diagnostics product outcome; P0.F5 protects the recovered SmallCode corpus outcome; P8.F1 protects release/install outcomes (GAP-02 and FAMILY-22); P9.F2 internal rows protect enterprise security policy (FAMILY-19). No internal row points to an internal row or to itself.
+Internal protection relationships were re-evaluated against the final `kind` assignments. P0.F4.T1 protects concrete distribution/docs, installed-product, and signing outcomes (DIST-009, GAP-01, GAP-02); P0.F4.T2 protects GAP-01; P0.F4.T3/T4 protect Manual distribution/package outcomes (FAMILY-22 and GAP-02); P0.F4.T5 protects the GP-1/2/3 product journeys; P0.F4.T6 protects the Rust diagnostics product outcome; P0.F5 protects the recovered SmallCode corpus outcome; P8.F1 protects release/install outcomes (GAP-02 and FAMILY-22); P9.F2 internal rows protect enterprise security policy (FAMILY-19). No internal row points to an internal row or to itself.
 
 `COMP-SCOPE-GAP-06` remains a provisional dominant owner for the Manual/no-egress family only. Its source expansion remains open across S0-05, XQ-01, and later qualification; `XQ-06` alone is not claimed to construct the full artifact or no-egress controls.
 
@@ -405,3 +405,53 @@ to baseline. The register is now 418 rows. Validation found unique IDs, no
 remaining family22 references, zero dangling `depends_on` or
 `protected_product_ids` edges, an acyclic combined graph, and existing literal
 source paths for every new row.
+
+## S0-01z GAP refinement (2026-09-05)
+
+The stable `COMP-SCOPE-GAP-01..10` identifiers remain the P0 installed-product
+outcomes, but their former generic rows were not finite acceptance contracts.
+They now have explicit cross-cutting titles, bounded source references, and
+dependencies on the finite product rows that provide their prerequisites. The
+dependencies deliberately do not point through an internal row that already
+protects the GAP, so the combined dependency/protection graph remains acyclic.
+
+One finite row was added: `COMP-GAP-001` covers the missing packaged native GUI
+install/edit/save journey, real window input, external disk effects, blocked
+native configurations, the four-green promotion clock, and immutable
+installed-preview journal. It is `stage: S1`, `package_id: XQ-02`,
+`implementation: absent`, `owner_role: luna_worker`, and
+`acceptance: unassessed`. The source boundary is P0 GAP-01.1..1.3, XQ-02,
+`windowed_e2e.rs`, native-package verification, the T0-D promotion criteria,
+and the installed-preview journal.
+
+The retained GAP outcomes now aggregate finite coverage for signing/trust,
+update/rollback, work preservation, accessibility, Manual/offline zero-egress,
+governance, documentation truth, performance, and support/privacy/legal
+distribution. GAP-10 explicitly retains Help/About support-bundle behavior and
+legal/package notices as acceptance boundaries; existing diagnostics and notice
+rows are prerequisites, not fabricated proof of the desktop path.
+
+The exact protected fields were preserved except for the authorized
+`COMP-P0-F4-T1-1` rewire. GAP-01 remains protected by `COMP-P0-F4-T2-1`, GAP-02
+by the existing P0/P8 signing rows and `COMP-SCOPE-FAMILY-17-04`, and internal
+GAP-07/GAP-08 protect their explicit concrete product targets; future
+replacement requires explicit source-mapped rewiring. Baseline `65381ed` had 418 rows; the
+current register has 419, with all non-GAP objects unchanged and only the ten
+GAP objects plus the new finite row changed. Validation found unique IDs,
+resolved references, existing literal source paths, and an acyclic combined
+graph.
+
+## S0-01z governance classification correction (2026-09-05)
+
+Traceability source line 24 treats governance and documentation obligations as
+internal implementation records. Stable `COMP-SCOPE-GAP-07` and
+`COMP-SCOPE-GAP-08` are therefore `kind: internal`, while retaining required,
+`luna_worker`, and `acceptance: unassessed`. GAP-07 protects installed-product
+truth and signing/trust (`GAP-01`, `GAP-02`). GAP-08 protects distribution
+support/docs, installed-product truth, and signing/trust (`DIST-009`, `GAP-01`,
+`GAP-02`).
+
+The retained `COMP-P0-F4-T1-1` protection was explicitly rewired from internal
+GAP-08 to `COMP-DIST-009`, `COMP-SCOPE-GAP-01`, and `COMP-SCOPE-GAP-02`.
+Dependencies do not point through protected edges, and combined validation
+remains acyclic; all other non-GAP objects remain exact.
