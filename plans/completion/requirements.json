@@ -10206,62 +10206,397 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-08",
-      "title": "Source control",
+      "id": "COMP-SCM-001",
+      "title": "The source-control surface reports repository status, dirty and untracked paths, staged versus unstaged changes, reviewable file and hunk diffs, branch and remote labels, and conflict markers from the authoritative Git state.",
       "kind": "product",
       "required": true,
       "source_refs": [
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-08"
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
         },
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
         },
         {
           "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
+          "identity": "#p2-f5-source-control"
         },
         {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
+          "path": "crates/legion-app/src/git_inspection.rs",
+          "identity": "Git inspection/status/diff projection authority"
         },
         {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "git_rows and source-control panel projection"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-002",
+      "title": "A person can stage and unstage files and individual partial hunks, inspect the resulting index/worktree distinction, and preserve unrelated dirty or untracked work while editing the selection.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
         },
         {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
         },
         {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
         },
         {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "StageGitHunk, UnstageGitHunk, StageGitPath, UnstageGitPath actions"
         },
         {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "authoritative Git mutation dispatch"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-003",
+      "title": "A person can review and create a commit from selected changes with an explicit message, observes the actual commit result and new history, and receives a truthful denial or failure without losing dirty work.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
         },
         {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
         },
         {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
         },
         {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "Git commit action routing"
         },
         {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "commit workflow authority"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-004",
+      "title": "Branch workflows list, create, switch, and delete branches while refusing unsafe switches or deletions that would discard dirty or conflicted work and preserving visible branch identity.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "SwitchGitBranch, CreateGitBranch, DeleteGitBranch actions"
+        },
+        {
+          "path": "crates/legion-app/src/git_policy.rs",
+          "identity": "Git policy and unsafe-operation denial"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-005",
+      "title": "Merge and rebase conflict workflows identify conflicted paths, present current/incoming resolution choices, preserve unresolved state until resolved, and verify the resulting index/worktree state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "AcceptGitConflictCurrent, AcceptGitConflictIncoming and ResolveGitConflict routing"
+        },
+        {
+          "path": "crates/legion-app/src/git_inspection.rs",
+          "identity": "conflict/status projection"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-006",
+      "title": "Remote workflows expose policy-visible fetch, pull, and push operations with host/credential authorization, denial and failure states, actual remote output and exit/result, and no implicit network or authentication call.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "crates/legion-app/src/git_remote.rs",
+          "identity": "remote operation and policy authority"
+        },
+        {
+          "path": "crates/legion-app/src/git_policy.rs",
+          "identity": "remote host/auth policy"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "FetchGitRemote, PullGitRemote, PushGitRemote actions"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-007",
+      "title": "Local history and review workflows browse prior revisions and restore a selected version through proposal or checkpoint authority, with stale/conflict denial, external-change detection, and storage-failure recovery that preserves current work.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "local history and proposal authority"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "RestoreCheckpoint and history-related action routes"
+        },
+        {
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "durable checkpoint timeline projection"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-008",
+      "title": "Worktree and agent-branch workflows show existing worktrees and support policy-checked creation/removal/pruning without deleting unrelated work, while keeping dirty buffers and repository identity truthful.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "PruneGitWorktrees and RemoveGitWorktree actions"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "worktree and source-control authority"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-009",
+      "title": "Source-control operations recover from external file changes, restart during dirty edits, storage failure, remote rejection, and interrupted merge while retaining the correct disk, index, worktree, buffer, and history state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "crates/legion-app/src/git_inspection.rs",
+          "identity": "external Git state inspection"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "save/conflict/checkpoint authority"
+        },
+        {
+          "path": "crates/legion-app/tests/workspace_vfs_integration.rs",
+          "identity": "external overwrite and conflict workflow evidence"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCM-010",
+      "title": "The packaged native Git journey produces host-observed evidence for status/diff/stage/commit/branch/conflict/remote/history and recovery outcomes, including actual Git log/index/worktree/disk effects, OS and reviewer coverage.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-08 Source control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#p2-f5-source-control"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#native-scenario-manual-git-history-recovery"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-GIT-01-evidence.md",
+          "identity": "historical Git workflow evidence"
+        },
+        {
+          "path": "xtask/src/completion/schema.rs",
+          "identity": "EvidenceRun schema and acceptance data model"
         }
       ],
       "legacy_ids": [],
