@@ -52,3 +52,15 @@ Internal protection relationships were re-evaluated against the final `kind` ass
 ### S0-01b review-round-2 fix (2026-09-05)
 
 `P9.F2.T2` is classified as internal because its exact acceptance is fixture/test proof for secret-detection rules. It remains owned by `S3-04` at stage S3 and protects the existing product redaction outcome `COMP-P4-F2-T3-1` (“The bytes sent equal the manifest minus redacted items, with no other delta.”).
+
+## S0-01c legacy implementation classification (2026-09-05)
+
+The current-source implementation inventory is recorded in [implementation-audit.md](implementation-audit.md). It covers all 165 legacy acceptance outcomes exactly once, including separate rows for the two outcome pairs `P1.F3.T2` and `P6.F5.T1`; all `acceptance` values remain `unassessed`. Classifications are implementation facts only: native, hosted, renderer, external-tool, and product acceptance remain separate follow-on evidence.
+
+The audit promotes only behavior established by current source and test bodies. `P1.F4.T5` is `implemented` because the standard performance harness wires the renderer workload, while measurement remains unassessed. `P2.F2.T5` remains `partial` because its ConPTY evidence is metadata parity rather than runtime equivalence. `P2.F4.T4` remains `partial` pending proof of the exact workload semantics and measurement. Missing run evidence alone does not lower an otherwise concrete internal implementation.
+
+The native exploratory lead for `P1.F2.T3` exposed a current-source gap: the desktop keyboard path has no Home/End editor mapping. That row therefore remains `partial`; the observation does not promote or invalidate unrelated native acceptance rows, and the Ctrl+S ingress hypothesis remains separate from the proven command-palette save path.
+
+The independent S0-01c review corrected three classifications against the exact legacy caveats: `P7.F2.T4` is implemented metadata-only VSIX reporting (`NodeSidecar` is classification data, not execution), `P8.F1.T2` is implemented through explicit unsigned-beta/dry-run release descriptors and tests, and `P8.F3.T2` is implemented for the amended v1 consented Rust-panic capture contract. `P8.F1.T3` and `P9.F2.T4` remain absent because the fresh-VM result and archived external audit report are missing.
+
+Round-two source review keeps `P0.F1.T1` and `P0.F1.T2` partial. The canonical mode table and labels exist, but no gate proves every mode-mentioning page links `docs/MODES.md`, and stale labels remain in `mockups/design.md`, `mockups/src/imports/design.md`, and `docs/LEGION_PIVOT.md`; current docs-hygiene checks only exact stale headings.
