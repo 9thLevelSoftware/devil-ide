@@ -19,7 +19,7 @@
 
 use std::{
     collections::VecDeque,
-    io::BufRead,
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -767,24 +767,95 @@ fn run_session_worker(
 /// When the ring is at capacity the oldest line is evicted (FIFO).
 /// The thread exits when the child process closes its stderr pipe.
 fn drain_stderr(stderr: std::process::ChildStderr, ring: Arc<Mutex<VecDeque<String>>>) {
-    let reader = std::io::BufReader::new(stderr);
-    for raw in reader.lines() {
-        let Ok(raw_line) = raw else { break };
-        // Truncate if necessary — prevents a single pathological line from
-        // consuming a disproportionate share of the bounded ring.
-        let truncated: String = if raw_line.len() > STDERR_LINE_MAX_LEN {
-            format!("{}…", &raw_line[..STDERR_LINE_MAX_LEN])
-        } else {
-            raw_line
+    drain_stderr_reader(stderr, ring);
+}
+
+/// Drains an arbitrary stderr reader without allowing an unterminated line to
+/// grow in memory.  Bytes after the retained prefix are consumed until the
+/// next newline so subsequent lines remain aligned.
+fn drain_stderr_reader<R: Read>(mut reader: R, ring: Arc<Mutex<VecDeque<String>>>) {
+    let mut read_buf = [0_u8; 4096];
+    let mut line = Vec::with_capacity(STDERR_LINE_MAX_LEN);
+    let mut truncated = false;
+
+    loop {
+        let read = match reader.read(&mut read_buf) {
+            Ok(0) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+            Ok(read) => read,
         };
-        let redacted = super::redact_lsp_stderr_line(&truncated);
-        if let Ok(mut guard) = ring.lock() {
-            if guard.len() >= STDERR_RING_CAPACITY {
-                guard.pop_front();
+        for &byte in &read_buf[..read] {
+            if byte == b'\n' {
+                // Match `BufRead::lines()` for CRLF while retaining a
+                // standalone CR in a partial EOF line.
+                let raw_line = if !truncated {
+                    line.strip_suffix(&[b'\r']).unwrap_or(&line)
+                } else {
+                    &line
+                };
+                append_stderr_line(
+                    raw_line,
+                    truncated || raw_line.len() > STDERR_LINE_MAX_LEN,
+                    &ring,
+                );
+                line.clear();
+                truncated = false;
+                continue;
             }
-            guard.push_back(redacted);
+            // Keep one possible CRLF byte beyond the retained prefix so a
+            // line exactly at the limit is not marked truncated.
+            if line.len() < STDERR_LINE_MAX_LEN + 1 {
+                line.push(byte);
+            } else {
+                truncated = true;
+            }
         }
     }
+
+    if !line.is_empty() || truncated {
+        // A final CR without a following LF is part of the partial line.
+        append_stderr_line(&line, truncated || line.len() > STDERR_LINE_MAX_LEN, &ring);
+    }
+}
+
+fn append_stderr_line(raw_line: &[u8], truncated: bool, ring: &Arc<Mutex<VecDeque<String>>>) {
+    // This happens before UTF-8 conversion and cannot panic on invalid server
+    // output.
+    let rendered = render_stderr_line(raw_line, truncated);
+    let redacted = super::redact_lsp_stderr_line(&rendered);
+    // Redaction markers can expand many short path tokens, so enforce the
+    // retained-line byte cap again after redaction.
+    let redacted = if redacted.len() > STDERR_LINE_MAX_LEN {
+        render_stderr_line(redacted.as_bytes(), true)
+    } else {
+        redacted
+    };
+    if let Ok(mut guard) = ring.lock() {
+        if guard.len() >= STDERR_RING_CAPACITY {
+            guard.pop_front();
+        }
+        guard.push_back(redacted);
+    }
+}
+
+fn render_stderr_line(raw_line: &[u8], truncated: bool) -> String {
+    let lossy = String::from_utf8_lossy(raw_line);
+    if !truncated && lossy.len() <= STDERR_LINE_MAX_LEN {
+        return lossy.into_owned();
+    }
+
+    let marker = "…";
+    let prefix_limit = STDERR_LINE_MAX_LEN.saturating_sub(marker.len());
+    let mut rendered = String::with_capacity(STDERR_LINE_MAX_LEN);
+    for ch in lossy.chars() {
+        if rendered.len() + ch.len_utf8() > prefix_limit {
+            break;
+        }
+        rendered.push(ch);
+    }
+    rendered.push_str(marker);
+    rendered
 }
 
 /// Runs full startup sequence: discovery → launch → initialize.
@@ -1207,6 +1278,7 @@ mod backoff_tests {
 mod stderr_tests {
     use super::*;
     use legion_protocol::LspServerBinaryProvenance;
+    use std::io::{self, Read};
 
     fn make_live_handle() -> LspSessionHandle {
         let mut handle = LspSessionHandle::new();
@@ -1331,6 +1403,96 @@ mod stderr_tests {
             proj.lines.iter().any(|l| l.contains("[REDACTED]")),
             "at least one line must carry the [REDACTED] marker"
         );
+    }
+
+    #[test]
+    fn t4_drain_handles_crlf_invalid_utf8_and_eof_partial_lines() {
+        let input = b"first\r\ninvalid \xff byte\npartial\r";
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr_reader(&input[..], ring.clone());
+
+        assert_eq!(
+            ring.lock()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["first", "invalid � byte", "partial\r"]
+        );
+    }
+
+    #[test]
+    fn t4_drain_truncates_at_utf8_seam_without_panicking() {
+        let mut input = vec![b'x'; STDERR_LINE_MAX_LEN - 1];
+        input.extend_from_slice("€\n".as_bytes());
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr_reader(&input[..], ring.clone());
+
+        let lines = ring.lock().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with('…'));
+        assert!(lines[0].len() <= STDERR_LINE_MAX_LEN);
+    }
+
+    struct UndelimitedReader {
+        remaining: usize,
+        max_requested: usize,
+    }
+
+    impl Read for UndelimitedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.max_requested = self.max_requested.max(buffer.len());
+            let count = self.remaining.min(buffer.len());
+            buffer[..count].fill(b'x');
+            self.remaining -= count;
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn t4_drain_bounds_undelimited_input_and_retains_one_line() {
+        let mut reader = UndelimitedReader {
+            remaining: STDERR_LINE_MAX_LEN * 1024,
+            max_requested: 0,
+        };
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr_reader(&mut reader, ring.clone());
+
+        let lines = ring.lock().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].len(), STDERR_LINE_MAX_LEN);
+        assert!(lines[0].ends_with('…'));
+        assert!(reader.max_requested <= 4096);
+    }
+
+    #[test]
+    fn t4_drain_preserves_redaction_and_ring_eviction() {
+        let mut input = b"diagnostic /known/secret/workspace\n".to_vec();
+        for index in 0..(STDERR_RING_CAPACITY + 1) {
+            input.extend_from_slice(format!("line {index}\n").as_bytes());
+        }
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr_reader(&input[..], ring.clone());
+
+        let lines = ring.lock().unwrap();
+        assert_eq!(lines.len(), STDERR_RING_CAPACITY);
+        assert!(!lines.iter().any(|line| line.contains("known")));
+        assert_eq!(lines.front().map(String::as_str), Some("line 1"));
+        assert_eq!(lines.back().map(String::as_str), Some("line 100"));
+    }
+
+    #[test]
+    fn t4_drain_caps_redaction_expansion_at_utf8_boundary() {
+        let input = "/a ".repeat(STDERR_LINE_MAX_LEN);
+        let ring = Arc::new(Mutex::new(VecDeque::new()));
+        drain_stderr_reader(input.as_bytes(), ring.clone());
+
+        let lines = ring.lock().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].len() <= STDERR_LINE_MAX_LEN);
+        assert!(std::str::from_utf8(lines[0].as_bytes()).is_ok());
+        assert!(!lines[0].contains("/a"));
+        assert!(lines[0].contains("[REDACTED]"));
     }
 }
 
