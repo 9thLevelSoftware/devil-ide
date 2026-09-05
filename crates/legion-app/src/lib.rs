@@ -147,8 +147,10 @@ use legion_debug::{
     test_run_summary_evidence,
 };
 use legion_editor::{
-    Cursor, EditorEngine, EditorError, SaveAcknowledgement, SaveRequestDto, Selection, TextEdit,
-    TextPosition, TextRange as EditorTextRange,
+    Cursor, DirectedCaret, EditorEngine, EditorError, PreferredX, SaveAcknowledgement,
+    SaveRequestDto, Selection, ShapedVisualRow, TextEdit, TextPosition,
+    TextRange as EditorTextRange, VerticalCaretStop, VerticalDirection, VerticalLayoutId,
+    VerticalMovementRequest, VerticalSourceRow,
 };
 // `AppSaveOutcome` carries this in two public variants, so a caller matching on
 // it needs to be able to name it without depending on `legion-editor` directly.
@@ -268,7 +270,9 @@ use legion_protocol::{
     TextEdit as ProtocolWorkspaceTextEdit, TextRange as ProtocolEditTextRange,
     TextTransactionDescriptor, TimestampMillis, TransactionSource, TrustDecisionContext,
     Utf16Position, Utf16Range, VersionContext, ViewportLineSlice, ViewportProjection,
-    ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay,
+    ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay, VisualNavigationCaret,
+    VisualNavigationDirection, VisualNavigationPosition, VisualNavigationProjection,
+    VisualNavigationRequest, VisualNavigationRow, VisualNavigationWindow, VisualNavigationX,
     WorkbenchSettingsRecord, WorkbenchTelemetryConsent, WorkspaceCloseRequest,
     WorkspaceEditProposalPayload, WorkspaceEditSourceKind, WorkspaceGeneration, WorkspaceId,
     WorkspaceOpenRequest, WorkspaceOpened, WorkspacePort, WorkspaceProposal, WorkspaceRequest,
@@ -9350,6 +9354,140 @@ struct DeferredSaveSuccess {
     applied: legion_project::WorkspaceSaveApplied,
 }
 
+fn visual_navigation_position(
+    position: VisualNavigationPosition,
+) -> Result<TextPosition, AppCompositionError> {
+    let line = usize::try_from(position.line).map_err(|_| {
+        AppCompositionError::Editor(EditorError::InvalidEdit("visual line overflows usize"))
+    })?;
+    let column = usize::try_from(position.byte_column).map_err(|_| {
+        AppCompositionError::Editor(EditorError::InvalidEdit(
+            "visual byte column overflows usize",
+        ))
+    })?;
+    Ok(TextPosition::new(line, column))
+}
+
+fn visual_navigation_x(x: VisualNavigationX) -> Result<PreferredX, AppCompositionError> {
+    PreferredX::new(x.value).map_err(AppCompositionError::Editor)
+}
+
+fn visual_navigation_caret(
+    caret: VisualNavigationCaret,
+) -> Result<DirectedCaret, AppCompositionError> {
+    let head = visual_navigation_position(caret.head)?;
+    let anchor = caret.anchor.map(visual_navigation_position).transpose()?;
+    let preferred_x = caret.preferred_x.map(visual_navigation_x).transpose()?;
+    Ok(DirectedCaret {
+        head,
+        anchor,
+        affinity: caret.affinity,
+        preferred_x,
+    })
+}
+
+fn visual_navigation_row(row: VisualNavigationRow) -> Result<ShapedVisualRow, AppCompositionError> {
+    let stops = row
+        .stops
+        .into_iter()
+        .map(|stop| {
+            Ok(VerticalCaretStop {
+                position: visual_navigation_position(stop.position)?,
+                x: visual_navigation_x(stop.x)?,
+                affinity: stop.affinity,
+            })
+        })
+        .collect::<Result<Vec<_>, AppCompositionError>>()?;
+    Ok(ShapedVisualRow {
+        logical_line: row.logical_line,
+        row_index: row.row_index,
+        row_count: row.row_count,
+        start: visual_navigation_position(row.start)?,
+        end: visual_navigation_position(row.end)?,
+        stops,
+    })
+}
+
+fn visual_navigation_request(
+    request: &VisualNavigationRequest,
+) -> Result<VerticalMovementRequest, AppCompositionError> {
+    let layout_id = VerticalLayoutId::new(request.layout_id.0).ok_or(
+        AppCompositionError::Editor(EditorError::InvalidEdit("visual layout id must be nonzero")),
+    )?;
+    let expected_carets = request
+        .expected_carets
+        .clone()
+        .into_iter()
+        .map(visual_navigation_caret)
+        .collect::<Result<Vec<_>, _>>()?;
+    let source_rows = request
+        .source_rows
+        .clone()
+        .into_iter()
+        .map(|source| {
+            Ok(VerticalSourceRow {
+                row: visual_navigation_row(source.row)?,
+                source_x: visual_navigation_x(source.source_x)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AppCompositionError>>()?;
+    let target_rows = request
+        .target_rows
+        .clone()
+        .into_iter()
+        .map(visual_navigation_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    let direction = match request.direction {
+        VisualNavigationDirection::Up => VerticalDirection::Up,
+        VisualNavigationDirection::Down => VerticalDirection::Down,
+    };
+    Ok(VerticalMovementRequest {
+        expected_snapshot_id: request.expected_snapshot_id,
+        expected_buffer_version: request.expected_buffer_version,
+        expected_carets,
+        layout_id,
+        direction,
+        extend: request.extend,
+        source_rows,
+        target_rows,
+    })
+}
+
+fn visual_navigation_position_from_editor(
+    position: TextPosition,
+) -> Result<VisualNavigationPosition, AppCompositionError> {
+    Ok(VisualNavigationPosition {
+        line: u32::try_from(position.line).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "editor line overflows visual navigation DTO",
+            ))
+        })?,
+        byte_column: u64::try_from(position.column).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "editor byte column overflows visual navigation DTO",
+            ))
+        })?,
+    })
+}
+
+fn visual_navigation_x_from_editor(x: PreferredX) -> VisualNavigationX {
+    VisualNavigationX { value: x.get() }
+}
+
+fn visual_navigation_caret_from_editor(
+    caret: DirectedCaret,
+) -> Result<VisualNavigationCaret, AppCompositionError> {
+    Ok(VisualNavigationCaret {
+        head: visual_navigation_position_from_editor(caret.head)?,
+        anchor: caret
+            .anchor
+            .map(visual_navigation_position_from_editor)
+            .transpose()?,
+        affinity: caret.affinity,
+        preferred_x: caret.preferred_x.map(visual_navigation_x_from_editor),
+    })
+}
+
 #[derive(Debug, Clone)]
 enum ProposalMutationRollback {
     None,
@@ -9446,6 +9584,13 @@ pub enum AppCommandRequest {
         head: TextCoordinate,
         /// Rendered wrap-side affinity for the head.
         head_affinity: CaretAffinity,
+    },
+    /// Move every ordered caret through app-owned shaped visual-row facts.
+    MoveVertically {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Renderer-shaped vertical movement request.
+        request: VisualNavigationRequest,
     },
     /// Copy the current selection and return metadata-only clipboard evidence.
     ClipboardCopy {
@@ -10456,6 +10601,7 @@ impl CommandExecutionService {
             | AppCommandRequest::SetDirectedSelection { .. }
             | AppCommandRequest::SetVisualCursor { .. }
             | AppCommandRequest::SetVisualDirectedSelection { .. }
+            | AppCommandRequest::MoveVertically { .. }
             | AppCommandRequest::SetViewportScroll { .. }
             | AppCommandRequest::OpenPalette { .. }
             | AppCommandRequest::ClosePalette
@@ -18313,6 +18459,91 @@ impl AppComposition {
         self.buffer_search_state.find_bar_visible
     }
 
+    /// Project the exact ordered editor carets and freshness metadata for visual navigation.
+    pub fn visual_navigation_projection(
+        &self,
+        buffer_id: BufferId,
+    ) -> Result<VisualNavigationProjection, AppCompositionError> {
+        let snapshot = self.editor.current_snapshot(buffer_id)?;
+        let metadata = self.editor.buffer_metadata(buffer_id)?;
+        let carets = self
+            .editor
+            .directed_carets(buffer_id)?
+            .into_iter()
+            .map(visual_navigation_caret_from_editor)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(VisualNavigationProjection {
+            snapshot_id: snapshot.snapshot_id,
+            buffer_version: metadata.buffer_version,
+            carets,
+        })
+    }
+
+    /// Return a bounded primary-caret text window for renderer shaping.
+    ///
+    /// The editor/text authority supplies the fragment and true grapheme
+    /// boundaries; the app only attaches freshness metadata and performs
+    /// checked wire-coordinate conversion.
+    pub fn visual_navigation_window(
+        &self,
+        buffer_id: BufferId,
+        position: VisualNavigationPosition,
+        max_bytes: usize,
+    ) -> Result<VisualNavigationWindow, AppCompositionError> {
+        const MAX_WINDOW_BYTES: usize = 96 * 1024;
+        if max_bytes == 0 || max_bytes > MAX_WINDOW_BYTES {
+            return Err(AppCompositionError::Editor(EditorError::InvalidEdit(
+                "visual navigation window exceeds 96 KiB bound",
+            )));
+        }
+        let snapshot = self.editor.current_snapshot(buffer_id)?;
+        let line = usize::try_from(position.line).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "visual navigation line overflows host coordinate",
+            ))
+        })?;
+        let column = usize::try_from(position.byte_column).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "visual navigation byte offset overflows host coordinate",
+            ))
+        })?;
+        let caret_byte = self
+            .editor
+            .buffer_byte_offset(buffer_id, TextPosition::new(line, column))?;
+        let window = self
+            .editor
+            .line_window_around_byte(buffer_id, caret_byte, max_bytes)?;
+        let wire = |value: usize| {
+            u64::try_from(value).map_err(|_| {
+                AppCompositionError::Editor(EditorError::InvalidEdit(
+                    "visual navigation window offset overflows wire coordinate",
+                ))
+            })
+        };
+        Ok(VisualNavigationWindow {
+            snapshot_id: snapshot.snapshot_id,
+            buffer_version: snapshot.buffer_version,
+            line: u32::try_from(window.line).map_err(|_| {
+                AppCompositionError::Editor(EditorError::InvalidEdit(
+                    "visual navigation line overflows wire coordinate",
+                ))
+            })?,
+            line_start_byte: wire(window.line_start_byte)?,
+            caret_byte: wire(window.caret_byte)?,
+            start_byte: wire(window.start_byte)?,
+            end_byte: wire(window.end_byte)?,
+            logical_end_byte: wire(window.logical_end_byte)?,
+            complete_logical_start: window.complete_logical_start,
+            complete_logical_end: window.complete_logical_end,
+            grapheme_boundaries: window
+                .grapheme_boundaries
+                .into_iter()
+                .map(wire)
+                .collect::<Result<Vec<_>, _>>()?,
+            text: window.text,
+        })
+    }
+
     /// Route a UI dispatch intent through editor and workspace authorities.
     pub fn dispatch_ui_intent(
         &mut self,
@@ -18587,6 +18818,12 @@ impl AppComposition {
             AppCommandRequest::SelectAll { buffer_id } => {
                 self.select_all_buffer(*buffer_id)?;
                 return Ok(AppCommandOutcome::SelectionSet(*buffer_id));
+            }
+            AppCommandRequest::MoveVertically { buffer_id, request } => {
+                self.active_documents.ensure_active_buffer(*buffer_id)?;
+                let request = visual_navigation_request(request)?;
+                self.editor.move_vertically(*buffer_id, request)?;
+                return Ok(AppCommandOutcome::CursorSet(*buffer_id));
             }
             _ => {}
         }

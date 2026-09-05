@@ -18,8 +18,9 @@ use legion_protocol::{
     ProposalRiskLabel, ProposalRollbackReason, ProtocolTextRange, RedactionHint,
     RemoteGuiProjection, SnapshotId, SystemGraphProjection, TerminalPanelProjection,
     TerminalSessionId, TextCoordinate, TimestampMillis, Utf16Range, VerificationRunProjection,
-    ViewportLineTruncationState, ViewportScroll, WorkbenchFontFallbackDiagnostic,
-    WorkbenchTelemetryConsent, WorkspaceId, product_mode_allows_runtime_surface,
+    ViewportLineTruncationState, ViewportScroll, VisualNavigationRequest,
+    WorkbenchFontFallbackDiagnostic, WorkbenchTelemetryConsent, WorkspaceId,
+    product_mode_allows_runtime_surface,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -2969,6 +2970,13 @@ pub enum CommandDispatchIntent {
         head: TextCoordinate,
         /// Rendered wrap-side affinity for the head.
         head_affinity: CaretAffinity,
+    },
+    /// Move every ordered caret through app-owned shaped visual-row facts.
+    MoveVertically {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Renderer-shaped vertical movement request.
+        request: VisualNavigationRequest,
     },
     /// Copy the current editor selection through app-owned metadata-only clipboard authority.
     ClipboardCopy {

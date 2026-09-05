@@ -38,6 +38,10 @@ pub mod release_manifest;
 pub mod risk;
 pub mod scope;
 pub mod tools;
+/// DTOs for app-routed shaped visual vertical navigation.
+pub mod visual_navigation;
+
+pub use visual_navigation::*;
 
 pub use capability::AssistedAiCapabilityMatrix;
 pub use delegate_loop::{

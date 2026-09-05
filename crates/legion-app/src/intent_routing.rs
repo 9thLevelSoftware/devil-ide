@@ -126,6 +126,10 @@ impl CommandDispatcher {
                     head_affinity,
                 })
             }
+            CommandDispatchIntent::MoveVertically { buffer_id, request } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::MoveVertically { buffer_id, request })
+            }
             CommandDispatchIntent::Delete { buffer_id, range } => Self::edit_request(
                 active,
                 buffer_id,
