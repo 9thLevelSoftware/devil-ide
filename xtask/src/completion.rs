@@ -22,3 +22,12 @@ pub fn qualifies_as_product_evidence(
         && result == "passed"
         && !required_dependency_substituted
 }
+
+/// Validate the canonical completion registers and selected evidence.
+pub fn validate_completion(
+    root: &std::path::Path,
+    candidate: &str,
+    release: bool,
+) -> Result<Vec<String>, String> {
+    crate::completion_command::validate_completion(root, candidate, release)
+}

@@ -46,7 +46,32 @@ and observer captures are separate artifacts with separate declared hashes.
 The loader's integration fixtures are synthetic `TESTDATA` only. They are
 never nominated evidence and cannot establish product acceptance. A missing
 evidence root is treated as an empty development runset; it does not satisfy
-release completeness. `validate_evidence_files` is not wired to the CLI yet.
+release completeness. The loader is composed by the `verify-completion` CLI;
+missing canonical registers still fail closed, and an empty evidence root
+cannot satisfy release completeness.
+
+Run completion verification with an explicit nomination:
+
+```text
+cargo run -p xtask -- verify-completion --candidate <40-lowercase-hex-SHA>
+cargo run -p xtask -- verify-completion --candidate <40-lowercase-hex-SHA> --release
+```
+
+Development mode permits incomplete, unaccepted requirements while retaining
+structural, candidate, evidence, and false-acceptance checks. Release mode
+adds required product/configuration coverage, accepted internal safety
+evidence, candidate-pinned defect verification, and release-blocking defect
+checks. The command prints implementation and acceptance status counts
+separately and does not calculate a blended percentage.
+
+For each declared external prerequisite, release verification requires a
+selected-candidate passed run for an applicable required package/configuration
+pair with an `EvidenceRun.dependencies` observation whose name exactly equals
+the prerequisite, whose execution is `real`, whose `required_for_outcome` is
+true, and whose observed version is nonblank. Product-linked pairs use
+product/native-input eligibility; internal-linked pairs use reviewed
+component/integrated safety evidence. This is a typed consistency join and
+does not authenticate an observer or an external installation.
 Canonical containment is checked before reads, and direct symlinked run
 directories, run records, and declared receipt attachments are rejected where
 the host can observe them; this remains a path-integrity check rather than an

@@ -502,6 +502,15 @@ enum Commands {
         #[arg(long, default_value = DEFAULT_CLAIM_AUDIT_LEDGER_PATH)]
         ledger: String,
     },
+    /// Validate the canonical completion registers and nominated evidence.
+    VerifyCompletion {
+        /// Candidate code SHA pinned by plans/completion/candidate.json.
+        #[arg(long)]
+        candidate: String,
+        /// Require complete required product/configuration release coverage.
+        #[arg(long)]
+        release: bool,
+    },
     /// Report which DAP adapter binaries this machine has (P2.F3.T2).
     ///
     /// The dogfood tests for policy-gated adapter resolution were reporting
@@ -1032,6 +1041,13 @@ fn main() {
         }
         Commands::DocsHygiene { allowlist } => run_docs_hygiene_command(&allowlist),
         Commands::ClaimAudit { ledger } => run_claim_audit_command(&ledger),
+        Commands::VerifyCompletion { candidate, release } => {
+            xtask::completion_command::run_verify_completion_command(
+                Path::new("."),
+                &candidate,
+                release,
+            )
+        }
         Commands::DapAdapterProbe {
             provenance,
             require,
