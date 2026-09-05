@@ -438,6 +438,10 @@ const RENDERER_DEPENDENCY_ALLOWED_PACKAGES: &[&str] = &["legion-desktop"];
 const FORBIDDEN_RENDERER_DEPS: &[&str] = &[
     "eframe",
     "egui",
+    // epaint is the renderer's lower-level drawing crate.  ADR-0053 permits
+    // the existing graph's patched epaint only under legion-desktop; a direct
+    // declaration in any other package would bypass the projection boundary.
+    "epaint",
     "egui-winit",
     "egui-wgpu",
     "winit",
@@ -4960,6 +4964,10 @@ fn renderer_dependency_gate_preserves_projection_boundary() {
                 "legion-ui".to_string(),
                 "egui".to_string(),
                 "eframe".to_string(),
+                // The generic gate permits renderer declarations in the
+                // desktop adapter. Production remains on egui::epaint until
+                // the separately authorized ADR-0053 patch is activated.
+                "epaint".to_string(),
             ]),
         ),
     ]);
@@ -4980,7 +4988,7 @@ fn renderer_dependency_gate_preserves_projection_boundary() {
         "core crate renderer dependency violation should be reported, got: {issues:?}"
     );
 
-    let mut violating_dependencies = package_dependencies;
+    let mut violating_dependencies = package_dependencies.clone();
     violating_dependencies
         .get_mut("legion-ui")
         .expect("legion-ui fixture must exist")
@@ -4992,6 +5000,18 @@ fn renderer_dependency_gate_preserves_projection_boundary() {
             .any(|issue| issue.contains(DEFAULT_UI_MANIFEST_PATH) && issue.contains("egui")),
         "legion-ui renderer dependency violation should be reported, got: {issues:?}"
     );
+
+    for package in ["legion-editor", "legion-ui", "legion-app"] {
+        let mut violating_dependencies = package_dependencies.clone();
+        violating_dependencies.insert(package.to_string(), HashSet::from(["epaint".to_string()]));
+        let issues = validate_renderer_dependency_gate(&policy, &violating_dependencies);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| { issue.contains(package) && issue.contains("epaint") }),
+            "{package} direct epaint edge should be rejected, got: {issues:?}"
+        );
+    }
 }
 
 #[test]

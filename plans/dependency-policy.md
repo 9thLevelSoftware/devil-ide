@@ -132,6 +132,27 @@ qualification. No new external or workspace dependency is authorized.
 
 `legion-desktop` is the active Phase 2 crate authorized to host GUI renderer dependencies and project/workspace projection helpers. Phase 2 may use `eframe` and `egui` for the Windows-first desktop foundation proof, including their renderer/windowing/accessibility integration stack such as `egui-winit`, `egui-wgpu`, `winit`, `wgpu`, and `accesskit` when pulled in by or needed for the adapter. Slint is an explicit fallback candidate for native panel rendering if Phase 2 evidence shows the egui path cannot satisfy IME, clipboard, focus, accessibility, or high-DPI requirements. Tauri/WRY/TAO and GPUI are not approved for the core editor shell in Phase 2; Tauri/WRY remain auxiliary-only unless a later ADR supersedes ADR-0002, and GPUI remains a long-term architecture influence until its official Windows-first support is suitable for this project.
 
+S1-04h's streaming text-layout continuation uses the existing `egui::epaint`
+route and adds no direct `epaint` dependency to any workspace crate. The
+generic renderer boundary still permits renderer declarations in the
+`legion-desktop` adapter; that gate allowance does not itself change the
+workspace's no-new-direct-epaint decision. The coordinator-authorized ADR-0053
+permits the reviewed global Cargo source patch
+`epaint = { path = "vendor/epaint" }` only when the vendored
+package remains exactly version `0.34.2`, preserves its upstream dependency
+declarations and provenance, and is activated for the existing renderer graph.
+This source override does not authorize a new `legion-editor`, `legion-ui`,
+app, protocol, or other core-substrate renderer edge: renderer ownership stays
+with `legion-desktop`, and shaped layout facts continue through the existing
+protocol/app route. The patch is locally verified: the aligned standalone
+vendor test passed (40 passed, 0 failed), root desktop targeted tests passed,
+and the dependency, documentation-hygiene, claim-audit, and `cargo deny`
+advisory/ban/license/source checks passed. The vendor retains the exact upstream
+MIT and Apache-2.0 texts from the egui `0.34.2` tag; provenance URLs and byte
+hashes are recorded in ADR-0053 and `vendor/epaint/LEGION_PROVENANCE.md`.
+These checks establish local verification only and make no production or
+full-wrapped qualification claim.
+
 `legion-desktop` may additionally use `egui_kittest` as a **test-only**
 dependency (`[dev-dependencies]`, features `wgpu` + `snapshot`) for visual
 regression snapshots of the rendered shell. It is the official egui testing
