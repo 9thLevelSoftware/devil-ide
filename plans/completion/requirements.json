@@ -11982,75 +11982,169 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-13",
-      "title": "Delegate",
+      "id": "COMP-SCOPE-FAMILY-13-01",
+      "title": "Delegate accepts a user-authored task, scope, and ordered plan with explicit targets, route, budget, and approval policy before execution.",
       "kind": "product",
       "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-13"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate scoped tasks and reviewable changes" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 user-authored task/scope/plan" },
+        { "path": "crates/legion-app/src/delegate_workflow.rs", "identity": "current delegated task plan authority" },
+        { "path": "crates/legion-desktop/src/view/worker_panel.rs", "identity": "current delegated task plan projection" }
       ],
-      "legacy_ids": [],
-      "stage": "S3",
-      "package_id": "S3-06",
-      "owner_role": "luna_worker",
-      "depends_on": [],
-      "implementation": "partial",
-      "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
-      "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-PROV-001", "COMP-PROV-004", "COMP-CTX-001"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-02",
+      "title": "Delegate executes only inside an isolated disposable worktree or copy with an enforced sandbox scope and visible platform caveats.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate isolated execution" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 isolated execution and safe cleanup" },
+        { "path": "crates/legion-agent/src/worktree.rs", "identity": "current delegated sandbox/worktree authority" },
+        { "path": "crates/legion-desktop/src/view/sandbox_panel.rs", "identity": "current sandbox strength projection" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-P5-F2-T2-1", "COMP-P5-F2-T4-1"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-P5-F2-T2-1", "COMP-P5-F2-T4-1"], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-03",
+      "title": "Delegate runs real bounded read, edit, and project-command tool turns, rejecting malformed calls and out-of-scope paths without touching the main workspace.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate real tool loop" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 real file-read/edit/test tool turns" },
+        { "path": "crates/legion-agent/src/agent_loop.rs", "identity": "current delegated tool loop" },
+        { "path": "crates/legion-agent/src/worktree.rs", "identity": "current delegated containment validation" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-PROV-004", "COMP-CTX-006", "COMP-P5-F3-T3-1"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-P5-F3-T3-1"], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-04",
+      "title": "Delegate enforces time, token, tool, output, and process budgets before and during execution, with visible exhaustion and retry state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate resource limits" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 resource budgets" },
+        { "path": "crates/legion-agent/src/agent_loop.rs", "identity": "current delegated loop limits" },
+        { "path": "crates/legion-app/src/delegate_workflow.rs", "identity": "current delegated budget projection" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-PROV-006"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-05",
+      "title": "Delegate verifies the real Stage 2 project command and records exit status, output fingerprint, and failure details before a proposal can become reviewable.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate verification" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 real verification evidence" },
+        { "path": "crates/legion-agent/src/evidence.rs", "identity": "current delegated evidence records" },
+        { "path": "crates/legion-app/src/delegate_workflow.rs", "identity": "current delegated verification workflow" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-BTD-009", "COMP-TERM-013"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-06",
+      "title": "Delegate produces a complete multi-file proposal with target versions, evidence, and per-hunk review controls; approval remains the only apply path.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate reviewable changes" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 proposal review" },
+        { "path": "crates/legion-agent/src/worktree.rs", "identity": "current delegated proposal generation" },
+        { "path": "crates/legion-desktop/src/view/worker_panel.rs", "identity": "current delegated proposal review projection" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-P3-F2-T1-1", "COMP-P3-F2-T2-1", "COMP-P3-F2-T3-1", "COMP-P3-F2-T4-1", "COMP-SCOPE-FAMILY-13-05"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-P3-F2-T1-1", "COMP-P3-F2-T2-1", "COMP-P3-F2-T3-1", "COMP-P3-F2-T4-1"], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-07",
+      "title": "Delegate supports graceful cancellation and hard kill, refuses further tool calls after cancellation, and reaps child processes deterministically.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate cancellation and resource limits" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 graceful cancel/hard kill" },
+        { "path": "crates/legion-agent/src/worktree.rs", "identity": "current delegated orphan reaping" },
+        { "path": "crates/legion-app/src/delegate_workflow.rs", "identity": "current delegated cancellation entry point" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-SCOPE-FAMILY-13-03"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-08",
+      "title": "Delegate persists durable checkpoints and resumes after app or provider interruption without rerunning completed turns or duplicating proposal effects.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate restart recovery" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 restart resume and durable checkpoints" },
+        { "path": "crates/legion-app/src/delegate_workflow.rs", "identity": "current delegated workflow state" },
+        { "path": "crates/legion-app/src/lib.rs", "identity": "current app lifecycle authority" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T2-1", "COMP-P3-F3-T3-1", "COMP-P3-F3-T4-1", "COMP-SCOPE-FAMILY-13-06"], "implementation": "absent", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T2-1", "COMP-P3-F3-T3-1", "COMP-P3-F3-T4-1"], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-09",
+      "title": "Delegate cleans up worktrees, leases, sandboxes, children, and orphan state after success, failure, cancellation, crash, and restart while preserving the user task and evidence.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate safe cleanup" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 orphan reaping and recovery" },
+        { "path": "crates/legion-agent/src/worktree.rs", "identity": "current delegated cleanup/reaping" },
+        { "path": "crates/legion-app/src/delegate_workflow.rs", "identity": "current delegated task lifecycle" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
+      "depends_on": ["COMP-SCOPE-FAMILY-13-02", "COMP-SCOPE-FAMILY-13-07"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-10",
+      "title": "Delegate projections expose task, scope, plan, budget, worker, sandbox, evidence, cancellation, failure, recovery, and proposal-review controls with truthful lifecycle states.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Delegate product workflow" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-06 rendered task/scope/plan/budget/cancel/kill/review controls" },
+        { "path": "crates/legion-desktop/src/view/worker_panel.rs", "identity": "current delegated task command center" },
+        { "path": "crates/legion-desktop/src/view/sandbox_panel.rs", "identity": "current delegated sandbox projection" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "terra_worker",
+      "depends_on": ["COMP-SCOPE-FAMILY-13-01", "COMP-SCOPE-FAMILY-13-06", "COMP-SCOPE-FAMILY-13-07"], "implementation": "partial", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-13-11",
+      "title": "Packaged native Delegate acceptance completes representative local and hosted Rust, TypeScript/JavaScript, and Python tasks with real tool evidence and verified denial, budget, conflict, cancellation, provider-loss, crash, restart, and cleanup recovery.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "Stage 3 Delegate acceptance" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-07 native Assist/Delegate acceptance gate" },
+        { "path": "crates/legion-desktop/tests/delegated_task_command_center.rs", "identity": "current delegated command-center evidence" },
+        { "path": "crates/legion-app/tests/delegated_task_integration.rs", "identity": "current delegated integration evidence" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-07", "owner_role": "luna_worker",
+      "depends_on": ["COMP-PROV-011", "COMP-CTX-010", "COMP-SCOPE-FAMILY-13-06", "COMP-SCOPE-FAMILY-13-08", "COMP-SCOPE-FAMILY-13-09"], "implementation": "absent", "acceptance": "unassessed",
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-PROV-011", "COMP-CTX-010"], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-14",

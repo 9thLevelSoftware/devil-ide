@@ -138,3 +138,19 @@ The aggregate `COMP-SCOPE-FAMILY-10` row is replaced by eleven atomic outcomes `
 The aggregate `COMP-SCOPE-FAMILY-11` row is replaced by ten atomic rows `COMP-CTX-001..010` in S3-04/S3-07. They cover the approved context manifest, freshness-aware index selection, semantic retrieval, opt-in memory, provenance, deterministic budgets, privacy boundaries, projection-only inspection, metadata replay/recovery, and packaged native acceptance. Existing legacy outcomes remain canonical and are mapped rather than duplicated. Current source traces support conservative `partial` classifications for CTX-001..009; CTX-010 is `absent` because no required native EvidenceRun records were found. All acceptance remains `unassessed`; this increment does not claim S0 completion. See [context-memory-scope-audit.md](context-memory-scope-audit.md).
 
 The exact retained mappings are `COMP-P4-F2-T1-1` → CTX-001/005 (structured manifest and item metadata), `COMP-P4-F2-T2-1` → CTX-007/008 (before-run privacy and planned egress inspection), `COMP-P4-F2-T3-1` → CTX-006/007 (reviewed payload binding and redaction), `COMP-P4-F2-T4-1` → CTX-008/009 (after-run inspection and replay), and `COMP-P3-F2-T3-1` → CTX-008/009 (structured evidence projection and replay metadata). The retained rows remain canonical owners; these mappings document overlap and boundary without duplicating their IDs.
+## S0-01p Delegate scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-13` row is replaced by eleven atomic rows
+`COMP-SCOPE-FAMILY-13-01..11` in S3-06/S3-07. They cover the approved
+user-authored task/scope/plan, isolated worktree and sandbox execution, real
+tool turns, budgets, verification, proposal review, cancellation/kill,
+durable checkpoint resume, cleanup, truthful command-center projection, and
+packaged native Delegate acceptance. Shared provider, context, proposal,
+checkpoint, terminal, build/test, and sandbox outcomes are dependencies or
+canonical retained owners rather than duplicated Delegate rows. Existing
+Assist/PROV/CTX/P3/P4 owners remain unchanged; exact overlap is mapped in
+`plans/completion/delegate-scope-audit.md`. Current source traces support
+`partial` for the existing plan, sandbox, loop, budget, verification,
+proposal, cancellation, cleanup, and projection substrate; durable resume is
+`absent`; packaged native acceptance is `absent`. All acceptance remains
+`unassessed`, and this increment does not claim S0 completion.
