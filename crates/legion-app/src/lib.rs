@@ -11445,10 +11445,20 @@ fn semantic_kind_for_scope_stack(scope_stack: &ScopeStack) -> Option<ViewportSem
 struct ProjectionBuilder;
 
 impl ProjectionBuilder {
+    fn apply_line_wrapping_policy(
+        viewport: &mut ViewportProjection,
+        settings: &SettingsProjection,
+    ) {
+        let settings = settings.clone().normalized();
+        viewport.line_wrapping_policy = settings.editor.line_wrapping_policy;
+        viewport.wrap_column = settings.editor.wrap_column;
+    }
+
     fn active_buffer_projection(
         active: &ActiveDocumentController,
         editor: &EditorEngine,
         layout: &ShellLayoutProjection,
+        settings: &SettingsProjection,
     ) -> Result<ActiveBufferProjection, AppCompositionError> {
         let Some(buffer_id) = active.active_buffer_id else {
             return Ok(ActiveBufferProjection::empty());
@@ -11465,6 +11475,9 @@ impl ProjectionBuilder {
 
         let active_text = editor.text(buffer_id).ok();
         let mut viewport = editor.viewport_projection(request).ok();
+        if let Some(viewport) = &mut viewport {
+            Self::apply_line_wrapping_policy(viewport, settings);
+        }
         if let (Some(viewport), Some(path)) = (&mut viewport, active.active_file_path.as_deref()) {
             add_semantic_token_overlays(path, active_text, viewport);
         }
@@ -29192,7 +29205,13 @@ impl AppComposition {
         &self,
         layout: &ShellLayoutProjection,
     ) -> Result<ActiveBufferProjection, AppCompositionError> {
-        ProjectionBuilder::active_buffer_projection(&self.active_documents, &self.editor, layout)
+        let settings = self.settings_projection();
+        ProjectionBuilder::active_buffer_projection(
+            &self.active_documents,
+            &self.editor,
+            layout,
+            &settings,
+        )
     }
 
     fn selected_proposal_trust_projections(
@@ -29422,6 +29441,7 @@ impl AppComposition {
         title: impl Into<String>,
     ) -> Result<ShellProjectionSnapshot, AppCompositionError> {
         let layout_projection = ShellLayoutProjection::plain(title);
+        let settings_projection = self.settings_projection();
         let generated_at = TimestampMillis::now();
         let proposal_ledger_projection = self
             .proposal_coordinator
@@ -29465,7 +29485,7 @@ impl AppComposition {
             status_messages: Vec::new(),
             palette_projection: self.palette.projection(),
             command_registry_projection,
-            settings_projection: self.settings_projection(),
+            settings_projection: settings_projection.clone(),
             proposal_ledger_projection,
             artifact_ledger_projection,
             verification_run_projection,
