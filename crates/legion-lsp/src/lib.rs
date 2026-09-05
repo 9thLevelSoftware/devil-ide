@@ -2688,32 +2688,45 @@ fn metadata_fingerprint(label: &str, input: &str) -> FileFingerprint {
     }
 }
 
-/// Normalizes the Windows drive designator of a `file:///` URI so the
-/// fingerprint is stable across the client's form and the server's echoed
-/// form (PKT-S3-WEDGE-R3 root cause #1).
+/// Canonicalize the hexadecimal casing of valid percent escapes in a file URI.
 ///
-/// rust-analyzer echoes document URIs in its own canonical form: a document
-/// opened as `file:///C:/…` comes back in `publishDiagnostics` as
-/// `file:///c:/…` (lowercase drive), and lsp-types' `Url` can also produce
-/// percent-encoded `%3A` colon forms. Hashing the raw string meant those
-/// forms never matched the URI the client opened: diagnostics sat in the
-/// notification buffer while every pump filter reported server silence.
-///
-/// Only the drive designator (`X:` or `X%3A` immediately after `file:///`)
-/// is normalized — lowercased with a literal colon. Path-component case is
-/// preserved: on case-sensitive filesystems it is real document identity.
-///
-/// Public so URI-keyed maps outside this crate (e.g. the rename-translation
-/// document resolver in `legion-app`) can normalize both their keys and
-/// their lookups to the same form.
+/// URI path spelling and literal percent characters remain unchanged; only a
+/// `%` followed by two hexadecimal digits is rewritten to uppercase hex. Other
+/// URI schemes are returned unchanged.
+pub fn normalize_file_uri_percent_escapes(uri: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if !uri.starts_with("file://") {
+        return Cow::Borrowed(uri);
+    }
+    let bytes = uri.as_bytes();
+    let mut normalized = None;
+    for index in 0..bytes.len().saturating_sub(2) {
+        if bytes[index] != b'%'
+            || !bytes[index + 1].is_ascii_hexdigit()
+            || !bytes[index + 2].is_ascii_hexdigit()
+        {
+            continue;
+        }
+        let output = normalized.get_or_insert_with(|| uri.to_string());
+        output.replace_range(
+            index + 1..index + 3,
+            &uri[index + 1..index + 3].to_ascii_uppercase(),
+        );
+    }
+    normalized.map_or(Cow::Borrowed(uri), Cow::Owned)
+}
+
+/// Normalize the Windows drive designator of a `file:///` URI after
+/// canonicalizing percent-escape hex casing.
 pub fn normalize_file_uri_drive(uri: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
-    let Some(rest) = uri.strip_prefix("file:///") else {
-        return Cow::Borrowed(uri);
+    let normalized = normalize_file_uri_percent_escapes(uri);
+    let Some(rest) = normalized.strip_prefix("file:///") else {
+        return normalized;
     };
     let bytes = rest.as_bytes();
     if bytes.is_empty() || !bytes[0].is_ascii_alphabetic() {
-        return Cow::Borrowed(uri);
+        return normalized;
     }
     let drive = bytes[0].to_ascii_lowercase() as char;
     // `X:` form — a path segment is only a drive designator with the colon.
@@ -2721,13 +2734,13 @@ pub fn normalize_file_uri_drive(uri: &str) -> std::borrow::Cow<'_, str> {
         if bytes[0].is_ascii_uppercase() {
             return Cow::Owned(format!("file:///{drive}{}", &rest[1..]));
         }
-        return Cow::Borrowed(uri);
+        return normalized;
     }
     // `X%3A` form (percent-encoded colon, either hex case).
     if rest.len() >= 4 && rest[1..4].eq_ignore_ascii_case("%3a") {
         return Cow::Owned(format!("file:///{drive}:{}", &rest[4..]));
     }
-    Cow::Borrowed(uri)
+    normalized
 }
 
 /// Returns the stable fingerprint used to key `publishDiagnostics` records by URI.

@@ -117,25 +117,38 @@ pub enum LspReadKind {
 pub enum LspWorkerRequest {
     /// Issue a blocking LSP read request on the worker thread.
     RequestRead {
+        /// LSP method name.
         method: String,
+        /// JSON-RPC parameters.
         params: serde_json::Value,
+        /// App-side result routing metadata.
         tag: LspRequestTag,
     },
     /// Fire-and-forget: send a `textDocument/didChange` notification.
     DidChange {
+        /// Canonical `file://` document identity.
         uri: String,
+        /// Monotonic document version after the edit.
         version: i64,
+        /// Full post-edit document text.
         text: String,
     },
     /// Fire-and-forget: send a `textDocument/didOpen` notification.
     DidOpen {
+        /// Canonical `file://` document identity.
         uri: String,
+        /// Language identifier.
         language_id: String,
+        /// Initial document version.
         version: i64,
+        /// Full document text at open time.
         text: String,
     },
     /// Fire-and-forget: send a `textDocument/didClose` notification.
-    DidClose { uri: String },
+    DidClose {
+        /// Canonical `file://` document identity.
+        uri: String,
+    },
 }
 
 /// Message sent from the worker thread back to the frame path.
@@ -923,6 +936,24 @@ impl LspSessionHandle {
         }));
     }
 
+    /// Test-only live session setup that returns the production request queue
+    /// receiver so callers can inspect fire-and-forget requests.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn set_live_with_request_receiver_for_test(
+        &mut self,
+        health: LspServerHealthRecord,
+    ) -> mpsc::Receiver<LspWorkerRequest> {
+        let (request_tx, request_rx) = mpsc::sync_channel::<LspWorkerRequest>(64);
+        let (_, result_rx) = mpsc::sync_channel::<LspWorkerResult>(1);
+        self.state = LspSessionState::Live(Box::new(LspWorkerHandle {
+            health,
+            request_tx,
+            result_rx,
+            stderr_ring: Arc::new(Mutex::new(VecDeque::new())),
+        }));
+        request_rx
+    }
+
     /// Test-only: directly inject lines (already-redacted) into the stderr ring
     /// buffer of a `Live` session handle.  A no-op when the handle is not Live.
     /// Used by T4 tests to exercise `stderr_log_projection()` without a real
@@ -1022,12 +1053,7 @@ fn unavailable_health_record() -> LspServerHealthRecord {
 }
 
 fn path_to_file_uri(path: &Path) -> String {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    if normalized.starts_with('/') {
-        format!("file://{normalized}")
-    } else {
-        format!("file:///{normalized}")
-    }
+    crate::canonical_path_to_uri(&path.to_string_lossy())
 }
 
 fn stable_hash_str(input: &str) -> u64 {

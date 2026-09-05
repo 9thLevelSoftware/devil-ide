@@ -2859,6 +2859,19 @@ impl Default for SettingsProjection {
     }
 }
 
+/// Semantic editor boundary requested by native input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorBoundaryKind {
+    /// Start of the current logical line.
+    LineStart,
+    /// End of the current logical line.
+    LineEnd,
+    /// Start of the document.
+    DocumentStart,
+    /// End of the document.
+    DocumentEnd,
+}
+
 /// Typed command intent emitted by UI input handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandDispatchIntent {
@@ -2890,6 +2903,13 @@ pub enum CommandDispatchIntent {
         /// Replacement payload.
         text: String,
     },
+    /// Replace every directed caret range through editor authority.
+    ReplaceDirectedCarets {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Replacement or insertion payload.
+        text: String,
+    },
     /// Delete a protocol text range through application/editor authority for the target buffer.
     Delete {
         /// Target buffer identifier.
@@ -2905,6 +2925,15 @@ pub enum CommandDispatchIntent {
         range: ProtocolTextRange,
         /// Replacement payload.
         replacement: String,
+    },
+    /// Set a directed pointer selection while preserving anchor/head order.
+    SetDirectedSelection {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
     },
     /// Copy the current editor selection through app-owned metadata-only clipboard authority.
     ClipboardCopy {
@@ -2977,6 +3006,15 @@ pub enum CommandDispatchIntent {
         buffer_id: BufferId,
         /// Selection range from projection space.
         range: ProtocolTextRange,
+    },
+    /// Move every active caret to a semantic editor boundary.
+    MoveToBoundary {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Requested line or document boundary.
+        boundary: EditorBoundaryKind,
+        /// Preserve or initialize directed selection anchors.
+        extend: bool,
     },
     /// Set viewport scroll through app-owned viewport state.
     SetViewportScroll {

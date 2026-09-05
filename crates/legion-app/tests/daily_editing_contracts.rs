@@ -6,6 +6,7 @@ use legion_app::{
 };
 use legion_editor::{TextEdit, TextPosition};
 use legion_memory::{MemoryCandidateRecord, MemoryConsentState, MemoryService};
+use legion_observability::{InMemoryEventSink, SharedEventSink};
 use legion_protocol::{
     AgentRunId, CausalityId, CorrelationId, PrincipalId, ProtocolTextRange, TextCoordinate,
     ViewportScroll, ViewportSemanticTokenKind, WorkspaceTrustState,
@@ -74,6 +75,23 @@ fn trusted_app(root: &std::path::Path) -> AppComposition {
     app
 }
 
+fn fresh_lsp_health() -> legion_protocol::LspServerHealthRecord {
+    legion_protocol::LspServerHealthRecord {
+        server_id: legion_protocol::LanguageServerId(1),
+        language_id: legion_protocol::LanguageId("rust".to_string()),
+        binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+        binary_path_hash: None,
+        artifact_hash: None,
+        version: None,
+        init_status: legion_protocol::LspResultStatus::Fresh,
+        capabilities: Vec::new(),
+        diagnostics_latency_ms: None,
+        restart_count: 0,
+        download_decision_id: None,
+        schema_version: 1,
+    }
+}
+
 #[test]
 fn daily_editing_contracts_tabs_switch_active_buffer() {
     let root = create_root();
@@ -136,9 +154,294 @@ fn daily_editing_contracts_tabs_switch_active_buffer() {
         .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
         .expect("active projection after cursor");
     let viewport = projected.viewport.expect("viewport");
-    assert_eq!(viewport.cursor.character, 3);
+    // SetSelection is the legacy forward-range compatibility view; its head
+    // is the range end under the directed-caret authority.
+    assert_eq!(viewport.cursor.character, 5);
     assert_eq!(viewport.selections.len(), 1);
     assert_eq!(viewport.scroll.left_column, 2);
+}
+
+#[test]
+fn daily_editing_contracts_native_directed_replacement_uses_correlated_app_authority() {
+    let root = create_root();
+    let file = root.join("replace.txt");
+    std::fs::write(&file, "abcd").expect("seed file");
+    let mut app = trusted_app(&root);
+    app.open_file(file.to_string_lossy()).expect("open file");
+    let buffer_id = app.active_buffer_id().expect("active buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::SetDirectedSelection {
+        buffer_id,
+        anchor: text_coordinate(0, 1),
+        head: text_coordinate(0, 3),
+    })
+    .expect("set directed selection");
+    app.dispatch_ui_intent(CommandDispatchIntent::ReplaceDirectedCarets {
+        buffer_id,
+        text: "X".to_string(),
+    })
+    .expect("replace directed carets");
+    let projection = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("projection");
+    assert_eq!(projection.small_buffer_text(), Some("aXd"));
+    assert!(projection.viewport.expect("viewport").selections.is_empty());
+    let transaction = app
+        .editor()
+        .transaction_log()
+        .last()
+        .expect("replacement transaction");
+    assert!(transaction.correlation_id.is_some());
+}
+
+#[test]
+fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_change() {
+    fn run_edit(
+        root: &std::path::Path,
+        file_name: &str,
+    ) -> (
+        String,
+        legion_protocol::TextTransactionDescriptor,
+        legion_protocol::EventEnvelope,
+        legion_app::language::LspWorkerRequest,
+        bool,
+    ) {
+        let file = root.join(file_name);
+        std::fs::write(&file, "abcd").expect("seed file");
+        let sink = InMemoryEventSink::new();
+        let mut app = AppComposition::with_event_sink(SharedEventSink::new(sink.clone()));
+        app.open_workspace(
+            root,
+            WorkspaceTrustState::Trusted,
+            PrincipalId("daily-editing-effects".to_string()),
+        )
+        .expect("open workspace");
+        app.open_file(file.to_string_lossy()).expect("open file");
+        let buffer_id = app.active_buffer_id().expect("active buffer");
+        let request_rx = app.set_lsp_request_receiver_for_test(fresh_lsp_health());
+        let outcome = app
+            .dispatch_ui_intent(CommandDispatchIntent::Replace {
+                buffer_id,
+                range: legion_protocol::ProtocolTextRange {
+                    start: text_coordinate(0, 1),
+                    end: text_coordinate(0, 3),
+                },
+                replacement: "X".to_string(),
+            })
+            .expect("edit");
+        let descriptor = match outcome {
+            AppCommandOutcome::Edited(descriptor) => descriptor,
+            other => panic!("expected edited outcome, got {other:?}"),
+        };
+        let request = request_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("replacement must queue didChange");
+        let canonical_file = std::fs::canonicalize(&file).expect("canonical file path");
+        let normalized_file = canonical_file.to_string_lossy().replace('\\', "/");
+        let normalized_file = normalized_file.strip_prefix("//?/UNC/").map_or_else(
+            || {
+                normalized_file
+                    .strip_prefix("//?/")
+                    .unwrap_or(&normalized_file)
+            },
+            |rest| rest,
+        );
+        let normalized_file = if normalized_file.starts_with("server/") {
+            format!("//{normalized_file}")
+        } else {
+            normalized_file.to_string()
+        };
+        let expected_uri = if normalized_file.starts_with('/') {
+            format!("file://{normalized_file}")
+        } else {
+            format!("file:///{normalized_file}")
+        };
+        let legion_app::language::LspWorkerRequest::DidChange { uri, version, text } = &request
+        else {
+            panic!("expected queued DidChange request, got another worker request");
+        };
+        assert_eq!(uri, &expected_uri, "didChange URI mismatch");
+        assert_eq!(
+            *version, descriptor.post_buffer_version.0 as i64,
+            "didChange version mismatch"
+        );
+        assert_eq!(text, "aXd", "didChange text mismatch");
+        let event = sink
+            .events()
+            .expect("event snapshot")
+            .into_iter()
+            .find(|event| event.event == "editor.transaction_applied")
+            .expect("replacement transaction event");
+        let text = app
+            .editor()
+            .text(buffer_id)
+            .expect("buffer text")
+            .to_string();
+        let dirty = app.editor().is_dirty(buffer_id).expect("dirty state");
+        assert_eq!(event.correlation_id, descriptor.correlation_id);
+        assert_ne!(event.correlation_id.0, 0);
+        assert_ne!(event.causality_id.0, uuid::Uuid::nil());
+        assert_eq!(
+            event.payload["post_buffer_version"],
+            serde_json::json!(descriptor.post_buffer_version.0)
+        );
+        assert!(dirty, "an applied edit must leave the buffer dirty");
+        assert_eq!(descriptor.changed_ranges.len(), 1);
+        (text, descriptor, event, request, dirty)
+    }
+
+    let root = create_root();
+    std::fs::write(root.join("directed.txt"), "abcd").expect("seed directed file");
+    let file = root.join("directed.txt");
+    let sink = InMemoryEventSink::new();
+    let mut directed = AppComposition::with_event_sink(SharedEventSink::new(sink.clone()));
+    directed
+        .open_workspace(
+            &*root,
+            WorkspaceTrustState::Trusted,
+            PrincipalId("daily-editing-effects".to_string()),
+        )
+        .expect("open workspace");
+    directed
+        .open_file(file.to_string_lossy())
+        .expect("open file");
+    let buffer_id = directed.active_buffer_id().expect("active buffer");
+    let request_rx = directed.set_lsp_request_receiver_for_test(fresh_lsp_health());
+    directed
+        .dispatch_ui_intent(CommandDispatchIntent::SetDirectedSelection {
+            buffer_id,
+            anchor: text_coordinate(0, 1),
+            head: text_coordinate(0, 3),
+        })
+        .expect("directed selection");
+    let directed_descriptor = match directed
+        .dispatch_ui_intent(CommandDispatchIntent::ReplaceDirectedCarets {
+            buffer_id,
+            text: "X".to_string(),
+        })
+        .expect("directed replacement")
+    {
+        AppCommandOutcome::Edited(descriptor) => descriptor,
+        other => panic!("expected edited outcome, got {other:?}"),
+    };
+    let directed_request = request_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("directed replacement must queue didChange");
+    let directed_event = sink
+        .events()
+        .expect("directed event snapshot")
+        .into_iter()
+        .find(|event| event.event == "editor.transaction_applied")
+        .expect("directed transaction event");
+    let directed_text = directed.editor().text(buffer_id).expect("text").to_string();
+    let directed_dirty = directed.editor().is_dirty(buffer_id).expect("dirty");
+    let canonical_directed_file = std::fs::canonicalize(&file).expect("canonical directed path");
+    let normalized_directed_file = canonical_directed_file.to_string_lossy().replace('\\', "/");
+    let normalized_directed_file = normalized_directed_file
+        .strip_prefix("//?/UNC/")
+        .map_or_else(
+            || {
+                normalized_directed_file
+                    .strip_prefix("//?/")
+                    .unwrap_or(&normalized_directed_file)
+            },
+            |rest| rest,
+        )
+        .to_string();
+    let directed_expected_uri = if normalized_directed_file.starts_with('/') {
+        format!("file://{normalized_directed_file}")
+    } else {
+        format!("file:///{normalized_directed_file}")
+    };
+    assert_eq!(directed_text, "aXd");
+    assert_ne!(directed_event.correlation_id.0, 0);
+    assert_ne!(directed_event.causality_id.0, uuid::Uuid::nil());
+
+    let ordinary = run_edit(&root, "ordinary.txt");
+    assert_eq!(directed_text, ordinary.0);
+    assert_eq!(directed_dirty, ordinary.4);
+    assert_eq!(
+        directed_descriptor.post_buffer_version,
+        ordinary.1.post_buffer_version
+    );
+    assert_eq!(
+        directed_descriptor.changed_ranges,
+        ordinary.1.changed_ranges
+    );
+    assert_eq!(
+        directed_event.correlation_id,
+        directed_descriptor.correlation_id
+    );
+    assert_eq!(
+        directed_event.causality_id,
+        directed_descriptor.causality_id
+    );
+    assert!(matches!(
+        directed_request,
+        legion_app::language::LspWorkerRequest::DidChange { ref uri, version, ref text }
+            if uri == &directed_expected_uri
+                && version == directed_descriptor.post_buffer_version.0 as i64
+                && text == "aXd"
+    ));
+    assert!(matches!(
+        ordinary.3,
+        legion_app::language::LspWorkerRequest::DidChange { ref uri, version, ref text }
+            if uri.ends_with("/ordinary.txt")
+                && version == ordinary.1.post_buffer_version.0 as i64
+                && text == "aXd"
+    ));
+}
+
+#[test]
+fn daily_editing_contracts_directed_carets_survive_tab_switch_per_buffer() {
+    let root = create_root();
+    let first = root.join("first.txt");
+    let second = root.join("second.txt");
+    std::fs::write(&first, "first\nlong").expect("seed first");
+    std::fs::write(&second, "second\nother").expect("seed second");
+    let mut app = trusted_app(&root);
+    app.open_file(first.to_string_lossy()).expect("open first");
+    let first_buffer = app.active_buffer_id().expect("first buffer");
+    app.open_file(second.to_string_lossy())
+        .expect("open second");
+    let second_buffer = app.active_buffer_id().expect("second buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::SetDirectedSelection {
+        buffer_id: second_buffer,
+        anchor: text_coordinate(0, 0),
+        head: text_coordinate(0, 3),
+    })
+    .expect("second selection");
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: first_buffer,
+    })
+    .expect("switch first");
+    app.dispatch_ui_intent(CommandDispatchIntent::SetDirectedSelection {
+        buffer_id: first_buffer,
+        anchor: text_coordinate(0, 0),
+        head: text_coordinate(0, 2),
+    })
+    .expect("first selection");
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: second_buffer,
+    })
+    .expect("switch second");
+    let second = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("second projection")
+        .viewport
+        .expect("second viewport");
+    assert_eq!(second.selections[0].start.character, 0);
+    assert_eq!(second.selections[0].end.character, 3);
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: first_buffer,
+    })
+    .expect("switch first again");
+    let first = app
+        .active_buffer_projection(&ShellLayoutProjection::plain("daily"))
+        .expect("first projection")
+        .viewport
+        .expect("first viewport");
+    assert_eq!(first.selections[0].start.character, 0);
+    assert_eq!(first.selections[0].end.character, 2);
 }
 
 #[test]

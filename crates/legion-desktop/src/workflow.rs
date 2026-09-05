@@ -34,9 +34,9 @@ use legion_storage::{
     provider_secret_reference,
 };
 use legion_ui::{
-    CommandDispatchIntent, DockLayout, DockMode, DockSide, DockSideLayout, GitRefreshState,
-    PaletteMode, PanelId, SearchScopeProjection, SearchStatusKindProjection, SettingsProjection,
-    Shell, ShellProjectionSnapshot, StatusMessageProjection, StatusSeverity,
+    CommandDispatchIntent, DockLayout, DockMode, DockSide, DockSideLayout, EditorBoundaryKind,
+    GitRefreshState, PaletteMode, PanelId, SearchScopeProjection, SearchStatusKindProjection,
+    SettingsProjection, Shell, ShellProjectionSnapshot, StatusMessageProjection, StatusSeverity,
 };
 
 use crate::{
@@ -1426,9 +1426,22 @@ impl DesktopRuntime {
             }
             action => {
                 let snapshot = self.shell.projection_snapshot();
+                let arm_post_action_hover = matches!(
+                    action,
+                    DesktopAction::MoveToBoundary { .. }
+                        | DesktopAction::SetDirectedSelection { .. }
+                );
+                let arm_post_action_completion =
+                    matches!(action, DesktopAction::ReplaceDirectedCarets { .. });
 
                 // T6: dismiss popup and arm debounce on text-edit actions.
-                if let Some((buffer_id, at)) = completion_debounce_info(&action, &snapshot) {
+                // Directed replacement collapses a selection at the mapped edit end, so its
+                // authoritative completion position only exists after dispatch + projection
+                // refresh. Palette-owned text actions must not arm a timer for a blocked edit.
+                if !arm_post_action_completion
+                    && !editor_text_action_blocked_by_palette(&action, &snapshot)
+                    && let Some((buffer_id, at)) = completion_debounce_info(&action, &snapshot)
+                {
                     self.completion_popup_open = false;
                     self.app.arm_lsp_completion_debounce(buffer_id, at);
                 }
@@ -1489,6 +1502,26 @@ impl DesktopRuntime {
 
                 self.persist_session_if_configured();
                 self.refresh_projection()?;
+                if arm_post_action_completion && matches!(outcome, DesktopWorkflowOutcome::Edited) {
+                    let refreshed = self.shell.projection_snapshot();
+                    if let (Some(buffer_id), Some(viewport)) = (
+                        refreshed.active_buffer_projection.buffer_id,
+                        refreshed.active_buffer_projection.viewport.as_ref(),
+                    ) {
+                        self.completion_popup_open = false;
+                        self.app
+                            .arm_lsp_completion_debounce(buffer_id, viewport.cursor);
+                    }
+                }
+                if arm_post_action_hover {
+                    let refreshed = self.shell.projection_snapshot();
+                    if let Some((buffer_id, at)) =
+                        post_action_hover_position(arm_post_action_hover, &refreshed)
+                    {
+                        self.hover_tooltip_visible = false;
+                        self.app.arm_lsp_hover_debounce(buffer_id, at);
+                    }
+                }
                 self.last_outcome = outcome.clone();
                 self.persist_diagnostics_if_configured();
                 Ok(outcome)
@@ -1577,6 +1610,16 @@ impl DesktopRuntime {
     /// Current shell projection snapshot for rendering and tests.
     pub fn projection_snapshot(&self) -> ShellProjectionSnapshot {
         self.shell.projection_snapshot()
+    }
+
+    /// Test-only access to the app-owned debounce queue. The caller supplies a
+    /// future instant so assertions remain deterministic and do not sleep.
+    #[doc(hidden)]
+    pub fn lsp_debounce_events_for_test(
+        &mut self,
+        now: Instant,
+    ) -> Vec<legion_app::LspDebounceEvent> {
+        self.app.tick_lsp_debounces(now)
     }
 
     /// Drain Git inspections to completion for deterministic tests and golden paths.
@@ -3966,6 +4009,7 @@ fn editor_text_action_blocked_by_palette(
                 | DesktopAction::ClipboardPaste { .. }
                 | DesktopAction::ClipboardCut
                 | DesktopAction::ImeCommit { .. }
+                | DesktopAction::ReplaceDirectedCarets { .. }
                 | DesktopAction::SelectAll { .. }
         )
 }
@@ -3983,6 +4027,9 @@ fn completion_debounce_info(
         DesktopAction::InsertText { at, .. }
         | DesktopAction::ClipboardPaste { at, .. }
         | DesktopAction::ImeCommit { at, .. } => *at,
+        DesktopAction::ReplaceDirectedCarets { .. } => {
+            snapshot.active_buffer_projection.viewport.as_ref()?.cursor
+        }
         // M5: treat delete/backspace as an edit that re-arms completion.
         // Use the start of the deleted range as the new trigger position.
         DesktopAction::DeleteRange { range } => range.start,
@@ -4006,6 +4053,18 @@ fn hover_debounce_info(
         _ => return None,
     };
     let buffer_id = snapshot.active_buffer_projection.buffer_id?;
+    Some((buffer_id, cursor))
+}
+
+fn post_action_hover_position(
+    is_boundary_selection_action: bool,
+    snapshot: &ShellProjectionSnapshot,
+) -> Option<(BufferId, TextCoordinate)> {
+    if !is_boundary_selection_action {
+        return None;
+    }
+    let buffer_id = snapshot.active_buffer_projection.buffer_id?;
+    let cursor = snapshot.active_buffer_projection.viewport.as_ref()?.cursor;
     Some((buffer_id, cursor))
 }
 
@@ -4165,6 +4224,12 @@ impl DesktopEframeApp {
     /// exactly as production keyboard/command handling would.
     pub fn handle_action(&mut self, action: DesktopAction) -> Result<DesktopWorkflowOutcome> {
         self.runtime.handle_action(action)
+    }
+
+    /// Test-only completion ownership control for frame-routing regressions.
+    #[doc(hidden)]
+    pub fn set_completion_popup_open_for_test(&mut self, open: bool) {
+        self.runtime.set_completion_popup_open_for_test(open);
     }
 
     /// Drive a synthetic [`egui::RawInput`] through the same keyboard handler
@@ -4400,7 +4465,7 @@ impl DesktopEframeApp {
 
     fn handle_keyboard(&mut self, ui: &egui::Ui) {
         let mut actions = Vec::new();
-        let snapshot = self.runtime.projection_snapshot();
+        let mut snapshot = self.runtime.projection_snapshot();
         // Interactive TextEdit widgets (BYOK, terminal input) keep focus across
         // frames. While one of them owns keyboard focus, do not also dispatch
         // typed characters / Backspace into the code canvas (key leakage).
@@ -4886,25 +4951,148 @@ impl DesktopEframeApp {
                 }
             }
 
-            actions.extend(editor_text_input_actions(
-                ui,
-                &input.events,
-                &snapshot,
-                editor_input_enabled,
-                self.runtime.vim_consumes_text_input(),
-            ));
             let ime_composition_active = snapshot
                 .active_buffer_projection
                 .buffer_id
                 .and_then(|buffer_id| ime_composition_state(ui, buffer_id))
                 .is_some_and(|composition| composition.active);
             let view_state = self.runtime.projection_view_state();
+            // Text coordinates are projected before dispatch.  A frame may
+            // contain both a boundary key and text (for example Home then a
+            // character); collecting all actions first would leave that text
+            // at the pre-boundary coordinate.  Consume the event stream in
+            // bounded segments, refreshing the app projection after each
+            // semantic boundary.  This keeps the existing text/IME/Vim path
+            // as the sole producer for each segment and does not introduce a
+            // second input owner.
+            let boundary_indices = input
+                .events
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    boundary_action_for_event(event, &snapshot).map(|_| index)
+                })
+                .collect::<Vec<_>>();
+            let boundaries_in_frame = !boundary_indices.is_empty();
+            if boundaries_in_frame {
+                for action in std::mem::take(&mut actions) {
+                    self.dispatch_desktop_action(ui, action);
+                }
+                snapshot = self.runtime.projection_snapshot();
+                let mut ordered_ime_active = ime_composition_active;
+                for (event_index, event) in input.events.iter().enumerate() {
+                    let event_editor_input_enabled = self.runtime.editor_input_enabled(&snapshot)
+                        && !ui.ctx().text_edit_focused();
+                    for action in ordered_editor_text_actions(
+                        ui,
+                        event,
+                        &snapshot,
+                        event_editor_input_enabled,
+                        self.runtime.vim_consumes_text_input(),
+                    ) {
+                        self.dispatch_desktop_action(ui, action);
+                        snapshot = self.runtime.projection_snapshot();
+                    }
+                    match event {
+                        egui::Event::Ime(egui::ImeEvent::Enabled)
+                        | egui::Event::Ime(egui::ImeEvent::Preedit(_)) => {
+                            ordered_ime_active = true;
+                        }
+                        egui::Event::Ime(egui::ImeEvent::Commit(_))
+                        | egui::Event::Ime(egui::ImeEvent::Disabled) => {
+                            ordered_ime_active = false;
+                        }
+                        _ => {}
+                    }
+                    let event_ime_active = ime_active_through_events(
+                        &input.events,
+                        event_index,
+                        ime_composition_active,
+                    );
+                    if let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } = event
+                    {
+                        let ime_active = snapshot
+                            .active_buffer_projection
+                            .buffer_id
+                            .and_then(|buffer_id| ime_composition_state(ui, buffer_id))
+                            .is_some_and(|composition| composition.active);
+                        let completion_open =
+                            self.runtime.projection_view_state().completion_popup_open;
+                        if event_editor_input_enabled
+                            && !ime_active
+                            && !ordered_ime_active
+                            && !event_ime_active
+                            && !completion_open
+                            && !self.runtime.vim_consumes_text_input()
+                        {
+                            let one = input_for_editor_event(&input, event);
+                            if let Some(action) = boundary_action_for_event(event, &snapshot) {
+                                self.dispatch_desktop_action(ui, action);
+                            } else if *key == egui::Key::Backspace {
+                                if let Some(range) = self.runtime.backspace_delete_range() {
+                                    self.dispatch_desktop_action(
+                                        ui,
+                                        DesktopAction::DeleteRange { range },
+                                    );
+                                }
+                            } else if *key == egui::Key::Delete {
+                                if let Some(range) = self.runtime.forward_delete_range() {
+                                    self.dispatch_desktop_action(
+                                        ui,
+                                        DesktopAction::DeleteRange { range },
+                                    );
+                                }
+                            } else if *key == egui::Key::Enter
+                                && !modifiers.command
+                                && !modifiers.alt
+                            {
+                                self.dispatch_desktop_action(
+                                    ui,
+                                    insert_or_replace_with_newline(&snapshot),
+                                );
+                            } else {
+                                for action in editor_keyboard_control_actions(
+                                    &one,
+                                    &snapshot,
+                                    event_editor_input_enabled,
+                                    false,
+                                    false,
+                                ) {
+                                    self.dispatch_desktop_action(ui, action);
+                                }
+                            }
+                        }
+                        snapshot = self.runtime.projection_snapshot();
+                    }
+                }
+            } else {
+                actions.extend(editor_text_input_actions(
+                    ui,
+                    &input.events,
+                    &snapshot,
+                    editor_input_enabled,
+                    self.runtime.vim_consumes_text_input(),
+                ));
+            }
+            let keyboard_input = if boundaries_in_frame {
+                let mut filtered = input.clone();
+                filtered.events.clear();
+                filtered
+            } else {
+                input.clone()
+            };
             // Tier 1 (A1): synthesize Backspace/Delete/Enter using app buffer text
             // so ranges are byte-accurate (including cross-line backspace).
             if editor_input_enabled
                 && !ime_composition_active
                 && !view_state.completion_popup_open
                 && !input.modifiers.command
+                && !boundaries_in_frame
             {
                 if input.key_pressed(egui::Key::Backspace) {
                     if let Some(range) = self.runtime.backspace_delete_range() {
@@ -4918,7 +5106,7 @@ impl DesktopEframeApp {
                     actions.push(insert_or_replace_with_newline(&snapshot));
                 } else {
                     actions.extend(editor_keyboard_control_actions(
-                        &input,
+                        &keyboard_input,
                         &snapshot,
                         editor_input_enabled,
                         ime_composition_active,
@@ -4927,7 +5115,7 @@ impl DesktopEframeApp {
                 }
             } else {
                 actions.extend(editor_keyboard_control_actions(
-                    &input,
+                    &keyboard_input,
                     &snapshot,
                     editor_input_enabled,
                     ime_composition_active,
@@ -4937,17 +5125,21 @@ impl DesktopEframeApp {
         }
 
         for action in actions {
-            // Write OS clipboard before app copy/cut so cut still has the
-            // selection text available; app outcomes remain metadata-only.
-            if matches!(
-                action,
-                DesktopAction::ClipboardCopy | DesktopAction::ClipboardCut
-            ) && let Some(text) = self.runtime.selected_text_for_os_clipboard()
-            {
-                ui.ctx().copy_text(text);
-            }
-            self.runtime.dispatch_ui_action(action);
+            self.dispatch_desktop_action(ui, action);
         }
+    }
+
+    fn dispatch_desktop_action(&mut self, ui: &egui::Ui, action: DesktopAction) {
+        // Write OS clipboard before app copy/cut so cut still has the
+        // selection text available; app outcomes remain metadata-only.
+        if matches!(
+            action,
+            DesktopAction::ClipboardCopy | DesktopAction::ClipboardCut
+        ) && let Some(text) = self.runtime.selected_text_for_os_clipboard()
+        {
+            ui.ctx().copy_text(text);
+        }
+        self.runtime.dispatch_ui_action(action);
     }
 
     fn render_command_palette_overlay(&mut self, ctx: &egui::Context) {
@@ -5727,6 +5919,95 @@ pub fn test_editor_text_input_actions_with_vim(
     editor_text_input_actions(ui, events, snapshot, editor_input_enabled, true)
 }
 
+fn boundary_action_for_event(
+    event: &egui::Event,
+    snapshot: &ShellProjectionSnapshot,
+) -> Option<DesktopAction> {
+    let egui::Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if modifiers.alt || !matches!(key, egui::Key::Home | egui::Key::End) {
+        return None;
+    }
+    let buffer_id = active_buffer_for_input(snapshot)?;
+    let document = modifiers.command;
+    let boundary = match (key, document) {
+        (egui::Key::Home, true) => EditorBoundaryKind::DocumentStart,
+        (egui::Key::End, true) => EditorBoundaryKind::DocumentEnd,
+        (egui::Key::Home, false) => EditorBoundaryKind::LineStart,
+        (egui::Key::End, false) => EditorBoundaryKind::LineEnd,
+        _ => return None,
+    };
+    Some(DesktopAction::MoveToBoundary {
+        buffer_id: Some(buffer_id),
+        boundary,
+        extend: modifiers.shift,
+    })
+}
+
+fn ordered_editor_text_actions(
+    ui: &egui::Ui,
+    event: &egui::Event,
+    snapshot: &ShellProjectionSnapshot,
+    editor_input_enabled: bool,
+    vim_consumes_input: bool,
+) -> Vec<DesktopAction> {
+    let mut actions = editor_text_input_actions(
+        ui,
+        std::slice::from_ref(event),
+        snapshot,
+        editor_input_enabled,
+        vim_consumes_input,
+    );
+    if projected_primary_selection(snapshot).is_some() {
+        for action in &mut actions {
+            let replacement = match action {
+                DesktopAction::InsertText { text, .. }
+                | DesktopAction::ClipboardPaste { text, .. }
+                | DesktopAction::ImeCommit { text, .. } => Some(text.clone()),
+                _ => None,
+            };
+            if let Some(text) = replacement {
+                *action = DesktopAction::ReplaceDirectedCarets { text };
+            }
+        }
+    }
+    actions
+}
+
+fn input_for_editor_event(frame: &egui::InputState, event: &egui::Event) -> egui::InputState {
+    let mut input = frame.clone();
+    input.events = vec![event.clone()];
+    if let egui::Event::Key { modifiers, .. } = event {
+        input.modifiers = *modifiers;
+    }
+    input
+}
+
+fn ime_active_through_events(
+    events: &[egui::Event],
+    through: usize,
+    initially_active: bool,
+) -> bool {
+    let mut active = initially_active;
+    for event in events.iter().take(through + 1) {
+        match event {
+            egui::Event::Ime(egui::ImeEvent::Enabled)
+            | egui::Event::Ime(egui::ImeEvent::Preedit(_)) => active = true,
+            egui::Event::Ime(egui::ImeEvent::Commit(_))
+            | egui::Event::Ime(egui::ImeEvent::Disabled) => active = false,
+            _ => {}
+        }
+    }
+    active
+}
+
 fn editor_keyboard_control_actions(
     input: &egui::InputState,
     snapshot: &ShellProjectionSnapshot,
@@ -5745,6 +6026,33 @@ fn editor_keyboard_control_actions(
     let Some(buffer_id) = active_buffer_for_input(snapshot) else {
         return Vec::new();
     };
+
+    // Boundary keys must be recognized before the command-modifier early
+    // return below: egui's `command` is the logical platform command key, so
+    // Cmd/Ctrl+Home/End are document-boundary requests rather than palette
+    // shortcuts. Alt combinations remain available to platform navigation.
+    if !completion_popup_open
+        && !input.modifiers.alt
+        && (input.key_pressed(egui::Key::Home) || input.key_pressed(egui::Key::End))
+    {
+        let document = input.modifiers.command;
+        let boundary = if document {
+            if input.key_pressed(egui::Key::Home) {
+                EditorBoundaryKind::DocumentStart
+            } else {
+                EditorBoundaryKind::DocumentEnd
+            }
+        } else if input.key_pressed(egui::Key::Home) {
+            EditorBoundaryKind::LineStart
+        } else {
+            EditorBoundaryKind::LineEnd
+        };
+        return vec![DesktopAction::MoveToBoundary {
+            buffer_id: Some(buffer_id),
+            boundary,
+            extend: input.modifiers.shift,
+        }];
+    }
 
     if input.modifiers.command {
         if input.key_pressed(egui::Key::A) {

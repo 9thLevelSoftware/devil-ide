@@ -66,6 +66,22 @@ impl CommandDispatcher {
                 TextEdit::insert(Self::editor_position(at), text),
                 correlation_id,
             ),
+            CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::ReplaceDirectedCarets { buffer_id, text })
+            }
+            CommandDispatchIntent::SetDirectedSelection {
+                buffer_id,
+                anchor,
+                head,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::SetDirectedSelection {
+                    buffer_id,
+                    anchor,
+                    head,
+                })
+            }
             CommandDispatchIntent::Delete { buffer_id, range } => Self::edit_request(
                 active,
                 buffer_id,
@@ -118,6 +134,15 @@ impl CommandDispatcher {
             CommandDispatchIntent::SetSelection { buffer_id, range } => {
                 Ok(AppCommandRequest::SetSelection { buffer_id, range })
             }
+            CommandDispatchIntent::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            } => Ok(AppCommandRequest::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            }),
             CommandDispatchIntent::SetViewportScroll { buffer_id, scroll } => {
                 Ok(AppCommandRequest::SetViewportScroll { buffer_id, scroll })
             }

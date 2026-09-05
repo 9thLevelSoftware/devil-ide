@@ -2013,6 +2013,24 @@ fn projection_rendering_anchors_drag_selection_at_gesture_start() {
 }
 
 #[test]
+fn projection_rendering_drag_coordinates_use_utf8_byte_columns_and_keep_direction() {
+    let line = DesktopCodeLineViewModel {
+        number: 1,
+        text: "aé🙂z".to_string(),
+        highlights: Vec::new(),
+        truncation_state: ViewportLineTruncationState::None,
+    };
+    let anchor = drag_anchor_for_line_pointer(&line, 18.0, egui::vec2(0.0, 0.0), 0.0, 8.0);
+    assert_eq!(anchor.character, 3); // after `aé`, before the four-byte scalar
+    let forward = drag_selection_range(Some(anchor), coord(0, 0, 0), coord(0, 5, 5));
+    assert_eq!(forward.start.character, 3);
+    assert_eq!(forward.end.character, 5);
+    let backward = drag_selection_range(Some(coord(0, 5, 5)), coord(0, 0, 0), anchor);
+    assert_eq!(backward.start.character, 5);
+    assert_eq!(backward.end.character, 3);
+}
+
+#[test]
 fn projection_rendering_marks_expanded_and_collapsed_explorer_rows() {
     let snapshot = populated_snapshot();
     let collapsed = DesktopProjectionViewModel::from_snapshot(&snapshot);

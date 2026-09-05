@@ -44,6 +44,8 @@ use crate::language::{language_projection_for_new_identity, language_quick_fixes
 #[cfg(any(test, feature = "test-helpers"))]
 pub use git_inspection::GitInspectionRunner;
 use git_inspection::{GitMutateOp, GitWorkRequest, GitWorker};
+#[cfg(any(test, feature = "test-helpers"))]
+pub use language::LspWorkerRequest;
 
 pub mod terminal_policy;
 
@@ -6731,7 +6733,7 @@ fn lsp_identity_for_language_request(
     input: &LanguageRequestInput,
 ) -> legion_lsp::LspTextDocumentIdentity {
     legion_lsp::LspTextDocumentIdentity {
-        uri: format!("file://{}", input.metadata.identity.canonical_path.0),
+        uri: canonical_path_to_uri(&input.metadata.identity.canonical_path.0),
         language_id: language_id_for_path(&input.metadata.identity.canonical_path),
         workspace_id: input.workspace_id,
         file_id: input.metadata.identity.file_id,
@@ -8629,13 +8631,46 @@ mod uri_to_canonical_path_tests {
 }
 
 /// Converts a canonical path string to a `file://` URI.
-fn canonical_path_to_uri(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    if normalized.starts_with('/') {
-        format!("file://{normalized}")
+pub(crate) fn canonical_path_to_uri(path: &str) -> String {
+    let windows_form = path.starts_with("\\\\")
+        || path.starts_with("//")
+        || path.starts_with("\\\\?\\")
+        || path.starts_with("//?/")
+        || (path.len() >= 2
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':');
+    let mut normalized = if windows_form {
+        path.replace('\\', "/")
     } else {
-        format!("file:///{normalized}")
+        path.to_string()
+    };
+    if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
+        normalized = format!("//{rest}");
+    } else if let Some(rest) = normalized.strip_prefix("//?/") {
+        normalized = rest.to_string();
     }
+    let encoded = percent_encode_file_path(&normalized);
+    if let Some(rest) = encoded.strip_prefix("//") {
+        format!("file://{rest}")
+    } else if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
+fn percent_encode_file_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte >> 4) as usize]));
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte & 0x0f) as usize]));
+        }
+    }
+    encoded
 }
 
 fn language_id_for_path(path: &CanonicalPath) -> LanguageId {
@@ -9360,6 +9395,22 @@ pub enum AppCommandRequest {
         /// Editor edit in UI-projected text coordinates.
         edit: TextEdit,
     },
+    /// Replace every directed caret range through editor authority.
+    ReplaceDirectedCarets {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Replacement or insertion payload.
+        text: String,
+    },
+    /// Set a directed pointer selection while preserving anchor/head order.
+    SetDirectedSelection {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+    },
     /// Copy the current selection and return metadata-only clipboard evidence.
     ClipboardCopy {
         /// Target buffer identifier.
@@ -9412,6 +9463,15 @@ pub enum AppCommandRequest {
         buffer_id: BufferId,
         /// Selection range from UI projection space.
         range: legion_protocol::ProtocolTextRange,
+    },
+    /// Move every active caret to a semantic line/document boundary.
+    MoveToBoundary {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Requested boundary.
+        boundary: legion_ui::EditorBoundaryKind,
+        /// Extend the directed selections.
+        extend: bool,
     },
     /// Update viewport scroll state for a buffer.
     SetViewportScroll {
@@ -10112,6 +10172,13 @@ pub trait AppEditorCommandPort {
         edit: TextEdit,
     ) -> Result<TextTransactionDescriptor, AppCompositionError>;
 
+    /// Replace every directed caret range through editor authority.
+    fn replace_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        text: String,
+    ) -> Result<TextTransactionDescriptor, AppCompositionError>;
+
     /// Undo a buffer through editor authority.
     fn undo(
         &mut self,
@@ -10134,6 +10201,17 @@ impl AppEditorCommandPort for EditorEngine {
         let record =
             EditorEngine::apply_edit(self, buffer_id, edit, TransactionSource::User, None, None)?;
         Ok(record.to_protocol_descriptor())
+    }
+
+    fn replace_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        text: String,
+    ) -> Result<TextTransactionDescriptor, AppCompositionError> {
+        Ok(
+            EditorEngine::replace_directed_carets(self, buffer_id, text, None)?
+                .to_protocol_descriptor(),
+        )
     }
 
     fn undo(
@@ -10276,6 +10354,12 @@ impl CommandExecutionService {
                     editor.apply_edit(*buffer_id, edit.clone())?,
                 )))
             }
+            AppCommandRequest::ReplaceDirectedCarets { buffer_id, text } => {
+                state.ensure_active_buffer(*buffer_id)?;
+                Ok(Some(AppCommandOutcome::Edited(
+                    editor.replace_directed_carets(*buffer_id, text.clone())?,
+                )))
+            }
             AppCommandRequest::Save { .. }
             | AppCommandRequest::ClipboardCopy { .. }
             | AppCommandRequest::ClipboardCut { .. }
@@ -10287,6 +10371,8 @@ impl CommandExecutionService {
             | AppCommandRequest::SaveAll
             | AppCommandRequest::SetCursor { .. }
             | AppCommandRequest::SetSelection { .. }
+            | AppCommandRequest::MoveToBoundary { .. }
+            | AppCommandRequest::SetDirectedSelection { .. }
             | AppCommandRequest::SetViewportScroll { .. }
             | AppCommandRequest::OpenPalette { .. }
             | AppCommandRequest::ClosePalette
@@ -14546,6 +14632,39 @@ mod app_document_resolver_uri_tests {
         resolver.insert_canonical_path("C:\\ws\\src\\main.rs", resolved_doc());
         assert!(resolver.resolve("file:///C:/ws/src/other.rs").is_none());
     }
+
+    #[test]
+    fn canonical_file_uri_strips_verbatim_prefix_and_escapes_reserved_names() {
+        assert_eq!(
+            canonical_path_to_uri(r"\\?\C:\Users\A User\#100%?.λ.txt"),
+            "file:///C:/Users/A%20User/%23100%25%3F.%CE%BB.txt"
+        );
+        assert_eq!(
+            canonical_path_to_uri(r"\\?\UNC\server\share\A #?.txt"),
+            "file://server/share/A%20%23%3F.txt"
+        );
+        assert_eq!(
+            canonical_path_to_uri("/tmp/a\\b.rs"),
+            "file:///tmp/a%5Cb.rs"
+        );
+    }
+
+    #[test]
+    fn resolver_preserves_reserved_name_document_identity() {
+        use crate::language::DocumentResolver as _;
+        let mut resolver = AppDocumentResolver {
+            by_uri: HashMap::new(),
+        };
+        let path = r"C:\ws\A #%.λ.txt";
+        resolver.insert_canonical_path(path, resolved_doc());
+        let uri = canonical_path_to_uri(path);
+        assert!(resolver.resolve(&uri).is_some());
+        assert!(
+            resolver
+                .resolve("file:///C:/ws/A%20%23%25.%ce%bb.txt")
+                .is_some()
+        );
+    }
 }
 
 impl AppComposition {
@@ -15995,6 +16114,17 @@ impl AppComposition {
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn set_lsp_health_for_test(&mut self, health: legion_protocol::LspServerHealthRecord) {
         self.lsp_session.set_live_health_for_test(health);
+    }
+
+    /// Test-only: install a live LSP session and return its production request
+    /// queue receiver for observing fire-and-forget edit notifications.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn set_lsp_request_receiver_for_test(
+        &mut self,
+        health: legion_protocol::LspServerHealthRecord,
+    ) -> std::sync::mpsc::Receiver<LspWorkerRequest> {
+        self.lsp_session
+            .set_live_with_request_receiver_for_test(health)
     }
 
     /// Test-only: inject a pre-created cancellation flag so that tests can
@@ -18150,6 +18280,21 @@ impl AppComposition {
             return Ok(outcome);
         }
 
+        if let CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text } = &intent {
+            self.active_documents.ensure_active_buffer(*buffer_id)?;
+            let descriptor = self
+                .editor
+                .replace_directed_carets(
+                    *buffer_id,
+                    text.clone(),
+                    Some(event_context.correlation_id),
+                )?
+                .to_protocol_descriptor();
+            self.emit_transaction_event(&descriptor);
+            self.notify_lsp_did_change(*buffer_id, &descriptor);
+            return Ok(AppCommandOutcome::Edited(descriptor));
+        }
+
         // Vim intents need the buffer's text and cursor, which the pure
         // router does not have, so they are handled here for the same reason
         // find/replace is.
@@ -18434,6 +18579,42 @@ impl AppComposition {
             }
             AppCommandRequest::SetSelection { buffer_id, range } => {
                 self.set_buffer_selection(buffer_id, range)?;
+                Ok(AppCommandOutcome::SelectionSet(buffer_id))
+            }
+            AppCommandRequest::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            } => {
+                let boundary = match boundary {
+                    legion_ui::EditorBoundaryKind::LineStart => {
+                        legion_editor::BoundaryKind::LineStart
+                    }
+                    legion_ui::EditorBoundaryKind::LineEnd => legion_editor::BoundaryKind::LineEnd,
+                    legion_ui::EditorBoundaryKind::DocumentStart => {
+                        legion_editor::BoundaryKind::DocumentStart
+                    }
+                    legion_ui::EditorBoundaryKind::DocumentEnd => {
+                        legion_editor::BoundaryKind::DocumentEnd
+                    }
+                };
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.move_to_boundary(buffer_id, boundary, extend)?;
+                Ok(AppCommandOutcome::CursorSet(buffer_id))
+            }
+            AppCommandRequest::SetDirectedSelection {
+                buffer_id,
+                anchor,
+                head,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.set_directed_carets(
+                    buffer_id,
+                    vec![legion_editor::DirectedCaret::new(
+                        CommandDispatcher::editor_position(head),
+                        Some(CommandDispatcher::editor_position(anchor)),
+                    )],
+                )?;
                 Ok(AppCommandOutcome::SelectionSet(buffer_id))
             }
             AppCommandRequest::SetViewportScroll { buffer_id, scroll } => {

@@ -15,9 +15,9 @@ use legion_protocol::{
 };
 use legion_protocol::{CapabilityId, PluginContribution, PluginId};
 use legion_ui::{
-    CommandDispatchIntent, DebugStepKindProjection, DockMode, GitConflictChoiceProjection,
-    PaletteMode, SearchScopeProjection, ShellProjectionSnapshot, ThemePreferenceProjection,
-    ToastVerbosityProjection,
+    CommandDispatchIntent, DebugStepKindProjection, DockMode, EditorBoundaryKind,
+    GitConflictChoiceProjection, PaletteMode, SearchScopeProjection, ShellProjectionSnapshot,
+    ThemePreferenceProjection, ToastVerbosityProjection,
 };
 use thiserror::Error;
 
@@ -819,6 +819,11 @@ pub enum DesktopAction {
         /// Projected insertion coordinate.
         at: TextCoordinate,
     },
+    /// Replace every directed caret range through editor authority.
+    ReplaceDirectedCarets {
+        /// Replacement or insertion payload.
+        text: String,
+    },
     /// Replace a projected range.
     ReplaceRange {
         /// Projected range to replace.
@@ -884,6 +889,24 @@ pub enum DesktopAction {
         buffer_id: Option<BufferId>,
         /// Selection range in projection space.
         range: ProtocolTextRange,
+    },
+    /// Set a directed pointer selection while preserving anchor/head order.
+    SetDirectedSelection {
+        /// Optional target buffer.
+        buffer_id: Option<BufferId>,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+    },
+    /// Move every active editor caret to a semantic line/document boundary.
+    MoveToBoundary {
+        /// Optional target buffer; falls back to the active tab.
+        buffer_id: Option<BufferId>,
+        /// Requested boundary.
+        boundary: EditorBoundaryKind,
+        /// Extend the directed selection from each caret.
+        extend: bool,
     },
     /// Select the entire target buffer or active buffer.
     SelectAll {
@@ -2494,6 +2517,32 @@ impl DesktopCommandBridge {
                     CommandDispatchIntent::SetSelection { buffer_id, range }
                 })
             }
+            DesktopAction::SetDirectedSelection {
+                buffer_id,
+                anchor,
+                head,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::SetDirectedSelection {
+                    buffer_id,
+                    anchor,
+                    head,
+                }
+            }),
+            DesktopAction::ReplaceDirectedCarets { text } => self
+                .with_active_buffer(snapshot, |buffer_id| {
+                    CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text }
+                }),
+            DesktopAction::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                CommandDispatchIntent::MoveToBoundary {
+                    buffer_id,
+                    boundary,
+                    extend,
+                }
+            }),
             DesktopAction::SelectAll { buffer_id } => {
                 self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
                     CommandDispatchIntent::SelectAll { buffer_id }

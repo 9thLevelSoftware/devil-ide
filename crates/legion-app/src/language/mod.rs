@@ -42,6 +42,8 @@ pub use call_hierarchy::{
 };
 
 mod app_lsp;
+#[cfg(any(test, feature = "test-helpers"))]
+pub use app_lsp::LspWorkerRequest;
 pub use app_lsp::{LspReadKind, LspRequestTag, LspSessionHandle, LspWorkerResult};
 
 // Re-export discovery types consumed by tests and callers.

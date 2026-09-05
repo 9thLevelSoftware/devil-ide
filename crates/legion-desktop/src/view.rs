@@ -3961,13 +3961,10 @@ fn render_code_lines(
                         let anchor = response
                             .ctx
                             .data_mut(|data| data.get_temp::<TextCoordinate>(drag_anchor_id));
-                        actions.push(DesktopAction::SetSelection {
+                        actions.push(DesktopAction::SetDirectedSelection {
                             buffer_id: Some(buffer_id),
-                            range: normalized_text_range(drag_selection_range(
-                                anchor,
-                                current_cursor,
-                                coordinate,
-                            )),
+                            anchor: anchor.unwrap_or(current_cursor),
+                            head: coordinate,
                         });
                     }
                     if response.drag_stopped() {
@@ -7739,20 +7736,6 @@ pub fn drag_selection_range(
     }
 }
 
-/// Normalize a protocol text range so `start <= end`. A backwards drag (or any
-/// emit site that picks an anchor after the cursor) would otherwise produce an
-/// inverted range that downstream `set_selections` stores verbatim.
-fn normalized_text_range(range: ProtocolTextRange) -> ProtocolTextRange {
-    if (range.end.line, range.end.character) < (range.start.line, range.start.character) {
-        ProtocolTextRange {
-            start: range.end,
-            end: range.start,
-        }
-    } else {
-        range
-    }
-}
-
 fn editor_coordinate_for_line_x(
     line: &DesktopCodeLineViewModel,
     pointer_x: f32,
@@ -7764,10 +7747,14 @@ fn editor_coordinate_for_line_x(
     } else {
         ((pointer_x - origin_x) / char_width).floor() as u32
     };
-    text_coordinate(
-        line.number.saturating_sub(1),
-        raw_col.min(line.text.chars().count() as u32),
-    )
+    let scalar_index = raw_col.min(line.text.chars().count() as u32) as usize;
+    let byte_column = line
+        .text
+        .char_indices()
+        .nth(scalar_index)
+        .map(|(offset, _)| offset)
+        .unwrap_or(line.text.len());
+    text_coordinate(line.number.saturating_sub(1), byte_column as u32)
 }
 
 fn code_drag_anchor_id(buffer_id: legion_protocol::BufferId) -> egui::Id {

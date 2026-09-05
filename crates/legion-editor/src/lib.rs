@@ -131,6 +131,19 @@ pub struct Cursor {
     pub position: TextPosition,
 }
 
+/// Semantic document boundary used by native editor navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryKind {
+    /// Start of the current logical line.
+    LineStart,
+    /// End of the current logical line, excluding its line ending.
+    LineEnd,
+    /// Start of the document.
+    DocumentStart,
+    /// End of the document, at the end of the final logical line.
+    DocumentEnd,
+}
+
 /// A caret with a UTF-8 head and an optional directed anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectedCaret {
@@ -1319,6 +1332,25 @@ impl EditorEngine {
         undo_group_id: Option<Uuid>,
         correlation_id: Option<CorrelationId>,
     ) -> Result<TransactionRecord, EditorError> {
+        self.apply_edits_with_caret_policy(
+            buffer_id,
+            edits,
+            source,
+            undo_group_id,
+            correlation_id,
+            false,
+        )
+    }
+
+    fn apply_edits_with_caret_policy(
+        &mut self,
+        buffer_id: BufferId,
+        edits: Vec<TextEdit>,
+        source: TransactionSource,
+        undo_group_id: Option<Uuid>,
+        correlation_id: Option<CorrelationId>,
+        collapse_anchors: bool,
+    ) -> Result<TransactionRecord, EditorError> {
         if edits.is_empty() {
             return Err(EditorError::InvalidEdit("edit batch cannot be empty"));
         }
@@ -1361,6 +1393,14 @@ impl EditorEngine {
                 ))
             })
             .collect::<Result<Vec<_>, EditorError>>()?;
+        let mapped_carets = if collapse_anchors {
+            mapped_carets
+                .into_iter()
+                .map(|caret| DirectedCaret::new(caret.head, None))
+                .collect()
+        } else {
+            mapped_carets
+        };
 
         // Recompute each delta against the *final* staged buffer. Iterating
         // ascending (the reverse of `plan.edits`) lets us carry a running
@@ -2315,6 +2355,97 @@ impl EditorEngine {
             .expect("buffer checked")
             .carets = carets;
         Ok(())
+    }
+
+    /// Move every caret to a logical line or document boundary.
+    ///
+    /// Boundary resolution uses the rope line index, so it remains valid for
+    /// streamed buffers and preserves each caret's directed anchor when
+    /// extending a selection.
+    pub fn move_to_boundary(
+        &mut self,
+        buffer_id: BufferId,
+        boundary: BoundaryKind,
+        extend: bool,
+    ) -> Result<(), EditorError> {
+        let targets = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            let line_count = state.buffer.line_index().line_count().max(1);
+            let last_line = line_count.saturating_sub(1);
+            state
+                .carets
+                .iter()
+                .map(|caret| {
+                    let target = match boundary {
+                        BoundaryKind::LineStart => TextPosition::new(caret.head.line, 0),
+                        BoundaryKind::LineEnd => TextPosition::new(
+                            caret.head.line,
+                            state.buffer.line_index().line_byte_len(caret.head.line)?,
+                        ),
+                        BoundaryKind::DocumentStart => TextPosition::zero(),
+                        BoundaryKind::DocumentEnd => TextPosition::new(
+                            last_line,
+                            state.buffer.line_index().line_byte_len(last_line)?,
+                        ),
+                    };
+                    let anchor = extend.then_some(caret.anchor.unwrap_or(caret.head));
+                    Ok(DirectedCaret::new(target, anchor))
+                })
+                .collect::<Result<Vec<_>, EditorError>>()?
+        };
+        self.set_directed_carets(buffer_id, targets)
+    }
+
+    /// Replace the contents of every directed caret range in one transaction.
+    ///
+    /// A caret without an anchor contributes a zero-width insertion.  Ranges
+    /// are built from the rope coordinates and applied atomically, so this is
+    /// bounded for streamed buffers and preserves multi-caret editing.
+    pub fn replace_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        text: impl Into<String>,
+        correlation_id: Option<CorrelationId>,
+    ) -> Result<TransactionRecord, EditorError> {
+        let text = text.into();
+        let edits = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            state
+                .carets
+                .iter()
+                .map(|caret| {
+                    let head = state.buffer.try_byte_offset(caret.head)?;
+                    let anchor = caret
+                        .anchor
+                        .map(|anchor| state.buffer.try_byte_offset(anchor))
+                        .transpose()?;
+                    let (start, end) = anchor
+                        .map(|anchor| (anchor.min(head), anchor.max(head)))
+                        .unwrap_or((head, head));
+                    Ok(TextEdit::new(
+                        TextRange::new(
+                            state.buffer.try_position(start)?,
+                            state.buffer.try_position(end)?,
+                        ),
+                        text.clone(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, EditorError>>()?
+        };
+        self.apply_edits_with_caret_policy(
+            buffer_id,
+            edits,
+            TransactionSource::User,
+            None,
+            correlation_id,
+            true,
+        )
     }
 
     /// Replace transient overlays for a buffer.

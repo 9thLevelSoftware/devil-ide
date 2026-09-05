@@ -1,5 +1,6 @@
 use legion_editor::{
-    Cursor, DirectedCaret, EditorEngine, EditorError, Selection, TextEdit, TextPosition, TextRange,
+    BoundaryKind, Cursor, DirectedCaret, EditorEngine, EditorError, Selection, TextEdit,
+    TextPosition, TextRange,
 };
 use legion_protocol::{
     EditorViewportRequest, FileId, SnapshotConsumerKind, TransactionSource, ViewportDimensions,
@@ -13,6 +14,151 @@ fn engine_with(text: &str) -> (EditorEngine, legion_protocol::BufferId) {
         .open_buffer(WorkspaceId(1), FileId(1), "test.txt", text)
         .expect("buffer opens");
     (engine, buffer)
+}
+
+#[test]
+fn boundary_navigation_preserves_direction_and_handles_crlf_lone_cr_and_trailing_newline() {
+    let (mut engine, buffer) = engine_with("éx\r\ny\rzz\n");
+    engine
+        .set_directed_carets(
+            buffer,
+            vec![
+                DirectedCaret::new(TextPosition::new(0, 3), None),
+                DirectedCaret::new(TextPosition::new(1, 1), Some(TextPosition::new(1, 0))),
+            ],
+        )
+        .unwrap();
+    engine
+        .move_to_boundary(buffer, BoundaryKind::LineEnd, true)
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap(),
+        vec![
+            DirectedCaret::new(TextPosition::new(0, 3), Some(TextPosition::new(0, 3))),
+            DirectedCaret::new(TextPosition::new(1, 1), Some(TextPosition::new(1, 0))),
+        ]
+    );
+    engine
+        .move_to_boundary(buffer, BoundaryKind::DocumentEnd, true)
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap()[0],
+        DirectedCaret::new(TextPosition::new(3, 0), Some(TextPosition::new(0, 3)))
+    );
+    engine
+        .move_to_boundary(buffer, BoundaryKind::DocumentStart, false)
+        .unwrap();
+    assert!(
+        engine
+            .directed_carets(buffer)
+            .unwrap()
+            .iter()
+            .all(|caret| caret.anchor.is_none())
+    );
+}
+
+#[test]
+fn boundary_navigation_repeated_shift_reverses_each_unequal_line_caret() {
+    let (mut engine, buffer) = engine_with("aé\nlonger");
+    engine
+        .set_directed_carets(
+            buffer,
+            vec![
+                DirectedCaret::new(TextPosition::new(0, 1), None),
+                DirectedCaret::new(TextPosition::new(1, 4), None),
+            ],
+        )
+        .unwrap();
+    engine
+        .move_to_boundary(buffer, BoundaryKind::LineStart, true)
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap(),
+        vec![
+            DirectedCaret::new(TextPosition::new(0, 0), Some(TextPosition::new(0, 1))),
+            DirectedCaret::new(TextPosition::new(1, 0), Some(TextPosition::new(1, 4))),
+        ]
+    );
+    engine
+        .move_to_boundary(buffer, BoundaryKind::LineEnd, true)
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap()[0],
+        DirectedCaret::new(TextPosition::new(0, 3), Some(TextPosition::new(0, 1)))
+    );
+    engine
+        .move_to_boundary(buffer, BoundaryKind::LineStart, false)
+        .unwrap();
+    assert!(
+        engine
+            .directed_carets(buffer)
+            .unwrap()
+            .iter()
+            .all(|caret| caret.anchor.is_none())
+    );
+}
+
+#[test]
+fn boundary_navigation_handles_empty_and_trailing_newline_documents() {
+    let (mut engine, empty) = engine_with("");
+    engine
+        .move_to_boundary(empty, BoundaryKind::DocumentEnd, true)
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(empty).unwrap(),
+        vec![DirectedCaret::new(
+            TextPosition::zero(),
+            Some(TextPosition::zero())
+        )]
+    );
+    let (mut engine, trailing) = engine_with("a\n");
+    engine
+        .move_to_boundary(trailing, BoundaryKind::DocumentEnd, false)
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(trailing).unwrap(),
+        vec![DirectedCaret::new(TextPosition::new(1, 0), None)]
+    );
+}
+
+#[test]
+fn native_directed_replacement_collapses_all_anchor_directions_and_history_restores_them() {
+    let (mut engine, buffer) = engine_with("abcd\nefgh");
+    engine
+        .set_directed_carets(
+            buffer,
+            vec![
+                DirectedCaret::new(TextPosition::new(0, 3), Some(TextPosition::new(0, 1))),
+                DirectedCaret::new(TextPosition::new(1, 1), Some(TextPosition::new(1, 3))),
+            ],
+        )
+        .unwrap();
+    engine.replace_directed_carets(buffer, "X", None).unwrap();
+    assert_eq!(engine.text(buffer).unwrap(), "aXd\neXh");
+    assert!(
+        engine
+            .directed_carets(buffer)
+            .unwrap()
+            .iter()
+            .all(|caret| caret.anchor.is_none())
+    );
+    engine.undo(buffer, None).unwrap();
+    assert_eq!(engine.text(buffer).unwrap(), "abcd\nefgh");
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap(),
+        vec![
+            DirectedCaret::new(TextPosition::new(0, 3), Some(TextPosition::new(0, 1))),
+            DirectedCaret::new(TextPosition::new(1, 1), Some(TextPosition::new(1, 3))),
+        ]
+    );
+    engine.redo(buffer, None).unwrap();
+    assert!(
+        engine
+            .directed_carets(buffer)
+            .unwrap()
+            .iter()
+            .all(|caret| caret.anchor.is_none())
+    );
 }
 
 #[test]
@@ -733,6 +879,13 @@ fn streamed_large_unicode_buffer_maps_without_full_cache_materialization() {
             }],
         )
         .unwrap();
+    engine
+        .move_to_boundary(buffer, BoundaryKind::LineEnd, false)
+        .unwrap();
+    assert_eq!(
+        engine.primary_cursor(buffer).unwrap(),
+        TextPosition::new(0, 4)
+    );
     engine
         .apply_edit(
             buffer,
