@@ -2,6 +2,7 @@ pub mod artifact_files;
 pub mod candidate;
 pub mod links;
 pub mod outcomes;
+pub mod run_artifacts;
 pub mod schema;
 pub mod structure;
 
