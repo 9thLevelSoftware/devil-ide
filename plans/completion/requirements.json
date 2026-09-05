@@ -5792,7 +5792,7 @@
       "scenario_ids": [],
       "configuration_ids": [],
       "protected_product_ids": [
-        "COMP-SCOPE-FAMILY-19"
+        "COMP-ENT-003"
       ],
       "defect_ids": []
     },
@@ -5907,7 +5907,7 @@
       "scenario_ids": [],
       "configuration_ids": [],
       "protected_product_ids": [
-        "COMP-SCOPE-FAMILY-19"
+        "COMP-ENT-006"
       ],
       "defect_ids": []
     },
@@ -13507,75 +13507,151 @@
       "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-19",
-      "title": "Collaboration/enterprise",
-      "kind": "product",
-      "required": true,
+      "id": "COMP-COLLAB-001",
+      "title": "Stage 0 publishes a finite collaboration and enterprise identity/policy matrix with supported endpoints, roles, transports, retention, and executable acceptance oracles.",
+      "kind": "product", "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-19"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "finite supported-configuration contracts and family-19" },
+        { "path": "docs/superpowers/plans/2026-09-04-full-product-completion.md", "identity": "S0-02 compatibility matrices" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ matrix and endpoint prerequisites" }
       ],
-      "legacy_ids": [],
-      "stage": "S5",
-      "package_id": "S5-09",
-      "owner_role": "luna_worker",
-      "depends_on": [],
-      "implementation": "partial",
-      "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
-      "defect_ids": []
+      "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-COLLAB-002",
+      "title": "Collaboration and enterprise authority binds tenant, workspace, document, participant identity, roles, permissions, policy epochs, and degraded/revoked behavior.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-08 collaboration and enterprise identity/policy contract" },
+        { "path": "plans/adrs/ADR-0021-collaboration-identity-permissions-retention.md", "identity": "identity, permissions, retention boundary" },
+        { "path": "crates/legion-protocol/src/lib.rs", "identity": "current collaboration identity/session DTOs" },
+        { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current participant/session runtime" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-08", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-001", "COMP-TRUST-002"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-COLLAB-003",
+      "title": "An independently deployable collaboration control plane and desktop transport authenticate tenant/workspace sessions and durably append and checkpoint operations.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-09 collaboration transport and control plane" },
+        { "path": "plans/adrs/ADR-0045-collaboration-operation-layer.md", "identity": "operation-layer boundary" },
+        { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current in-process operation runtime" },
+        { "path": "plans/evidence/phase-6/collaboration-architecture-map.md", "identity": "accepted local substrate and explicit service gap" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-09", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-002"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-COLLAB-004",
+      "title": "Collaboration delivery is ordered and replay-safe across reconnect, duplicate/reorder, backpressure, restart, backup/restore, health, cancellation, and bounded shutdown.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-09 reconnect, recovery, and shutdown oracle" },
+        { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current duplicate, causal-gap, replay, reconnect, and shutdown behavior" },
+        { "path": "plans/evidence/phase-6/disconnect-reconnect-replay-tests.txt", "identity": "deterministic reconnect/replay evidence" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-09", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-003", "COMP-PRES-003", "COMP-PRES-004"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-COLLAB-005",
+      "title": "Independent participants converge on concurrent Unicode and multi-cursor edits with CRDT or ratified operation reconciliation, presence, offline edits, reconnect, identity removal, and server restart.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-10 concurrent collaboration" },
+        { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current deterministic operation ordering/replay/presence substrate" },
+        { "path": "plans/evidence/phase-6/collaboration-convergence-tests.txt", "identity": "local convergence evidence" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-10", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-003", "COMP-COLLAB-004"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-COLLAB-006",
+      "title": "Shared proposals support review, quorum, revocation, stale/conflict handling, history, and audit, and apply only through workspace proposal authority after current validation.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-10 shared proposals and proposal-mediated apply" },
+        { "path": "plans/evidence/phase-6/shared-proposal-approval-tests.txt", "identity": "current app-owned shared proposal gates" },
+        { "path": "crates/legion-app/src/lib.rs", "identity": "current collaboration composition and proposal routing" },
+        { "path": "crates/legion-security/src/lib.rs", "identity": "current collaboration capability policy" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-10", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-005", "COMP-TRUST-001", "COMP-TRUST-002", "COMP-TRUST-004", "COMP-PRES-008"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-ENT-001",
+      "title": "Enterprise identity provides OIDC login, logout, refresh, nonce/state validation, issuer/audience/signature/time checks, revocation, and visible unavailable/recovery behavior.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-11 OIDC identity lifecycle" },
+        { "path": "plans/product-readiness-ledger.md", "identity": "PR-ENT-002 current absence of enterprise identity workflow" },
+        { "path": "crates/legion-security/src/lib.rs", "identity": "current policy/capability security boundary" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-11", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-002", "COMP-COLLAB-003"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-ENT-002",
+      "title": "The collaboration service exposes authenticated, tenant-bound, idempotent SCIM user and group discovery and lifecycle operations with declared filters, pagination, limits, and revocation semantics.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-11 SCIM provisioning API" },
+        { "path": "plans/product-readiness-ledger.md", "identity": "PR-ENT-002 current absence of SCIM provisioning" },
+        { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current runtime has no SCIM API" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-11", "owner_role": "luna_worker", "depends_on": ["COMP-ENT-001", "COMP-COLLAB-003"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-ENT-003",
+      "title": "Signed enterprise policy bundles distribute effective identity, AI, extension, remote, collaboration, telemetry, retention, and export ceilings with atomic rollout, expiry, downgrade/revocation denial, and offline cache behavior.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-11 signed policy distribution and enforcement" },
+        { "path": "plans/evidence/production/P9-F2-T3-signed-policy-bundles.md", "identity": "current signed org-policy substrate" },
+        { "path": "crates/legion-security/src/policy.rs", "identity": "current policy bundle implementation" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-11", "owner_role": "luna_worker", "depends_on": ["COMP-ENT-001", "COMP-ENT-002", "COMP-TRUST-005"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-ENT-004",
+      "title": "Enterprise audit export and retention/deletion controls provide tenant-scoped, metadata-safe, externally verifiable records, expiry, deletion handles, and recovery without raw-source leakage.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-11 audit export, retention, and deletion" },
+        { "path": "crates/legion-retention/src/lib.rs", "identity": "current retention/vault boundary" },
+        { "path": "plans/evidence/phase-6/storage-observability-redaction-audit.md", "identity": "current metadata-only collaboration audit evidence" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-11", "owner_role": "luna_worker", "depends_on": ["COMP-ENT-003", "COMP-TRUST-004"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-ENT-005",
+      "title": "The collaboration and enterprise service is packaged and operated with pinned desktop compatibility, secure production configuration, migrations, health/readiness, install, upgrade, backup, restore, rollback, uninstall, provenance, and SBOM artifacts.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-14 collaboration/enterprise service packaging and operations" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "service artifact and operational qualification" },
+        { "path": "plans/product-readiness-ledger.md", "identity": "PR-ENT-002 current absence of deployable service" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-14", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-003", "COMP-ENT-003", "COMP-ENT-004"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-ENT-006",
+      "title": "Packaged Stage 5 qualification proves real concurrent collaboration, identity/SCIM/policy transitions, audit/export/retention, service operations, interruption/recovery, and externally observed effects across the ratified matrix.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-15 collaboration/enterprise acceptance gate" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "cross-cutting EvidenceRun and final qualification" },
+        { "path": "plans/product-readiness-ledger.md", "identity": "PR-ENT-002 product-workflow status" }
+      ],
+      "legacy_ids": [], "stage": "S5", "package_id": "S5-15", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-005", "COMP-COLLAB-006", "COMP-ENT-001", "COMP-ENT-002", "COMP-ENT-003", "COMP-ENT-004", "COMP-ENT-005"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-20",

@@ -255,3 +255,37 @@ prerequisite. The review request to replace the selected `luna_worker`
 inventory increment: the user instruction selects Luna-only execution. The
 owner field records this bounded inventory owner and does not claim future
 implementation ownership or acceptance authority.
+
+## S0-01v collaboration/enterprise scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-19` from baseline `07f068d` is replaced by
+twelve atomic outcomes `COMP-COLLAB-001..006` and `COMP-ENT-001..006` in
+S0-02/S5-08/S5-09/S5-10/S5-11/S5-14/S5-15. The rows cover the finite
+collaboration and enterprise matrix, tenant/workspace/document identity and
+roles, authenticated durable collaboration transport/control plane, replay and
+recovery, concurrent reconciliation/presence, shared proposal review/quorum,
+OIDC SSO, SCIM provisioning, signed policy distribution/enforcement, audit
+export and retention/deletion, deployable service operations, and packaged
+Stage-5 qualification.
+
+Current source is classified conservatively: the deterministic in-process
+collaboration runtime, protocol/session DTOs, app-owned shared-proposal gates,
+signed org-policy substrate, metadata-only audit paths, and retention vault
+support `partial` rows; the Stage-0 matrix, OIDC/SCIM, durable network service,
+service packaging, and real packaged qualification are `absent`. Every new
+acceptance value remains `unassessed`.
+
+Canonical proposal, dirty-buffer, audit, projection, language, terminal, Git,
+provider, context, extension, remote, and training/telemetry outcomes remain
+deduplicated. `plans/completion/collaboration-enterprise-scope-audit.md`
+records literal current source paths, evidence limits, and the exact ownership
+boundaries. The approved Stage-5 plans remain required scope; historical
+deferred-surface language is not converted into a permanent deferral. The
+bounded inventory owner is `luna_worker` per the user override.
+
+The aggregate replacement also rewires the only two retained protection links
+that would otherwise dangle: `COMP-P9-F2-T1-1` now protects `COMP-ENT-003`
+(policy distribution/enforcement), and `COMP-P9-F2-T4-1` now protects
+`COMP-ENT-006` (packaged Stage-5 enterprise qualification). All other retained
+fields remain byte-decoded equal to baseline; validation covers both
+`depends_on` and `protected_product_ids` referential integrity.
