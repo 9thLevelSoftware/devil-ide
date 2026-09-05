@@ -12669,69 +12669,206 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-15",
-      "title": "External interoperability",
+      "id": "COMP-SCOPE-FAMILY-15-01",
+      "title": "Stage 0 publishes the S0-02 compatibility contract naming supported MCP and ACP protocol versions, ratified transports, named peer implementations, roles, capabilities, credentials, privacy/redaction boundaries, and executable acceptance configurations for S4-01 to consume.",
       "kind": "product",
       "required": true,
       "source_refs": [
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-15"
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "required feature families and Stage 0 protocol matrix"
         },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "S4-01 interoperability contract and Stage 0 named peers"
+        },
+        {
+          "path": "plans/adrs/ADR-0039-agent-interop.md",
+          "identity": "ratified MCP and ACP role sequencing"
+        },
+        {
+          "path": "plans/adrs/ADR-0043-acp-host-local-adapter-bridge.md",
+          "identity": "ACP local adapter boundary"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S0",
+      "package_id": "S0-02",
+      "owner_role": "sol_engineer",
+      "depends_on": [],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-15-02",
+      "title": "Legion interoperates as an authenticated MCP client with named supported servers over the S0-02 transports, negotiating peer identity/version and capabilities and handling tools, resources, prompts, credentials, privacy/redaction, bounded results, malformed/error frames, oversized output, timeout, process death, cancellation, reconnect, permission revocation, and audit without direct workspace mutation.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "S4-04 production MCP client outputs and acceptance oracle"
+        },
+        {
+          "path": "plans/adrs/ADR-0039-agent-interop.md",
+          "identity": "MCP client role and trust boundary"
+        },
+        {
+          "path": "crates/legion-ai-providers/src/lib.rs",
+          "identity": "McpClient, McpTransport, stdio and Streamable HTTP substrate"
+        },
+        {
+          "path": "crates/legion-ai-providers/tests/mcp_ga_conformance.rs",
+          "identity": "MCP stdio and Streamable HTTP conformance coverage"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-04",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-15-01",
+        "COMP-SCOPE-FAMILY-14-10",
+        "COMP-PROV-002"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-15-03",
+      "title": "Legion exposes its required MCP server role to a named supported external MCP client over a ratified S0-02 transport, authenticating the peer and credentials and handling capability discovery, bounded tool/resource/prompt exchange, privacy/redaction, malformed/error requests, timeout, process death, cancellation, reconnect, permission revocation, audit, and clean disconnect while preserving proposal mediation.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
         {
           "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
+          "identity": "required MCP roles and actual interoperability"
         },
         {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
+          "path": "plans/adrs/ADR-0039-agent-interop.md",
+          "identity": "Legion-as-MCP-server role and post-GA boundary"
         },
         {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "MCP server role as complementary server-role evidence"
         },
         {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
+          "path": "crates/legion-ai-providers/src/mcp_server.rs",
+          "identity": "local MCP server dispatch substrate"
         },
         {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
+          "path": "crates/legion-ai-providers/tests/mcp_ga_conformance.rs",
+          "identity": "MCP server/client conformance fixture boundary"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-04",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-15-01",
+        "COMP-SCOPE-FAMILY-14-10",
+        "COMP-P5-F1-T4-1",
+        "COMP-P3-F2-T3-1"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-15-04",
+      "title": "Legion interoperates as an authenticated ACP host with a named supported external agent through negotiated peer identity/version and capabilities, credential and privacy/redaction policy, scoped task/context exchange, streaming progress, proposal/evidence return, malformed/error and timeout handling, process death, cancellation, disconnect/reconnect, restart, and peer revocation.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "S4-05 negotiated ACP session and real-peer acceptance oracle"
         },
         {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
+          "path": "plans/adrs/ADR-0039-agent-interop.md",
+          "identity": "ACP host role for named external agents"
         },
         {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
+          "path": "plans/adrs/ADR-0043-acp-host-local-adapter-bridge.md",
+          "identity": "ACP host local adapter boundary"
         },
         {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
+          "path": "crates/legion-app/src/acp_host.rs",
+          "identity": "AcpHostCommand and supervised local adapter substrate"
         },
         {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
+          "path": "crates/legion-agent/tests/external_agent_containment.rs",
+          "identity": "external-agent scope and refusal coverage"
         }
       ],
       "legacy_ids": [],
       "stage": "S4",
       "package_id": "S4-05",
-      "owner_role": "luna_worker",
-      "depends_on": [],
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-15-01",
+        "COMP-SCOPE-FAMILY-14-11",
+        "COMP-P5-F1-T4-1",
+        "COMP-P3-F2-T3-1",
+        "COMP-PROV-002"
+      ],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-SCOPE-FAMILY-15-05",
+      "title": "External MCP and ACP peers run under equivalent Legion containment: scoped paths and commands, network and budget policy, process cleanup, and observable denial, cancellation, disconnect, and restart outcomes.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md",
+          "identity": "S4-05 external-agent containment equivalent to local workers"
+        },
+        {
+          "path": "crates/legion-agent/src/external.rs",
+          "identity": "external scope, proposal conversion, and evidence boundary"
+        },
+        {
+          "path": "crates/legion-agent/src/scope.rs",
+          "identity": "delegated tool-call scope validation"
+        },
+        {
+          "path": "crates/legion-agent/tests/external_agent_containment.rs",
+          "identity": "external read, escape, proposal, and evidence containment tests"
+        },
+        {
+          "path": "crates/legion-app/src/acp_host.rs",
+          "identity": "supervised ACP process timeout and output boundary"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S4",
+      "package_id": "S4-05",
+      "owner_role": "sol_engineer",
+      "depends_on": [
+        "COMP-SCOPE-FAMILY-15-02",
+        "COMP-SCOPE-FAMILY-15-03",
+        "COMP-SCOPE-FAMILY-15-04",
+        "COMP-SCOPE-FAMILY-14-03",
+        "COMP-SCOPE-FAMILY-14-06"
+      ],
       "implementation": "partial",
       "acceptance": "unassessed",
       "scenario_ids": [],
