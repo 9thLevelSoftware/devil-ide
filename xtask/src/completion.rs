@@ -1,3 +1,5 @@
+pub mod schema;
+
 /// Returns whether a tuple is eligible for product evidence consideration.
 ///
 /// This is an eligibility primitive only. It does not establish evidence
