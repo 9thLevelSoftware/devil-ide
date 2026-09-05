@@ -363,3 +363,45 @@ The exact UTF-8 Git blob at `f4630b4` was compared object-by-object: all 400
 non-family objects are unchanged, and the register is now 409 rows. Validation
 found unique IDs, zero dangling `depends_on` or `protected_product_ids` edges,
 an acyclic graph, and existing literal source paths for every new row.
+
+## S0-01y distribution/operations scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-22` from baseline `4452c97` is replaced by
+ten finite product outcomes `COMP-DIST-001..010`. They cover the required
+S0/S0-02 distribution matrix; reproducible artifacts and provenance; production
+signing and trust verification; a separate Manual/offline artifact with
+OS-level zero-egress; stable/preview descriptors and feeds; update replacement,
+restart acknowledgement, interruption, and rollback; clean-machine install and
+repair; opt-in crash/support diagnostics; documentation; and final distribution
+qualification with immutable hashes and external oracles.
+
+The approved completion design, production-qualification XQ-01/XQ-04/XQ-05/XQ-06/XQ-07,
+master release plan WS-REL-01, operator runbook, and current release/update,
+signing, diagnostics, packaging, and evidence files define this finite scope.
+Current evidence is classified conservatively: release and update paths are
+`partial` because they are dry-run or unsigned-beta paths; production signer,
+clean-machine/native release evidence, the finite matrix, and final qualification
+are `absent`. The register does not claim live credentials, native three-OS
+proof, or acceptance; every new row remains `acceptance: unassessed`.
+
+Canonical ownership is retained through dependencies: platform qualification is
+`COMP-PLAT-009`, updater behavior remains the P8-F2 outcomes, crash/support
+controls remain P8-F3, and the distribution rows consume those outcomes without
+duplicating them. The seven authorized protected-field rewires are exact:
+`COMP-P0-F4-T3-1` -> `COMP-DIST-002`; `COMP-P0-F4-T4-1` ->
+`COMP-DIST-002`; `COMP-P8-F1-T1-1` -> `COMP-DIST-003`;
+`COMP-P8-F1-T2-1` -> `COMP-DIST-002,COMP-DIST-003`;
+`COMP-P8-F1-T3-1` -> `COMP-DIST-007`; `COMP-P8-F1-T4-1` ->
+`COMP-DIST-003,COMP-DIST-007`; and `COMP-P8-F1-T5-1` ->
+`COMP-DIST-003,COMP-DIST-005,COMP-DIST-007`. Existing `COMP-SCOPE-GAP-02`
+protection is retained on the rows that had it. These mappings preserve build,
+artifact verification, signer policy, descriptor integrity, fresh-machine, and
+external signing/feed coverage without removing protection.
+
+The exact UTF-8 Git blob at `4452c97` was compared object-by-object: 408
+non-family objects remain, with only the seven authorized
+`protected_product_ids` arrays changed; every other field is byte-decoded equal
+to baseline. The register is now 418 rows. Validation found unique IDs, no
+remaining family22 references, zero dangling `depends_on` or
+`protected_product_ids` edges, an acyclic combined graph, and existing literal
+source paths for every new row.

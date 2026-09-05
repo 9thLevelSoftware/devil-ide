@@ -543,7 +543,7 @@
       "scenario_ids": [],
       "configuration_ids": [],
       "protected_product_ids": [
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-002"
       ],
       "defect_ids": []
     },
@@ -583,7 +583,7 @@
       "configuration_ids": [],
       "protected_product_ids": [
         "COMP-SCOPE-GAP-02",
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-002"
       ],
       "defect_ids": []
     },
@@ -5001,7 +5001,7 @@
       "configuration_ids": [],
       "protected_product_ids": [
         "COMP-SCOPE-GAP-02",
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-003"
       ],
       "defect_ids": []
     },
@@ -5041,7 +5041,8 @@
       "configuration_ids": [],
       "protected_product_ids": [
         "COMP-SCOPE-GAP-02",
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-002",
+        "COMP-DIST-003"
       ],
       "defect_ids": []
     },
@@ -5081,7 +5082,7 @@
       "configuration_ids": [],
       "protected_product_ids": [
         "COMP-SCOPE-GAP-02",
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-007"
       ],
       "defect_ids": []
     },
@@ -5121,7 +5122,8 @@
       "configuration_ids": [],
       "protected_product_ids": [
         "COMP-SCOPE-GAP-02",
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-003",
+        "COMP-DIST-007"
       ],
       "defect_ids": []
     },
@@ -5161,7 +5163,9 @@
       "configuration_ids": [],
       "protected_product_ids": [
         "COMP-SCOPE-GAP-02",
-        "COMP-SCOPE-FAMILY-22"
+        "COMP-DIST-003",
+        "COMP-DIST-005",
+        "COMP-DIST-007"
       ],
       "defect_ids": []
     },
@@ -13899,75 +13903,139 @@
       "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-22",
-      "title": "Distribution/operations",
-      "kind": "product",
-      "required": true,
+      "id": "COMP-DIST-001",
+      "title": "Stage 0 publishes a finite distribution matrix naming supported OS versions/architectures, package formats, signing/notarization verifiers, release channels, update feeds, offline artifact variants, clean-machine configurations, and owner-held external prerequisites.",
+      "kind": "product", "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-22"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-22 and finite supported-configuration contract" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-01/XQ-06/XQ-07 prerequisites" },
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "WS-REL-01 distribution scope" }
       ],
-      "legacy_ids": [],
-      "stage": "S0",
-      "package_id": "XQ-07",
-      "owner_role": "luna_worker",
-      "depends_on": [],
-      "implementation": "partial",
-      "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
-      "defect_ids": []
+      "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-002",
+      "title": "The release pipeline reproducibly builds each declared native artifact and records exact version/channel/target metadata, artifact hashes, manifest provenance, SBOM or dependency provenance, and verifier results without treating dry-run or missing-artifact descriptors as production outputs.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-01 canonical completion rows and evidence" },
+        { "path": "xtask/src/release_pipeline.rs", "identity": "descriptor/hash/provenance pipeline" },
+        { "path": "xtask/tests/release_pipeline.rs", "identity": "release descriptor validation tests" },
+        { "path": "docs/OPERATOR_RUNBOOK.md", "identity": "release artifact and verification procedure" }
+      ],
+      "legacy_ids": [], "stage": "S0", "package_id": "XQ-01", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-001"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-003",
+      "title": "Production release artifacts carry real signer and OS-verifier evidence for Windows, macOS, and Linux, with protected secret handling, notarization/trust checks, and explicit unsigned-beta or blocked status when production credentials or verifiers are unavailable.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-07 signed installers and clean-machine qualification" },
+        { "path": "xtask/src/signing.rs", "identity": "Ed25519 signing substrate" },
+        { "path": "xtask/src/release_pipeline.rs", "identity": "signer status and descriptor verification" },
+        { "path": "scripts/verify-native-package.ps1", "identity": "Windows package verifier" },
+        { "path": "scripts/verify-native-package.sh", "identity": "Unix package verifier" },
+        { "path": "plans/release/procurement-and-key-escrow.md", "identity": "external signing prerequisites" }
+      ],
+      "legacy_ids": [], "stage": "S0", "package_id": "XQ-07", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-001", "COMP-DIST-002"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-004",
+      "title": "A separately labeled Manual/offline artifact is packaged and externally verified to perform ordinary local workflows with zero external DNS/TCP/UDP/telemetry/provider/update/crash egress, independent of the hosted release artifact and without network-command shortcuts.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-06 Manual/offline artifact and OS-level capture" },
+        { "path": "scripts/package-native.ps1", "identity": "Windows native/offline packaging" },
+        { "path": "scripts/package-native.sh", "identity": "Unix native/offline packaging" },
+        { "path": "crates/legion-app/tests/manual_zero_egress.rs", "identity": "Manual zero-egress policy substrate" },
+        { "path": "docs/MODES.md", "identity": "Manual mode boundary" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-06", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-001", "COMP-DIST-002", "COMP-PLAT-009"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-005",
+      "title": "Stable and preview channels publish separate signed or explicitly unsigned descriptors and manifests with visible rollout policy, version identity, artifact hashes, update-feed provenance, cancellation, and no cross-channel leakage.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-04 installed update and channel qualification" },
+        { "path": "xtask/src/release_pipeline.rs", "identity": "channel descriptors and release manifest" },
+        { "path": "crates/legion-app/src/updater.rs", "identity": "updater manifest/journal substrate" },
+        { "path": "plans/evidence/production/M5/WS17-T3-auto-update-rollback.md", "identity": "historical update evidence" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-04", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-001", "COMP-DIST-002", "COMP-P8-F2-T1-1", "COMP-P8-F2-T2-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-006",
+      "title": "Installed update replacement is performed by a separately packaged helper with path/hash/signature validation, single-instance locking, atomic same-volume swap, process restart acknowledgement, interruption handling, and rollback that restores the prior executable and workspace state.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-04 atomic replacement/restart/rollback" },
+        { "path": "crates/legion-app/src/updater.rs", "identity": "update journal and updater substrate" },
+        { "path": "xtask/src/update_drill.rs", "identity": "deterministic update/rollback drill" },
+        { "path": "crates/legion-app/src/bin/update_drill.rs", "identity": "update drill binary" },
+        { "path": "plans/evidence/production/M5/WS17-T3-auto-update-rollback.md", "identity": "historical update/rollback evidence" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-04", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-005", "COMP-P8-F2-T3-1", "COMP-PRES-004"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-007",
+      "title": "Each supported OS has clean-machine installation and trust qualification that verifies package identity/signature, first-run privacy/provider setup, launch, ordinary project work, uninstall/repair state, and interruption or failed-install recovery without inherited checkout/cache state.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-07 clean-machine installation/trust" },
+        { "path": "plans/evidence/release/P8-F1-T3-fresh-vm-gatekeeper-smartscreen-install-smoke.md", "identity": "historical fresh-VM install evidence" },
+        { "path": "scripts/verify-native-package.ps1", "identity": "Windows package verification" },
+        { "path": "scripts/verify-native-package.sh", "identity": "Unix package verification" },
+        { "path": "docs/OPERATOR_RUNBOOK.md", "identity": "operator install/release procedure" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-07", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-001", "COMP-DIST-003", "COMP-PLAT-009"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-008",
+      "title": "Crash recovery and support diagnostics are opt-in, restart-safe, metadata-only by default, redacted, exportable and deletable with truthful consent state, retention/deletion receipt, and no raw editor or secret leakage.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-05 crash/privacy/deletion qualification" },
+        { "path": "crates/legion-app/src/diagnostics.rs", "identity": "support bundle assembler" },
+        { "path": "crates/legion-observability/src/crash_capture.rs", "identity": "crash capture substrate" },
+        { "path": "crates/legion-retention/tests/privacy_deletion.rs", "identity": "privacy/deletion substrate" },
+        { "path": "docs/PRIVACY.md", "identity": "support bundle and crash privacy contract" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-05", "owner_role": "luna_worker", "depends_on": ["COMP-P8-F3-T1-1", "COMP-P8-F3-T2-1", "COMP-P8-F3-T3-1"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-009",
+      "title": "User and operator support material matches observed distribution behavior and documents Manual/offline use, consent, install/repair/uninstall, update/rollback, crash/support-bundle export, diagnostics, recovery, known platform caveats, and escalation paths.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "WS-REL-01 support and documentation acceptance" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "operator qualification and support inputs" },
+        { "path": "plans/evidence/production/M5/WS17-T6-docs-support-surface.md", "identity": "historical docs/support evidence" },
+        { "path": "docs/OPERATOR_RUNBOOK.md", "identity": "operator runbook" },
+        { "path": "docs/TROUBLESHOOTING.md", "identity": "troubleshooting surface" }
+      ],
+      "legacy_ids": [], "stage": "S1", "package_id": "XQ-05", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-004", "COMP-DIST-006", "COMP-DIST-007", "COMP-DIST-008"],
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-DIST-010",
+      "title": "Final distribution qualification runs the ordinary packaged install, first-run, project, update, interruption, rollback, crash/privacy, support, uninstall/repair, and Manual/offline journeys with immutable artifact hashes, external OS oracles, reviewer coverage, and blocked outcomes for missing signer, feed, platform, or owner prerequisites.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-22 product acceptance" },
+        { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-01/XQ-04/XQ-05/XQ-06/XQ-07 final evidence" },
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "M12/M13 release and support exit" }
+      ],
+      "legacy_ids": [], "stage": "S6", "package_id": "S6-01", "owner_role": "luna_worker", "depends_on": ["COMP-DIST-001", "COMP-DIST-002", "COMP-DIST-003", "COMP-DIST-004", "COMP-DIST-005", "COMP-DIST-006", "COMP-DIST-007", "COMP-DIST-008", "COMP-DIST-009", "COMP-PLAT-009"],
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-GAP-01",
