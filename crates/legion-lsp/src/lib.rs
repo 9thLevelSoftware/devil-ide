@@ -9,7 +9,7 @@ pub mod features;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -256,6 +256,144 @@ pub struct LspServerProcessConfig {
     pub env: Vec<(String, String)>,
 }
 
+/// A normalized Node.js semantic version supplied by the runtime approval
+/// boundary. The app must obtain this by actually running its approved Node
+/// executable with `--version`; this crate only compares the supplied value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LspNodeVersion {
+    /// Major version.
+    pub major: u32,
+    /// Minor version.
+    pub minor: u32,
+    /// Patch version.
+    pub patch: u32,
+}
+
+impl LspNodeVersion {
+    /// Parses one exact `node --version` line: `vMAJOR.MINOR.PATCH` or
+    /// `MAJOR.MINOR.PATCH`, with one optional terminal LF or CRLF. Internal
+    /// newlines, trailing text, and prerelease/build suffixes are rejected.
+    pub fn parse(value: &str) -> Result<Self, LspDownloadedArtifactResolveError> {
+        let value = value
+            .strip_suffix("\r\n")
+            .or_else(|| value.strip_suffix('\n'))
+            .unwrap_or(value);
+        let value = value.strip_prefix('v').unwrap_or(value);
+        if value.is_empty() || value.contains('\r') || value.contains('\n') {
+            return Err(invalid_runtime_version(value));
+        }
+        let mut parts = value.split('.');
+        let parse_component = |component: Option<&str>| {
+            let component = component.ok_or_else(|| invalid_runtime_version(value))?;
+            if component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(invalid_runtime_version(value));
+            }
+            component
+                .parse()
+                .map_err(|_| invalid_runtime_version(value))
+        };
+        let version = Self {
+            major: parse_component(parts.next())?,
+            minor: parse_component(parts.next())?,
+            patch: parse_component(parts.next())?,
+        };
+        if parts.next().is_some() {
+            return Err(invalid_runtime_version(value));
+        }
+        Ok(version)
+    }
+}
+
+/// Runtime required to execute a downloaded language-server artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspArtifactRuntime {
+    /// A Node.js executable must launch the package entrypoint.
+    Node {
+        /// Minimum compatible Node version.
+        minimum_version: LspNodeVersion,
+    },
+}
+
+/// Packaging metadata for a downloaded language-server artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspDownloadedArtifactMetadata {
+    /// Pinned package version.
+    pub version: String,
+    /// Archive format (for example, `tar.gz`).
+    pub archive_format: String,
+    /// Relative package root inside the materialized artifact directory.
+    pub package_root: PathBuf,
+    /// Relative executable entrypoint below `package_root`.
+    pub entrypoint: PathBuf,
+    /// Runtime required to execute the entrypoint.
+    pub runtime: LspArtifactRuntime,
+}
+
+/// Failure while resolving a materialized downloaded artifact into a process.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum LspDownloadedArtifactResolveError {
+    /// A downloaded artifact has no materialized process configuration yet.
+    #[error("downloaded artifact is not materialized")]
+    ArtifactNotMaterialized,
+    /// The adapter is not a downloaded artifact.
+    #[error("adapter is not a downloaded artifact")]
+    NotDownloadedArtifact,
+    /// A required path was not absolute.
+    #[error("{field} must be an absolute path")]
+    RelativePath {
+        /// Path role that must be absolute.
+        field: &'static str,
+    },
+    /// A metadata path contains an unsafe component.
+    #[error("{field} contains an unsafe path component")]
+    UnsafePath {
+        /// Metadata path role containing the unsafe component.
+        field: &'static str,
+    },
+    /// A required path is absent.
+    #[error("{field} does not exist: {path}")]
+    MissingPath {
+        /// Path role that is missing.
+        field: &'static str,
+        /// Missing filesystem path.
+        path: PathBuf,
+    },
+    /// A required path is not the expected filesystem kind.
+    #[error("{field} is not the expected filesystem entry: {path}")]
+    WrongPathKind {
+        /// Path role with the wrong kind.
+        field: &'static str,
+        /// Filesystem path with the wrong kind.
+        path: PathBuf,
+    },
+    /// A runtime version string was malformed.
+    #[error("invalid Node runtime version: {value}")]
+    InvalidRuntimeVersion {
+        /// Runtime version text that failed parsing.
+        value: String,
+    },
+    /// The supplied runtime does not satisfy the descriptor minimum.
+    #[error("Node runtime {observed:?} is older than required {required:?}")]
+    RuntimeTooOld {
+        /// Descriptor minimum.
+        required: LspNodeVersion,
+        /// Version observed by the app-owned approval boundary.
+        observed: LspNodeVersion,
+    },
+    /// A path cannot be represented by the process configuration string API.
+    #[error("{field} contains a non-UTF-8 path")]
+    NonUtf8Path {
+        /// Path role containing non-UTF-8 data.
+        field: &'static str,
+    },
+}
+
+fn invalid_runtime_version(value: &str) -> LspDownloadedArtifactResolveError {
+    LspDownloadedArtifactResolveError::InvalidRuntimeVersion {
+        value: value.to_string(),
+    }
+}
+
 /// Binary-resolution metadata for one language-server adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LspServerBinarySource {
@@ -274,6 +412,8 @@ pub enum LspServerBinarySource {
         checksum_sha256: String,
         /// Policy gate that authorizes the download path.
         policy_gate: String,
+        /// Pinned packaging and runtime metadata.
+        metadata: LspDownloadedArtifactMetadata,
     },
 }
 
@@ -290,7 +430,8 @@ pub struct LanguageServerAdapterPlan {
     pub display_name: String,
     /// Binary-resolution metadata.
     pub binary_source: LspServerBinarySource,
-    /// Materialized process launch configuration.
+    /// Declared process configuration; downloaded entries require resolution
+    /// after app-owned materialization before they can launch.
     pub process: LspServerProcessConfig,
     /// Whether this adapter is the primary choice for the language.
     pub is_primary: bool,
@@ -327,9 +468,9 @@ impl LanguageServerAdapterPlan {
         }
     }
 
-    /// Creates a policy-gated artifact-backed adapter entry.
+    /// Creates a package-backed adapter with explicit archive and runtime metadata.
     #[allow(clippy::too_many_arguments)]
-    pub fn downloaded_artifact(
+    pub fn downloaded_package_artifact(
         server_id: legion_protocol::LanguageServerId,
         workspace_id: legion_protocol::WorkspaceId,
         language_id: legion_protocol::LanguageId,
@@ -338,6 +479,7 @@ impl LanguageServerAdapterPlan {
         artifact_uri: impl Into<String>,
         checksum_sha256: impl Into<String>,
         policy_gate: impl Into<String>,
+        metadata: LspDownloadedArtifactMetadata,
         args: Vec<String>,
         is_primary: bool,
     ) -> Self {
@@ -353,6 +495,7 @@ impl LanguageServerAdapterPlan {
                 artifact_uri: artifact_uri.into(),
                 checksum_sha256: checksum_sha256.into(),
                 policy_gate: policy_gate.into(),
+                metadata,
             },
             process: LspServerProcessConfig {
                 command: binary_name,
@@ -364,10 +507,144 @@ impl LanguageServerAdapterPlan {
         }
     }
 
-    /// Returns the materialized process configuration.
-    pub fn process_config(&self) -> LspServerProcessConfig {
-        self.process.clone()
+    /// Returns a launch-ready process configuration for system-path adapters.
+    pub fn process_config(
+        &self,
+    ) -> Result<LspServerProcessConfig, LspDownloadedArtifactResolveError> {
+        match &self.binary_source {
+            LspServerBinarySource::DownloadedArtifact { .. } => {
+                Err(LspDownloadedArtifactResolveError::ArtifactNotMaterialized)
+            }
+            LspServerBinarySource::SystemPath { .. } => Ok(self.process.clone()),
+        }
     }
+
+    /// Resolves a materialized package into a shell-free Node process config.
+    ///
+    /// The app-owned materializer must verify the archive and approve the Node
+    /// executable first, then pass its observed `node --version` output here.
+    /// This resolver performs path and compatibility checks only; it does not
+    /// establish artifact provenance or runtime trust.
+    pub fn resolve_downloaded_process(
+        &self,
+        artifact_root: &Path,
+        approved_node: &Path,
+        observed_node_version: &str,
+    ) -> Result<LspServerProcessConfig, LspDownloadedArtifactResolveError> {
+        let LspServerBinarySource::DownloadedArtifact { metadata, .. } = &self.binary_source else {
+            return Err(LspDownloadedArtifactResolveError::NotDownloadedArtifact);
+        };
+        if !artifact_root.is_absolute() {
+            return Err(LspDownloadedArtifactResolveError::RelativePath {
+                field: "artifact_root",
+            });
+        }
+        if !approved_node.is_absolute() {
+            return Err(LspDownloadedArtifactResolveError::RelativePath {
+                field: "approved_node",
+            });
+        }
+        validate_relative_artifact_path(&metadata.package_root, "package_root")?;
+        validate_relative_artifact_path(&metadata.entrypoint, "entrypoint")?;
+        let observed = LspNodeVersion::parse(observed_node_version)?;
+        let LspArtifactRuntime::Node { minimum_version } = &metadata.runtime;
+        if observed < *minimum_version {
+            return Err(LspDownloadedArtifactResolveError::RuntimeTooOld {
+                required: *minimum_version,
+                observed,
+            });
+        }
+        let root = artifact_root.canonicalize().map_err(|_| {
+            LspDownloadedArtifactResolveError::MissingPath {
+                field: "artifact_root",
+                path: artifact_root.to_path_buf(),
+            }
+        })?;
+        if !root.is_dir() {
+            return Err(LspDownloadedArtifactResolveError::WrongPathKind {
+                field: "artifact_root",
+                path: artifact_root.to_path_buf(),
+            });
+        }
+        let node = approved_node.canonicalize().map_err(|_| {
+            LspDownloadedArtifactResolveError::MissingPath {
+                field: "approved_node",
+                path: approved_node.to_path_buf(),
+            }
+        })?;
+        if !node.is_file() {
+            return Err(LspDownloadedArtifactResolveError::WrongPathKind {
+                field: "approved_node",
+                path: approved_node.to_path_buf(),
+            });
+        }
+        let package = root.join(&metadata.package_root);
+        let entrypoint = package.join(&metadata.entrypoint);
+        let package =
+            package
+                .canonicalize()
+                .map_err(|_| LspDownloadedArtifactResolveError::MissingPath {
+                    field: "package_root",
+                    path: package,
+                })?;
+        if !package.starts_with(&root) || !package.is_dir() {
+            return Err(LspDownloadedArtifactResolveError::WrongPathKind {
+                field: "package_root",
+                path: package,
+            });
+        }
+        let entrypoint = entrypoint.canonicalize().map_err(|_| {
+            LspDownloadedArtifactResolveError::MissingPath {
+                field: "entrypoint",
+                path: entrypoint,
+            }
+        })?;
+        if !entrypoint.starts_with(&package) || !entrypoint.is_file() {
+            return Err(LspDownloadedArtifactResolveError::WrongPathKind {
+                field: "entrypoint",
+                path: entrypoint,
+            });
+        }
+        let command = node.into_os_string().into_string().map_err(|_| {
+            LspDownloadedArtifactResolveError::NonUtf8Path {
+                field: "approved_node",
+            }
+        })?;
+        let entrypoint = entrypoint.into_os_string().into_string().map_err(|_| {
+            LspDownloadedArtifactResolveError::NonUtf8Path {
+                field: "entrypoint",
+            }
+        })?;
+        let mut args = self.process.args.clone();
+        args.insert(0, entrypoint);
+        if !args.iter().any(|arg| arg == "--stdio") {
+            args.push("--stdio".to_string());
+        }
+        Ok(LspServerProcessConfig {
+            command,
+            args,
+            cwd: self.process.cwd.clone(),
+            env: self.process.env.clone(),
+        })
+    }
+}
+
+fn validate_relative_artifact_path(
+    path: &Path,
+    field: &'static str,
+) -> Result<(), LspDownloadedArtifactResolveError> {
+    if path.as_os_str().is_empty() || path.is_absolute() {
+        return Err(LspDownloadedArtifactResolveError::UnsafePath { field });
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::CurDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(LspDownloadedArtifactResolveError::UnsafePath { field });
+    }
+    Ok(())
 }
 
 /// Resolution inputs for locating a rust-analyzer binary (design §5).
@@ -524,11 +801,17 @@ impl LanguageServerAdapterRegistry {
     }
 
     /// Returns the launch configs for one workspace/language pair.
+    ///
+    /// This method materializes the requested adapter list as an all-or-error
+    /// operation. If any selected entry is a downloaded artifact that has not
+    /// been materialized, it returns `ArtifactNotMaterialized`; higher-level
+    /// app code must select an adapter before resolution rather than treating
+    /// this method as a fallback-selection policy.
     pub fn process_configs_for_workspace_language(
         &self,
         workspace_id: legion_protocol::WorkspaceId,
         language_id: &legion_protocol::LanguageId,
-    ) -> Vec<LspServerProcessConfig> {
+    ) -> Result<Vec<LspServerProcessConfig>, LspDownloadedArtifactResolveError> {
         self.adapters_for_language(language_id)
             .into_iter()
             .filter(|adapter| adapter.workspace_id == workspace_id)
@@ -567,6 +850,7 @@ impl LanguageServerAdapterRegistry {
                         artifact_uri,
                         checksum_sha256,
                         policy_gate,
+                        metadata,
                     } => {
                         if air_gap {
                             denied_downloads.push(format!(
@@ -585,6 +869,7 @@ impl LanguageServerAdapterRegistry {
                                     artifact_uri: artifact_uri.clone(),
                                     checksum_sha256: checksum_sha256.clone(),
                                     policy_gate: policy_gate.clone(),
+                                    metadata: metadata.clone(),
                                 },
                                 workspace_version_pin,
                                 is_primary: adapter.is_primary,
@@ -642,7 +927,7 @@ impl LanguageServerAdapterRegistry {
             vec!["--stdio".to_string()],
             false,
         ));
-        registry.register(LanguageServerAdapterPlan::downloaded_artifact(
+        registry.register(LanguageServerAdapterPlan::downloaded_package_artifact(
             legion_protocol::LanguageServerId(104),
             workspace_id,
             legion_protocol::LanguageId("python".to_string()),
@@ -651,6 +936,19 @@ impl LanguageServerAdapterRegistry {
             "https://registry.npmjs.org/pyright/-/pyright-1.1.400.tgz",
             "2ccba7af9c8b14bb81c8fa9bb558d8b5181b586ec4dfc448b78eb4209e7a429a",
             "policy://lsp-download/pyright",
+            LspDownloadedArtifactMetadata {
+                version: "1.1.400".to_string(),
+                archive_format: "tar.gz".to_string(),
+                package_root: PathBuf::from("package"),
+                entrypoint: PathBuf::from("langserver.index.js"),
+                runtime: LspArtifactRuntime::Node {
+                    minimum_version: LspNodeVersion {
+                        major: 14,
+                        minor: 0,
+                        patch: 0,
+                    },
+                },
+            },
             vec!["--stdio".to_string()],
             true,
         ));
