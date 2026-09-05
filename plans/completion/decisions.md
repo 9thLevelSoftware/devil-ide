@@ -90,3 +90,7 @@ The large-file mapping preserves `P1.F4.T5` as the committed
 `implementation = implemented` classification: the standard harness wiring is
 implemented, while renderer measurement and product acceptance remain
 unassessed. The audit does not weaken that existing legacy row.
+
+## S0-01e terminal scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-07` row is replaced by fifteen atomic rows `COMP-TERM-001`, `COMP-TERM-002`, and `COMP-TERM-004..016` (with stable TERM-003 removed as an exact duplicate) in package `S1-06`. The approved family and S1-06 terminal deliverable are expanded into explicit shell execution, shell profiles, PTY/input/resize, scrollback/search/rendering, TUI/control keys, OSC cwd/boundaries, task/output references, trust/redaction/env, lifecycle recovery, agent proposal, platform parity, and independent process-evidence outcomes, and multi-session terminal tabs. Exact legacy outcomes P2.F2.T1 through T5 are mapped in `plans/completion/terminal-scope-audit.md` rather than duplicated. The retained P2.F2.T2 row owns the exact trust-denial outcome; all remaining new and retained product rows remain `acceptance = unassessed`; implementation values are source traces only. Source paths are literal files with section locators, and committed baseline `8d151d5` was used for implementation evidence. This increment does not claim full S0-01 or S0 completion.

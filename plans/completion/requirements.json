@@ -6176,10 +6176,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; selection/edit/undo chain"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; multi-cursor and rectangular selection; keyboard focus"},
-        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::SetSelection"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; selection/edit/undo chain"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; multi-cursor and rectangular selection; keyboard focus"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "AppCommandRequest::SetSelection"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6199,10 +6211,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; Unicode/graphemes"},
-        {"path": "plans/foundational-core-ide-platform-roadmap-v0.1.md", "identity": "#phase-4-production-text-model-and-editor-transactions; UTF8/UTF16 conversions"},
-        {"path": "crates/legion-text/src/lib.rs", "identity": "TextSnapshot and coordinate conversion APIs"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; Unicode/graphemes"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-4-production-text-model-and-editor-transactions; UTF8/UTF16 conversions"
+        },
+        {
+          "path": "crates/legion-text/src/lib.rs",
+          "identity": "TextSnapshot and coordinate conversion APIs"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6222,10 +6246,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; Unicode selection/edit/undo chain"},
-        {"path": "plans/foundational-core-ide-platform-roadmap-v0.1.md", "identity": "#phase-4-production-text-model-and-editor-transactions; transaction groups, undo/redo, overlays, dirty-state"},
-        {"path": "crates/legion-editor/src/lib.rs", "identity": "EditorEngine::undo and EditorEngine::redo"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; Unicode selection/edit/undo chain"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-4-production-text-model-and-editor-transactions; transaction groups, undo/redo, overlays, dirty-state"
+        },
+        {
+          "path": "crates/legion-editor/src/lib.rs",
+          "identity": "EditorEngine::undo and EditorEngine::redo"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6245,10 +6281,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; ordinary editing; focused editing tests"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; input/rendering editor feel"},
-        {"path": "crates/legion-editor/src/lib.rs", "identity": "EditorEngine transaction/edit authority"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; ordinary editing; focused editing tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; input/rendering editor feel"
+        },
+        {
+          "path": "crates/legion-editor/src/lib.rs",
+          "identity": "EditorEngine transaction/edit authority"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6268,10 +6316,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; wrapping"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; line wrapping policy with stable viewport math"},
-        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::SetLineWrapping"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; wrapping"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; line wrapping policy with stable viewport math"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "AppCommandRequest::SetLineWrapping"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6291,10 +6351,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; clipboard"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; clipboard copy/cut/paste/select-all integration"},
-        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::ClipboardCopy/ClipboardCut"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; clipboard"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; clipboard copy/cut/paste/select-all integration"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "AppCommandRequest::ClipboardCopy/ClipboardCut"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6314,10 +6386,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; IME commit after focus change"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; IME smoke tests and keyboard focus; Windows/macOS/Linux where automatable"},
-        {"path": "crates/legion-app/src/lib.rs", "identity": "AppCommandRequest::ImeCommit"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; IME commit after focus change"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; IME smoke tests and keyboard focus; Windows/macOS/Linux where automatable"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "AppCommandRequest::ImeCommit"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6337,11 +6421,26 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; input methods and Vim route"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; keyboard focus and input-to-paint"},
-        {"path": "plans/control-first-adaptive-ide-technical-design-v0.1.md", "identity": "#manual-edit-and-save-flow; native input -> UI intent -> App -> Editor authority"},
-        {"path": "crates/legion-desktop/src/workflow.rs", "identity": "DesktopEframeApp input boundary"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; input methods and Vim route"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; keyboard focus and input-to-paint"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#manual-edit-and-save-flow; native input -> UI intent -> App -> Editor authority"
+        },
+        {
+          "path": "crates/legion-desktop/src/workflow.rs",
+          "identity": "DesktopEframeApp input boundary"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6361,10 +6460,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "plans/legion-production-master-plan-v0.2.md", "identity": "#ws-manual-01-editor-feel-rendering-and-input; multi-cursor and rectangular selection"},
-        {"path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md", "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; selection"},
-        {"path": "crates/legion-editor/src/multi_cursor.rs", "identity": "editor cursor/selection implementation trace"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-manual-01-editor-feel-rendering-and-input; multi-cursor and rectangular selection"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings; selection"
+        },
+        {
+          "path": "crates/legion-editor/src/multi_cursor.rs",
+          "identity": "editor cursor/selection implementation trace"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6384,10 +6495,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: motions"},
-        {"path": "crates/legion-ui/src/vim_motion.rs", "identity": "Vim motion parser"},
-        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimSession cursor conversion"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P1.F3.T5 title: motions"
+        },
+        {
+          "path": "crates/legion-ui/src/vim_motion.rs",
+          "identity": "Vim motion parser"
+        },
+        {
+          "path": "crates/legion-app/src/vim_session.rs",
+          "identity": "VimSession cursor conversion"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6407,10 +6530,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: operators"},
-        {"path": "crates/legion-ui/src/vim_intent.rs", "identity": "Vim operator intent"},
-        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimSession modal state"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P1.F3.T5 title: operators"
+        },
+        {
+          "path": "crates/legion-ui/src/vim_intent.rs",
+          "identity": "Vim operator intent"
+        },
+        {
+          "path": "crates/legion-app/src/vim_session.rs",
+          "identity": "VimSession modal state"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6430,9 +6565,18 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: register"},
-        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimRegister"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P1.F3.T5 title: register"
+        },
+        {
+          "path": "crates/legion-app/src/vim_session.rs",
+          "identity": "VimRegister"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6452,10 +6596,22 @@
       "kind": "product",
       "required": true,
       "source_refs": [
-        {"path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-01"},
-        {"path": "plans/kanban/legion-ga-backlog.toml", "identity": "P1.F3.T5 title: insert entry"},
-        {"path": "crates/legion-app/src/vim_session.rs", "identity": "VimSession::display_mode and modal state"},
-        {"path": "crates/legion-app/tests/vim_modal_editing.rs", "identity": "Vim modal editing test path"}
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-01"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P1.F3.T5 title: insert entry"
+        },
+        {
+          "path": "crates/legion-app/src/vim_session.rs",
+          "identity": "VimSession::display_mode and modal state"
+        },
+        {
+          "path": "crates/legion-app/tests/vim_modal_editing.rs",
+          "identity": "Vim modal editing test path"
+        }
       ],
       "legacy_ids": [],
       "stage": "S1",
@@ -6825,62 +6981,1005 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-07",
-      "title": "Terminal",
+      "id": "COMP-TERM-001",
+      "title": "A trusted workspace terminal starts at the workspace root and executes an explicit user/UI command through the authorized terminal input or command-execution route, with observable process completion and result.",
       "kind": "product",
       "required": true,
       "source_refs": [
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-07"
-        },
-        {
           "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
+          "identity": "#required-feature-families; family-07"
         },
         {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
         },
         {
           "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
+          "identity": "#ws-term-01-terminal-runtime-productization"
         },
         {
           "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
+          "identity": "#terminal/workspace scope"
         },
         {
           "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
         },
         {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
         },
         {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P2.F2.T1; acceptance[1]"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.1.md",
+          "identity": "WS05.T1; real PTY and interactive shell"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-002",
+      "title": "Terminal shell selection resolves an explicit workspace or user shell profile before the platform default, with the selected shell visible in the terminal projection.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.01"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "TERM.01; shell selection policy"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "implemented",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-004",
+      "title": "A running terminal session accepts input, propagates resize, renders terminal grid output and scrollback, and supports bounded selection/copy projection across the authorized PTY boundary.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P2.F2.T3; acceptance[1]"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "SPEC GAP 2; T3 renderer grid/scrollback/input/resize"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "implemented",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-005",
+      "title": "Terminal output supports bounded scrollback and output search while preserving rendered styles, cursor state, URL/link detection, and metadata-safe copy projections.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.05; scrollback limits and search"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "VTE/grid model; cursor/selection/scrollback/URL detection"
+        },
+        {
+          "path": "crates/legion-protocol/src/lib.rs",
+          "identity": "TerminalSearchProjection and TerminalScrollbackProjection"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-006",
+      "title": "The terminal runs declared interactive programs/TUI flows with control-key input, cancellation, and resize behavior that reaches the child process and leaves a truthful terminal exit state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "S1-06 checklist; minimal interactive TUI, resize, control key/cancel"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.1.md",
+          "identity": "WS05.T1/WS05.T2; interactive shell and TUI conformance"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-007",
+      "title": "Shell integration parses OSC 133 command boundaries and OSC 7 working-directory updates, exposing queryable cwd and per-command exit metadata without treating shell metadata as security policy.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P2.F2.T4; acceptance[1]"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "SPEC GAP 2; T4 OSC 133/7"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "implemented",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-008",
+      "title": "Build/test/run tasks execute in dedicated terminal sessions and publish structured command output metadata including exit code, duration, and an output reference consumable by the test surface.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.1.md",
+          "identity": "WS05.T4; task execution layer"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "S1-06; terminal command and external result oracle"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-009",
+      "title": "Terminal output and task results expose navigable command/output links or locations while keeping raw transcripts bounded and redacted in durable metadata and agent-facing projections.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "structured terminal output and command blocks"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "metadata-only persistence"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.04; input/output redaction classification"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-010",
+      "title": "Terminal cancellation, close, timeout/deadline enforcement, kill escalation, orphan cleanup, and child-process completion produce truthful exited/timeout/failed state and metadata-only cleanup evidence, including after process loss.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.09/TERM.11; orphan cleanup and failure UX"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor; timeout, kill/restart"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "lifecycle and orphan cleanup"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-011",
+      "title": "Terminal session recovery provides restart and reconnect controls, together with truthful unavailable/crashed states and stale-output suppression after terminal or process loss.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-3/terminal service; restart/kill/reconnect controls"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.11; denied/unavailable/exited/crashed/policy-blocked failure UX"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-012",
+      "title": "Terminal launch applies shell environment allow/deny policy at PTY spawn, strips denied secrets, and records only metadata-safe policy/audit information.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.04/TERM.07; input/output redaction and env policy"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "TERM.07; env policy enforcement at PTY spawn"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "redacted projection and audit"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "implemented",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-013",
+      "title": "Agent-suggested terminal commands use an explicit command-proposal route and policy-scoped PTY/tool boundary, with bounded/redacted output and background-process polling.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.10; terminal command proposal route"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.1.md",
+          "identity": "WS05.T5; agent terminal tool"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-014",
+      "title": "Native terminal behavior has declared shell/platform parity for PowerShell, cmd, bash, and zsh where supported, including Windows ConPTY and Unix PTY launch/output paths.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "TERM.02/TERM.12; ConPTY/Unix PTY and platform smokes"
+        },
+        {
+          "path": "plans/kanban/legion-ga-backlog.toml",
+          "identity": "P2.F2.T5; acceptance[1]"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "platform backend and ConPTY evidence"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-015",
+      "title": "Canonical terminal evidence independently records child PID, launch timestamp, command class, terminal exit status, and observed external effect, with transcript error text treated only as supporting diagnostics.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/legion-production-master-plan-v0.2.md",
+          "identity": "#ws-term-01-terminal-runtime-productization"
+        },
+        {
+          "path": "plans/legion-production-roadmap-v1.0.md",
+          "identity": "#terminal/workspace scope"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal-service-and-ui-terminal-projection"
+        },
+        {
+          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
+          "identity": "#5.7-terminal-supervisor"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required-implementation-gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        },
+        {
+          "path": "plans/evidence/production/M8/WS-TERM-01-evidence.md",
+          "identity": "#tasks implemented and SPEC GAP 2"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-runtime-policy-tests.txt",
+          "identity": "runtime policy tests"
+        },
+        {
+          "path": "plans/evidence/phase-8/terminal-pty-platform-tests.txt",
+          "identity": "PTY platform tests"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "S1-06 deliverable; canonical acceptance evidence"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "qualification evidence; external process oracle"
         }
       ],
       "legacy_ids": [],
@@ -8661,6 +9760,49 @@
       "legacy_ids": [],
       "stage": "S1",
       "package_id": "XQ-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TERM-016",
+      "title": "The terminal panel maintains independently identified terminal sessions or tabs and lets the user switch among their output views with running/stopped, kill, restart, and denied states projected per session.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-07"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-implementation-plan-v0.1.md",
+          "identity": "#terminal panel projection; tabs/output viewport/scrollback/search/kill/restart"
+        },
+        {
+          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
+          "identity": "#phase-7-terminal service and UI terminal projection"
+        },
+        {
+          "path": "plans/adrs/ADR-0026-standalone-local-terminal-runtime.md",
+          "identity": "#required implementation gates"
+        },
+        {
+          "path": "plans/adrs/ADR-0035-terminal-stack.md",
+          "identity": "#decision; terminal runtime and structured output"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
       "owner_role": "luna_worker",
       "depends_on": [],
       "implementation": "partial",
