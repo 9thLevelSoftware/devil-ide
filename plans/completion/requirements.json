@@ -11127,75 +11127,137 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-10",
-      "title": "Provider/model setup",
-      "kind": "product",
-      "required": true,
+      "id": "COMP-PROV-001",
+      "title": "First-run and settings workflows configure the complete approved local, self-hosted, and hosted provider/model matrix, with provider kind, endpoint, model, selected route, and unavailable prerequisites visible through the app-owned setup authority.",
+      "kind": "product", "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-10"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#required-feature-families; family-10 Provider/model setup" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-02-deliver-real-provider-setup-and-credential-lifecycle" },
+        { "path": "crates/legion-app/src/first_run.rs", "identity": "first-run setup authority" },
+        { "path": "crates/legion-ai-providers/src/lib.rs", "identity": "provider registry and setup rows" }
       ],
-      "legacy_ids": [],
-      "stage": "S3",
-      "package_id": "S3-02",
-      "owner_role": "luna_worker",
-      "depends_on": [],
-      "implementation": "partial",
-      "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
-      "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-002",
+      "title": "Provider credentials can be added, replaced, revoked, and deleted through a secure OS-backed reference lifecycle; raw secrets never enter tracked settings, projections, events, diagnostics, or support bundles.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-02; credential add/replace/delete and redaction" },
+        { "path": "plans/adrs/ADR-0006-ai-provider-abstraction.md", "identity": "provider credentials in OS keychain via legion-platform" },
+        { "path": "crates/legion-platform/src/lib.rs", "identity": "OS-backed secret/keyring boundary" },
+        { "path": "crates/legion-desktop/tests/provider_key_entry.rs", "identity": "credential entry and redacted state coverage" }
+      ],
+      "legacy_ids": ["COMP-P4-F1-T2-1"], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-003",
+      "title": "Provider setup validates endpoint, model, credential, and declared capability metadata before activation, and exposes named health, latency, locality, and availability state for the selected route.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-02; base URL/model validation and provider health panel" },
+        { "path": "crates/legion-ai-providers/src/capabilities.rs", "identity": "provider capability metadata" },
+        { "path": "crates/legion-ai/src/lib.rs", "identity": "ModelProvider capability and health contracts" },
+        { "path": "crates/legion-ai-providers/tests/provider_activation.rs", "identity": "activation and capability declaration checks" }
+      ],
+      "legacy_ids": ["COMP-P4-F1-T3-1"], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-004",
+      "title": "Provider and model capabilities are declared per route and gate activation and invocation for streaming, structured output, tools, vision, embeddings, context limits, thinking modes, cancellation, and related supported features.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "AI.12 provider/model capability metadata" },
+        { "path": "plans/remaining-implementation-tasks-plan-v0.1.md", "identity": "provider capability contracts and health expansion" },
+        { "path": "crates/legion-protocol/src/lib.rs", "identity": "metadata-only provider/model capability DTOs" },
+        { "path": "crates/legion-security/src/lib.rs", "identity": "provider capability policy gate" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-01", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-005",
+      "title": "Hosted provider invocation requires visible route, context, retention, budget, capability, and explicit egress consent; Manual/air-gap policy denies hosted egress and never silently falls back or substitutes deterministic success.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "global constraints; explicit egress consent and no silent hosted fallback" },
+        { "path": "plans/adrs/ADR-0010-air-gap-mode.md", "identity": "air-gap/local-provider-only policy" },
+        { "path": "crates/legion-app/src/product_ai_policy.rs", "identity": "provider route and egress policy authority" },
+        { "path": "crates/legion-security/src/lib.rs", "identity": "ai.provider.invoke capability gate" }
+      ],
+      "legacy_ids": ["COMP-P4-F1-T1-1"], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-006",
+      "title": "Provider setup and invocation show preflight token/cost estimates, enforce policy and budget ceilings before request, and reconcile actual usage, cache, latency, cost, and egress metadata after completion or failure.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-02; usage estimate, ceiling, and actual-usage rows" },
+        { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "ProviderUsageRecord and AI.06 cost records" },
+        { "path": "crates/legion-ai/src/telemetry.rs", "identity": "provider usage/latency metadata" },
+        { "path": "crates/legion-observability/src/lib.rs", "identity": "metadata-only provider observability" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-007",
+      "title": "Managed local runtime setup discovers or installs an approved runtime and supports explicit external-runtime mode, with owner-scoped process supervision, bounded start/stop/health, and no workspace authority granted to runtime processes.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-03; managed local-model runtime" },
+        { "path": "plans/legion-production-roadmap-v1.0.md", "identity": "managed runtime and model manager phase" },
+        { "path": "crates/legion-ai-providers/src/lib.rs", "identity": "Ollama/llama.cpp/local provider adapters" },
+        { "path": "crates/legion-app/src/local_ai_diagnosis.rs", "identity": "local runtime discovery and diagnosis" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-008",
+      "title": "Managed model acquisition and import use an approved catalog/source, explicit download consent, resumable transfer, size and digest/provenance verification, atomic promotion, quarantine or deletion on mismatch, and truthful unavailable/denied states.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-03; model catalog/download and digest verification" },
+        { "path": "plans/legion-production-roadmap-v1.0.md", "identity": "curated Apache-2.0 catalog and verified resumable downloader" },
+        { "path": "crates/legion-app/src/language/download.rs", "identity": "existing approved artifact download/hash pattern" },
+        { "path": "crates/legion-ai-providers/tests/provider_activation.rs", "identity": "provider activation fixture boundary" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-009",
+      "title": "Managed local model setup reports disk, memory, accelerator, architecture, and platform fit before acquisition or launch, and fails closed with actionable recovery when hardware or storage prerequisites are insufficient.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "configuration matrices; local model/runtime/hardware combinations" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-03; disk/hardware fit and low-disk/unsupported-hardware cases" },
+        { "path": "plans/evidence/production/BENCH/baseline-raw-v1.md", "identity": "reference hardware and model resource observations" },
+        { "path": "crates/legion-app/src/local_ai_diagnosis.rs", "identity": "local AI prerequisite diagnosis" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-010",
+      "title": "Managed runtime and model lifecycle handles interrupted download, cancellation, crash/backoff, restart reconstruction, port collision, orphan cleanup, upgrade, uninstall, and corrupt-artifact refusal while preserving truthful selected-route state.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-03; interruption, crash/backoff, reuse, uninstall, and orphan cleanup" },
+        { "path": "plans/legion-production-roadmap-v1.0.md", "identity": "managed runtime lifecycle and clean-machine workflow" },
+        { "path": "crates/legion-ai-providers/src/lib.rs", "identity": "provider lifecycle adapters" },
+        { "path": "crates/legion-app/src/product_ai_lane.rs", "identity": "app-owned AI route lifecycle" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+    },
+    {
+      "id": "COMP-PROV-011",
+      "title": "Packaged native provider/model acceptance covers first-run setup, local and required hosted configurations, credentials, policy/egress, capability and health state, model acquisition/integrity, hardware fit, lifecycle recovery, OS and reference hardware, and independent external oracles; fixture/provider labels are supporting evidence only.",
+      "kind": "product", "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "#qualification-and-evidence; configuration and external-oracle requirements" },
+        { "path": "docs/superpowers/plans/2026-09-04-full-product-completion.md", "identity": "Stage 0 matrix, EvidenceRun, and native acceptance contract" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "#s3-07-full-stage-3-acceptance-and-regression-gate" },
+        { "path": "xtask/src/completion/schema.rs", "identity": "EvidenceRun schema and acceptance data model" },
+        { "path": "crates/legion-desktop/tests/provider_key_entry.rs", "identity": "existing provider setup reachability evidence" }
+      ],
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-07", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-11",
