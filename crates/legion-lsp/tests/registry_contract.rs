@@ -54,8 +54,14 @@ fn downloaded_artifact_entries_keep_binary_policy_metadata() {
             policy_gate,
         } => {
             assert_eq!(binary_name, "pyright-langserver");
-            assert!(artifact_uri.contains("pyright-1.1.400"));
-            assert!(checksum_sha256.starts_with("sha256:"));
+            assert_eq!(
+                artifact_uri,
+                "https://registry.npmjs.org/pyright/-/pyright-1.1.400.tgz"
+            );
+            assert_eq!(
+                checksum_sha256,
+                "2ccba7af9c8b14bb81c8fa9bb558d8b5181b586ec4dfc448b78eb4209e7a429a"
+            );
             assert_eq!(policy_gate, "policy://lsp-download/pyright");
         }
         other => panic!("expected downloaded artifact source, got {other:?}"),
@@ -112,8 +118,14 @@ fn manifest_records_workspace_version_pin_for_downloaded_artifacts() {
             policy_gate,
         } => {
             assert_eq!(binary_name, "pyright-langserver");
-            assert!(artifact_uri.contains("pyright-1.1.400"));
-            assert_eq!(checksum_sha256, "sha256:pyright-1.1.400");
+            assert_eq!(
+                artifact_uri,
+                "https://registry.npmjs.org/pyright/-/pyright-1.1.400.tgz"
+            );
+            assert_eq!(
+                checksum_sha256,
+                "2ccba7af9c8b14bb81c8fa9bb558d8b5181b586ec4dfc448b78eb4209e7a429a"
+            );
             assert_eq!(policy_gate, "policy://lsp-download/pyright");
         }
         other => panic!("expected downloaded artifact source, got {other:?}"),
