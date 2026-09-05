@@ -169,3 +169,19 @@ The aggregate `COMP-SCOPE-FAMILY-15` row from baseline `7a7cf0a` is replaced by 
 Current code is classified conservatively. `McpClient<T>` plus stdio and Streamable HTTP conformance fixtures support `partial` MCP client evidence; `mcp_server.rs` is a local server substrate without named external-client qualification; and `AcpHostCommand`/`legion-agent::external` implement a supervised env-var adapter and proposal/evidence conversion rather than ACP session/initialize interoperability. The Stage 0 peer matrix, named real-peer runs, full ACP transport, and packaged qualification remain unassessed or absent as recorded in `newinterop-scope-audit.md`. All replacement acceptance values remain `unassessed`; no S0 completion claim is made.
 
 The old `plans/adrs/ADR-0039-agent-interop.md` local-stdio/post-GA server limitation remains historical context and is not changed by this inventory. The approved full-product design and `docs/superpowers/plans/2026-09-04-ai-team-completion.md` supersede that limitation as target scope; required server role, named peer, and ratified-transport promises therefore remain in family 15. No transport is selected here, and the full real-peer contract is owned by S0-02.
+
+## S0-01s trust/proposal scope expansion (2026-09-05)
+
+The aggregate `COMP-SCOPE-FAMILY-16` row is replaced by six atomic outcomes
+`COMP-TRUST-001..006` in S3-01/S3-07. The rows cover the generalized
+app-owned proposal lifecycle, authenticated deny-by-default validation, batch
+atomicity and rollback with dirty-work preservation, audit-before-success and
+metadata-only redaction, projection-only trust/privacy/egress controls with
+Manual zero-egress, and packaged native trust/proposal qualification. Exact
+retained P3 lifecycle/review/risk/checkpoint rows, provider/context/manual
+rows, work-preservation rows, and family-13/14/15 outcomes remain canonical
+dependencies or protected owners rather than duplicates. Current source
+classifications are `partial` for the authority/projection substrate and
+`absent` for packaged qualification; all acceptance remains `unassessed`.
+Source paths in the replacement rows are literal existing files without
+fragment references. This increment does not claim S0-01 or S0 completion.

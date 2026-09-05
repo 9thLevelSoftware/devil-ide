@@ -12877,74 +12877,156 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-16",
-      "title": "Trust/proposals",
+      "id": "COMP-TRUST-001",
+      "title": "Every non-user-direct mutation uses one app-owned proposal lifecycle with legal created, validated, previewed, approved, applied, rejected, denied, failed, stale, conflict, cancelled, and rolled-back states; no transition can skip validation or approval.",
       "kind": "product",
       "required": true,
       "source_refs": [
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-16"
-        },
-        {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
-        },
-        {
-          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
-        },
-        {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
-        },
-        {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
-        },
-        {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
-        },
-        {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
-        },
-        {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
-        },
-        {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
-        },
-        {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
-        },
-        {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
-        },
-        {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
-        }
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required feature families and authority strategy" },
+        { "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md", "identity": "P3 proposal and stale/conflict requirements" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-01 proposal lifecycle contract" },
+        { "path": "plans/adrs/ADR-0016-generalized-proposal-service.md", "identity": "universal proposal lifecycle" },
+        { "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md", "identity": "P1.1 lifecycle state-machine hardening" },
+        { "path": "crates/legion-protocol/src/lib.rs", "identity": "proposal lifecycle DTOs and states" },
+        { "path": "crates/legion-app/src/lib.rs", "identity": "app-owned proposal coordination" }
       ],
       "legacy_ids": [],
       "stage": "S3",
       "package_id": "S3-01",
-      "owner_role": "luna_worker",
+      "owner_role": "sol_engineer",
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
       "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TRUST-002",
+      "title": "Proposal validation is authenticated and deny-by-default: principal, capability, workspace trust, complete target coverage, versions/fingerprints, atomicity, rollback metadata, and supported payloads are required; stale, expired, ambiguous, duplicate, unsafe, or unauthorized requests produce visible denial before mutation.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required denied-trust and unauthorized-write outcomes" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3-01 credential/egress/proposal boundary" },
+        { "path": "plans/adrs/ADR-0016-generalized-proposal-service.md", "identity": "deny-by-default validation" },
+        { "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md", "identity": "P1.2 total target coverage and validation" },
+        { "path": "crates/legion-security/src/lib.rs", "identity": "capability and trust policy authority" },
+        { "path": "crates/legion-project/src/lib.rs", "identity": "workspace identity and version authority" },
+        { "path": "crates/legion-app/src/lib.rs", "identity": "proposal validation and denial route" }
+      ],
+      "legacy_ids": [],
+      "stage": "S3",
+      "package_id": "S3-01",
+      "owner_role": "sol_engineer",
+      "depends_on": ["COMP-TRUST-001"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-P3-F1-T3-1", "COMP-P2-F2-T2-1", "COMP-P2-F3-T2-1"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TRUST-003",
+      "title": "Batch proposals preflight every target and make atomic, best-effort, and dry-run behavior explicit; reversible operations have deterministic rollback steps, irreversible or unsupported mixtures are denied, and partial failures preserve dirty user work with metadata-only recovery state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "safety outcomes and failure classes" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3 proposal/recovery requirements" },
+        { "path": "plans/adrs/ADR-0016-generalized-proposal-service.md", "identity": "batch atomicity and rollback semantics" },
+        { "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md", "identity": "P1.5 batch planner and rollback contract" },
+        { "path": "crates/legion-app/src/lib.rs", "identity": "batch preflight and execution authority" },
+        { "path": "crates/legion-protocol/src/lib.rs", "identity": "rollback policy and partial-failure DTOs" }
+      ],
+      "legacy_ids": [],
+      "stage": "S3",
+      "package_id": "S3-01",
+      "owner_role": "sol_engineer",
+      "depends_on": ["COMP-TRUST-001", "COMP-TRUST-002"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T3-1", "COMP-PRES-001", "COMP-PRES-008"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TRUST-004",
+      "title": "Proposal apply and rollback emit metadata-only audit before reporting success, require nonzero correlation, causality, and event sequence, redact source/prompts/secrets/provider payloads by default, and fail closed when required audit persistence fails.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "metadata-first observability and privacy" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "metadata-only diagnostics and secret redaction" },
+        { "path": "plans/adrs/ADR-0016-generalized-proposal-service.md", "identity": "audit-before-success and metadata-only persistence" },
+        { "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md", "identity": "P1.7 audit-before-success" },
+        { "path": "crates/legion-observability/src/lib.rs", "identity": "proposal audit and event metadata records" },
+        { "path": "crates/legion-storage/src/lib.rs", "identity": "audit summary persistence port" }
+      ],
+      "legacy_ids": [],
+      "stage": "S3",
+      "package_id": "S3-01",
+      "owner_role": "sol_engineer",
+      "depends_on": ["COMP-TRUST-001", "COMP-TRUST-003"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-P3-F3-T4-1", "COMP-P5-F1-T2-1", "COMP-P5-F1-T4-1", "COMP-P9-F2-T2-1"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TRUST-005",
+      "title": "The trust surface projects proposal ledger, context/privacy scope, permission, risk, budget, rollback, selected route, and egress decisions from app metadata; approval and denial are explicit keyboard-reachable intents, and Manual mode remains zero-egress with no silent fallback.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "projection-only UI, default-deny capability, and explicit egress consent" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S3 provider/context/proposal privacy boundary" },
+        { "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md", "identity": "P5.1 trust projections and P5.2 privacy inspector" },
+        { "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md", "identity": "trust-surface authority boundaries" },
+        { "path": "crates/legion-ui/src/ui.rs", "identity": "projection snapshots and command intents" },
+        { "path": "crates/legion-desktop/src/bridge.rs", "identity": "desktop intent bridge" },
+        { "path": "crates/legion-app/src/lib.rs", "identity": "app policy and proposal authority" }
+      ],
+      "legacy_ids": [],
+      "stage": "S3",
+      "package_id": "S3-01",
+      "owner_role": "sol_engineer",
+      "depends_on": ["COMP-TRUST-001", "COMP-TRUST-002", "COMP-PROV-005", "COMP-CTX-007", "COMP-CTX-008", "COMP-P1-F2-T1-1"],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-PROV-005", "COMP-CTX-007", "COMP-CTX-008", "COMP-P1-F2-T1-1"],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-TRUST-006",
+      "title": "Packaged native trust/proposal qualification exercises real local and hosted routes and ordinary controls with authentication, privacy/redaction, Manual zero-egress, stale/conflict/denial, cancellation, rollback, dirty-buffer preservation, audit, restart, and unavailable-dependency recovery, using external effect oracles.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "three-layer product acceptance and required failure classes" },
+        { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "Stage 3 packaged native acceptance" },
+        { "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md", "identity": "P3 proposal acceptance and evidence rules" },
+        { "path": "plans/product-readiness-ledger.md", "identity": "readiness evidence and acceptance status" },
+        { "path": "crates/legion-app/tests", "identity": "app proposal and policy workflow tests" },
+        { "path": "crates/legion-desktop/tests", "identity": "desktop product workflow tests" }
+      ],
+      "legacy_ids": [],
+      "stage": "S3",
+      "package_id": "S3-07",
+      "owner_role": "luna_worker",
+      "depends_on": ["COMP-TRUST-004", "COMP-TRUST-005", "COMP-PROV-011", "COMP-CTX-010", "COMP-SCOPE-FAMILY-12-13", "COMP-SCOPE-FAMILY-13-11"],
+      "implementation": "absent",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": ["COMP-PROV-011", "COMP-CTX-010"],
       "defect_ids": []
     },
     {
