@@ -131,6 +131,22 @@ pub struct Cursor {
     pub position: TextPosition,
 }
 
+/// A caret with a UTF-8 head and an optional directed anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectedCaret {
+    /// Current caret head.
+    pub head: TextPosition,
+    /// Optional anchor retained while extending a selection.
+    pub anchor: Option<TextPosition>,
+}
+
+impl DirectedCaret {
+    /// Construct a directed caret.
+    pub const fn new(head: TextPosition, anchor: Option<TextPosition>) -> Self {
+        Self { head, anchor }
+    }
+}
+
 /// Selection state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
@@ -289,6 +305,7 @@ pub enum SaveAcknowledgement {
 #[derive(Debug, Clone)]
 struct UndoEntry {
     snapshot: legion_text::TextSnapshot,
+    carets: Vec<DirectedCaret>,
     undo_group_id: Option<Uuid>,
 }
 
@@ -304,7 +321,37 @@ struct BatchEditPlan {
     pre_snapshot: legion_text::TextSnapshot,
     pre_descriptor: TextSnapshotDescriptor,
     pre_version: BufferVersion,
+    pre_carets: Vec<DirectedCaret>,
     edits: Vec<PreparedBatchEdit>,
+}
+
+fn map_edit_offset(mut offset: usize, head_affinity: bool, edits: &[PreparedBatchEdit]) -> usize {
+    for edit in edits {
+        if offset < edit.start {
+            continue;
+        }
+        if edit.start == edit.end {
+            if offset == edit.start {
+                if head_affinity {
+                    offset += edit.new_text.len();
+                }
+            } else if offset > edit.start {
+                offset += edit.new_text.len();
+            }
+            continue;
+        }
+        if offset < edit.end {
+            offset = if head_affinity {
+                edit.start + edit.new_text.len()
+            } else {
+                edit.start
+            };
+        } else {
+            offset = (offset as i64 + edit.new_text.len() as i64 - (edit.end - edit.start) as i64)
+                as usize;
+        }
+    }
+    offset
 }
 
 #[derive(Debug, Clone)]
@@ -344,11 +391,12 @@ struct EditorBufferState {
     buffer: TextBuffer,
     mode: BufferMode,
     dirty: bool,
-    cursors: Vec<Cursor>,
-    selections: Vec<Selection>,
+    carets: Vec<DirectedCaret>,
     overlays: Vec<UiOverlay>,
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
+    active_undo_group: Option<Uuid>,
+    active_group_evicted: bool,
     current_snapshot: legion_text::TextSnapshot,
     /// Whether the text was streamed from disk rather than handed over whole.
     ///
@@ -384,13 +432,12 @@ impl EditorBufferState {
             mode,
             streamed,
             dirty: false,
-            cursors: vec![Cursor {
-                position: TextPosition::zero(),
-            }],
-            selections: Vec::new(),
+            carets: vec![DirectedCaret::new(TextPosition::zero(), None)],
             overlays: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            active_undo_group: None,
+            active_group_evicted: false,
             current_snapshot,
             save_state: FileConflictLifecycleState::Clean,
             save_diagnostics: Vec::new(),
@@ -1133,9 +1180,9 @@ impl EditorEngine {
                 .try_byte_offset(TextPosition::new(end_line, 0))?
         };
         let cursor = state
-            .cursors
+            .carets
             .first()
-            .map(|cursor| cursor.position)
+            .map(|caret| caret.head)
             .unwrap_or_else(TextPosition::zero);
         // A streamed buffer is reported as streaming even though its
         // `BufferMode` is also Degraded: both defer overlays, but only the
@@ -1146,6 +1193,21 @@ impl EditorEngine {
             (BufferMode::Degraded, true) => ViewportProjectionMode::StreamingLargeFile,
             (BufferMode::Degraded, false) => ViewportProjectionMode::DegradedLargeFile,
         };
+        let selections = state
+            .carets
+            .iter()
+            .filter_map(|caret| caret.anchor.map(|anchor| (anchor, caret.head)))
+            .map(|(anchor, head)| {
+                let anchor_offset = state.buffer.try_byte_offset(anchor)?;
+                let head_offset = state.buffer.try_byte_offset(head)?;
+                let range = if anchor_offset <= head_offset {
+                    TextRange::new(anchor, head)
+                } else {
+                    TextRange::new(head, anchor)
+                };
+                Self::protocol_range(&state.buffer, range)
+            })
+            .collect::<Result<Vec<_>, EditorError>>()?;
 
         Ok(ViewportProjection {
             workspace_id: state.workspace_id,
@@ -1157,17 +1219,13 @@ impl EditorEngine {
                 start: Self::protocol_coordinate(&state.buffer, top_line, start)?,
                 end: Self::protocol_coordinate_from_offset(&state.buffer, end)?,
             },
-            selections: state
-                .selections
-                .iter()
-                .map(|selection| Self::protocol_range(&state.buffer, selection.range))
-                .collect::<Result<Vec<_>, _>>()?,
+            selections,
             cursor: Self::protocol_coordinate_from_offset(&state.buffer, state.buffer.try_byte_offset(cursor)?)?,
             cursors: state
-                .cursors
+                .carets
                 .iter()
-                .map(|cursor| {
-                    let offset = state.buffer.try_byte_offset(cursor.position)?;
+                .map(|caret| {
+                    let offset = state.buffer.try_byte_offset(caret.head)?;
                     Self::protocol_coordinate_from_offset(&state.buffer, offset)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -1281,6 +1339,29 @@ impl EditorEngine {
             staged_buffer.try_replace_range(prepared.start, prepared.end, &prepared.new_text)?;
         }
 
+        let mapped_carets = plan
+            .pre_carets
+            .iter()
+            .map(|caret| {
+                let head =
+                    map_edit_offset(state.buffer.try_byte_offset(caret.head)?, true, &plan.edits);
+                let anchor = match caret.anchor {
+                    Some(anchor) => Some(map_edit_offset(
+                        state.buffer.try_byte_offset(anchor)?,
+                        false,
+                        &plan.edits,
+                    )),
+                    None => None,
+                };
+                Ok(DirectedCaret::new(
+                    staged_buffer.try_position(head)?,
+                    anchor
+                        .map(|offset| staged_buffer.try_position(offset))
+                        .transpose()?,
+                ))
+            })
+            .collect::<Result<Vec<_>, EditorError>>()?;
+
         // Recompute each delta against the *final* staged buffer. Iterating
         // ascending (the reverse of `plan.edits`) lets us carry a running
         // cumulative length shift introduced by lower-offset edits so each
@@ -1315,6 +1396,7 @@ impl EditorEngine {
             old_current_snapshot_id,
             redo_snapshot_ids,
             post_descriptor_for_retention,
+            history_anchor_added,
         ) = {
             let state = self
                 .buffers
@@ -1326,12 +1408,30 @@ impl EditorEngine {
                 .map(|entry| entry.snapshot.snapshot_id())
                 .collect::<Vec<_>>();
             let old_current_snapshot_id = state.current_snapshot.snapshot_id();
-            state.undo_stack.push(UndoEntry {
-                snapshot: plan.pre_snapshot.clone(),
-                undo_group_id,
-            });
+            let coalesce = undo_group_id.is_some()
+                && state.active_undo_group == undo_group_id
+                && !state.active_group_evicted;
+            let history_anchor_added = !coalesce
+                && !(undo_group_id.is_some()
+                    && state.active_group_evicted
+                    && state.active_undo_group == undo_group_id);
+            if history_anchor_added {
+                state.undo_stack.push(UndoEntry {
+                    snapshot: plan.pre_snapshot.clone(),
+                    carets: plan.pre_carets.clone(),
+                    undo_group_id,
+                });
+            }
+            if !(undo_group_id.is_some()
+                && state.active_group_evicted
+                && state.active_undo_group == undo_group_id)
+            {
+                state.active_group_evicted = false;
+            }
+            state.active_undo_group = undo_group_id;
             state.redo_stack.clear();
             state.buffer = staged_buffer;
+            state.carets = mapped_carets;
             state.mode = next_mode;
             state.current_snapshot = post_snapshot;
             state.dirty = true;
@@ -1346,6 +1446,7 @@ impl EditorEngine {
                 old_current_snapshot_id,
                 redo_snapshot_ids,
                 state.current_snapshot.descriptor().clone(),
+                history_anchor_added,
             )
         };
 
@@ -1353,9 +1454,11 @@ impl EditorEngine {
             self.release_snapshot_descriptor_if_unreferenced(snapshot_id);
         }
         self.release_snapshot_descriptor_if_unreferenced(old_current_snapshot_id);
-        let mut undo_descriptor = plan.pre_snapshot.descriptor().clone();
-        undo_descriptor.retention_pin_reason = RetentionPinReason::UndoHistory;
-        self.retain_snapshot_descriptor(buffer_id, &undo_descriptor);
+        if history_anchor_added {
+            let mut undo_descriptor = plan.pre_snapshot.descriptor().clone();
+            undo_descriptor.retention_pin_reason = RetentionPinReason::UndoHistory;
+            self.retain_snapshot_descriptor(buffer_id, &undo_descriptor);
+        }
         self.retain_snapshot_descriptor(buffer_id, &post_descriptor_for_retention);
 
         self.enforce_snapshot_retention_policy();
@@ -1462,6 +1565,7 @@ impl EditorEngine {
             pre_snapshot: state.current_snapshot.clone(),
             pre_descriptor: state.current_snapshot.descriptor().clone(),
             pre_version: state.buffer.version(),
+            pre_carets: state.carets.clone(),
             edits: prepared,
         })
     }
@@ -1510,6 +1614,7 @@ impl EditorEngine {
                 break;
             };
 
+            let mut evicted_snapshot_ids = Vec::new();
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 match stack_kind {
                     SnapshotStackKind::Undo => {
@@ -1518,7 +1623,24 @@ impl EditorEngine {
                             .iter()
                             .position(|entry| entry.snapshot.snapshot_id() == snapshot_id)
                         {
-                            state.undo_stack.remove(idx);
+                            let group = state.undo_stack[idx].undo_group_id;
+                            let end = group
+                                .map(|group| {
+                                    state.undo_stack[..=idx]
+                                        .iter()
+                                        .rposition(|entry| entry.undo_group_id == Some(group))
+                                        .unwrap_or(idx)
+                                })
+                                .unwrap_or(idx);
+                            evicted_snapshot_ids.extend(
+                                state.undo_stack[..=end]
+                                    .iter()
+                                    .map(|entry| entry.snapshot.snapshot_id()),
+                            );
+                            state.undo_stack.drain(..=end);
+                            if state.active_undo_group == group {
+                                state.active_group_evicted = true;
+                            }
                         }
                     }
                     SnapshotStackKind::Redo => {
@@ -1527,12 +1649,30 @@ impl EditorEngine {
                             .iter()
                             .position(|entry| entry.snapshot.snapshot_id() == snapshot_id)
                         {
-                            state.redo_stack.remove(idx);
+                            let group = state.redo_stack[idx].undo_group_id;
+                            let end = group
+                                .map(|group| {
+                                    state.redo_stack[..=idx]
+                                        .iter()
+                                        .rposition(|entry| entry.undo_group_id == Some(group))
+                                        .unwrap_or(idx)
+                                })
+                                .unwrap_or(idx);
+                            evicted_snapshot_ids.extend(
+                                state.redo_stack[..=end]
+                                    .iter()
+                                    .map(|entry| entry.snapshot.snapshot_id()),
+                            );
+                            state.redo_stack.drain(..=end);
                         }
                     }
                 }
             }
-            self.release_snapshot_descriptor_if_unreferenced(snapshot_id);
+            // Every drained history entry is released independently. A lease,
+            // current buffer, or pending save may still keep a snapshot alive.
+            for snapshot_id in evicted_snapshot_ids {
+                self.release_snapshot_descriptor_if_unreferenced(snapshot_id);
+            }
         }
     }
 
@@ -1641,11 +1781,15 @@ impl EditorEngine {
             state.undo_stack.pop();
             state.redo_stack.push(UndoEntry {
                 snapshot: pre_snapshot.clone(),
+                carets: state.carets.clone(),
                 undo_group_id: undo_entry.undo_group_id,
             });
             state.buffer = restored_buffer;
             state.mode = restored_mode;
             state.current_snapshot = restored_snapshot;
+            state.carets = undo_entry.carets.clone();
+            state.active_undo_group = None;
+            state.active_group_evicted = false;
             state.dirty = true;
             state.save_state = if state.conflict_state.is_some() {
                 FileConflictLifecycleState::ConflictDirty
@@ -1744,11 +1888,15 @@ impl EditorEngine {
             state.redo_stack.pop();
             state.undo_stack.push(UndoEntry {
                 snapshot: pre_snapshot.clone(),
+                carets: state.carets.clone(),
                 undo_group_id: redo_entry.undo_group_id,
             });
             state.buffer = restored_buffer;
             state.mode = restored_mode;
             state.current_snapshot = restored_snapshot;
+            state.carets = redo_entry.carets.clone();
+            state.active_undo_group = None;
+            state.active_group_evicted = false;
             state.dirty = true;
             state.save_state = if state.conflict_state.is_some() {
                 FileConflictLifecycleState::ConflictDirty
@@ -2014,9 +2162,9 @@ impl EditorEngine {
             .get(&buffer_id)
             .ok_or(EditorError::BufferNotFound(buffer_id))?;
         Ok(state
-            .cursors
+            .carets
             .first()
-            .map(|cursor| cursor.position)
+            .map(|caret| caret.head)
             .expect("BufferState is constructed with one cursor and never empties them"))
     }
 
@@ -2034,12 +2182,48 @@ impl EditorEngine {
     }
 
     /// Every cursor for a buffer, in stored order.
-    pub fn cursors(&self, buffer_id: BufferId) -> Result<&[Cursor], EditorError> {
-        Ok(&self
+    pub fn cursors(&self, buffer_id: BufferId) -> Result<Vec<Cursor>, EditorError> {
+        Ok(self
+            .directed_carets(buffer_id)?
+            .into_iter()
+            .map(|caret| Cursor {
+                position: caret.head,
+            })
+            .collect())
+    }
+
+    /// Every directed caret for a buffer, in stored order.
+    pub fn directed_carets(&self, buffer_id: BufferId) -> Result<Vec<DirectedCaret>, EditorError> {
+        Ok(self
             .buffers
             .get(&buffer_id)
             .ok_or(EditorError::BufferNotFound(buffer_id))?
-            .cursors)
+            .carets
+            .clone())
+    }
+
+    /// Derived normalized selection views for a buffer.
+    pub fn selections(&self, buffer_id: BufferId) -> Result<Vec<Selection>, EditorError> {
+        let state = self
+            .buffers
+            .get(&buffer_id)
+            .ok_or(EditorError::BufferNotFound(buffer_id))?;
+        state
+            .carets
+            .iter()
+            .filter_map(|caret| caret.anchor.map(|anchor| (anchor, caret.head)))
+            .map(|(anchor, head)| {
+                let start = state.buffer.try_byte_offset(anchor)?;
+                let end = state.buffer.try_byte_offset(head)?;
+                Ok(Selection {
+                    range: if start <= end {
+                        TextRange::new(anchor, head)
+                    } else {
+                        TextRange::new(head, anchor)
+                    },
+                })
+            })
+            .collect()
     }
 
     /// Replace cursors for a buffer.
@@ -2048,18 +2232,18 @@ impl EditorEngine {
         buffer_id: BufferId,
         cursors: Vec<Cursor>,
     ) -> Result<(), EditorError> {
-        let state = self
-            .buffers
-            .get_mut(&buffer_id)
-            .ok_or(EditorError::BufferNotFound(buffer_id))?;
-        for cursor in &cursors {
-            // Reject positions that cannot be resolved against the buffer so
-            // only valid editor state is persisted (viewport projection later
-            // assumes every stored cursor maps to a real byte offset).
-            state.buffer.try_byte_offset(cursor.position)?;
+        if cursors.is_empty() {
+            return Err(EditorError::InvalidEdit(
+                "buffer must retain at least one caret",
+            ));
         }
-        state.cursors = cursors;
-        Ok(())
+        self.set_directed_carets(
+            buffer_id,
+            cursors
+                .into_iter()
+                .map(|cursor| DirectedCaret::new(cursor.position, None))
+                .collect(),
+        )
     }
 
     /// Replace selections for a buffer.
@@ -2068,23 +2252,68 @@ impl EditorEngine {
         buffer_id: BufferId,
         selections: Vec<Selection>,
     ) -> Result<(), EditorError> {
-        let state = self
-            .buffers
-            .get_mut(&buffer_id)
-            .ok_or(EditorError::BufferNotFound(buffer_id))?;
-        for selection in &selections {
-            // Validate both endpoints and ordering so projection (which calls
-            // protocol_range on every stored selection) cannot fail on state we
-            // accepted here.
-            let start = state.buffer.try_byte_offset(selection.range.start)?;
-            let end = state.buffer.try_byte_offset(selection.range.end)?;
-            if start > end {
-                return Err(EditorError::InvalidEdit(
-                    "selection range start must be <= end",
-                ));
+        let carets = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            if selections.is_empty() {
+                state
+                    .carets
+                    .iter()
+                    .map(|caret| DirectedCaret::new(caret.head, None))
+                    .collect()
+            } else {
+                for selection in &selections {
+                    // Validate both endpoints and ordering so projection (which calls
+                    // protocol_range on every stored selection) cannot fail on state we
+                    // accepted here.
+                    let start = state.buffer.try_byte_offset(selection.range.start)?;
+                    let end = state.buffer.try_byte_offset(selection.range.end)?;
+                    if start > end {
+                        return Err(EditorError::InvalidEdit(
+                            "selection range start must be <= end",
+                        ));
+                    }
+                }
+                selections
+                    .into_iter()
+                    .map(|selection| {
+                        DirectedCaret::new(selection.range.end, Some(selection.range.start))
+                    })
+                    .collect()
+            }
+        };
+        self.set_directed_carets(buffer_id, carets)
+    }
+
+    /// Replace the authoritative directed caret vector atomically.
+    pub fn set_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        carets: Vec<DirectedCaret>,
+    ) -> Result<(), EditorError> {
+        if carets.is_empty() {
+            return Err(EditorError::InvalidEdit(
+                "buffer must retain at least one caret",
+            ));
+        }
+        {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            for caret in &carets {
+                state.buffer.try_byte_offset(caret.head)?;
+                if let Some(anchor) = caret.anchor {
+                    state.buffer.try_byte_offset(anchor)?;
+                }
             }
         }
-        state.selections = selections;
+        self.buffers
+            .get_mut(&buffer_id)
+            .expect("buffer checked")
+            .carets = carets;
         Ok(())
     }
 
@@ -2994,6 +3223,134 @@ mod tests {
     }
 
     #[test]
+    fn retention_drained_prefix_releases_each_unpinned_descriptor_and_preserves_lease() {
+        // Component-level invariant test: retained descriptor order is made
+        // deliberately adversarial because normal chronological operations
+        // select the oldest evictable entry and cannot naturally select a
+        // later entry while an earlier sibling is still unpinned.
+        let policy = SnapshotRetentionPolicy {
+            max_snapshot_count: 4,
+            max_estimated_bytes: usize::MAX,
+            eviction_preference: SnapshotEvictionPreference::UndoThenRedo,
+        };
+        let mut engine = EditorEngine::with_snapshot_retention_policy(policy);
+        let buffer_id = engine
+            .open_buffer(
+                WorkspaceId(1),
+                FileId(991),
+                "retention-component.txt",
+                "seed",
+            )
+            .unwrap();
+        let (snapshots, carets) = {
+            let state = engine.buffers.get(&buffer_id).unwrap();
+            let snapshots = (0..4)
+                .map(|_| {
+                    state
+                        .buffer
+                        .try_snapshot_with_retention(RetentionPinReason::UndoHistory)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            (snapshots, state.carets.clone())
+        };
+        let current_id = engine
+            .buffers
+            .get(&buffer_id)
+            .unwrap()
+            .current_snapshot
+            .snapshot_id();
+        let ids = snapshots
+            .iter()
+            .map(|snapshot| snapshot.snapshot_id())
+            .collect::<Vec<_>>();
+        let lease_id = Uuid::now_v7();
+        let lease_snapshot = snapshots[0].clone();
+        engine.snapshot_leases.insert(
+            lease_id,
+            SnapshotLeaseRecord {
+                snapshot: lease_snapshot.clone(),
+                descriptor: SnapshotLeaseDescriptor {
+                    lease_id,
+                    buffer_id,
+                    snapshot_id: ids[0],
+                    buffer_version: lease_snapshot.buffer_version(),
+                    consumer_kind: SnapshotConsumerKind::Ui,
+                    expires_at: TimestampMillis::now(),
+                    chunk_count: lease_snapshot.chunk_descriptors().len() as u32,
+                    schema_version: 2,
+                },
+            },
+        );
+        {
+            let state = engine.buffers.get_mut(&buffer_id).unwrap();
+            state.undo_stack = snapshots
+                .iter()
+                .map(|snapshot| UndoEntry {
+                    snapshot: snapshot.clone(),
+                    carets: carets.clone(),
+                    undo_group_id: None,
+                })
+                .collect();
+        }
+        // The selected id is the later entry while an earlier sibling is
+        // unpinned. This forces one drain operation to remove multiple ids.
+        for index in [2, 1, 0, 3] {
+            let snapshot = &snapshots[index];
+            engine.pinned_snapshot_ids.insert(snapshot.snapshot_id());
+            engine
+                .retained_snapshots
+                .push_back(RetainedSnapshotDescriptor {
+                    buffer_id,
+                    reason: RetentionPinReason::UndoHistory,
+                    descriptor: snapshot.descriptor().clone(),
+                });
+        }
+        engine.enforce_snapshot_retention_policy();
+        let retained_ids = engine
+            .retained_snapshots
+            .iter()
+            .map(|entry| entry.descriptor.snapshot_id)
+            .collect::<Vec<_>>();
+        assert_eq!(retained_ids, vec![current_id, ids[0], ids[3]]);
+        assert!(
+            retained_ids.contains(&ids[0]),
+            "lease-pinned older descriptor must survive"
+        );
+        assert!(
+            retained_ids.contains(&ids[3]),
+            "remaining suffix descriptor must survive"
+        );
+        assert!(
+            !retained_ids.contains(&ids[1]),
+            "unleased drained sibling must be removed"
+        );
+        assert!(
+            !retained_ids.contains(&ids[2]),
+            "selected drained descriptor must be removed"
+        );
+        assert_eq!(
+            engine
+                .buffers
+                .get(&buffer_id)
+                .unwrap()
+                .undo_stack
+                .iter()
+                .map(|entry| entry.snapshot.snapshot_id())
+                .collect::<Vec<_>>(),
+            vec![ids[3]],
+            "history remains a contiguous suffix after prefix eviction"
+        );
+        engine.release_snapshot_lease(lease_id);
+        assert!(
+            !engine
+                .retained_snapshots
+                .iter()
+                .any(|entry| entry.descriptor.snapshot_id == ids[0])
+        );
+    }
+
+    #[test]
     fn engine_preserves_multiple_cursors_and_selections_in_projection() {
         let mut engine = EditorEngine::new();
         let buffer = engine
@@ -3036,18 +3393,11 @@ mod tests {
             .buffers
             .get(&buffer)
             .expect("buffer state should exist");
-        assert_eq!(state.cursors.len(), 2);
-        assert_eq!(state.cursors[0].position, TextPosition::new(0, 2));
-        assert_eq!(state.cursors[1].position, TextPosition::new(0, 8));
-        assert_eq!(state.selections.len(), 2);
-        assert_eq!(
-            state.selections[0].range,
-            TextRange::new(TextPosition::new(0, 0), TextPosition::new(0, 5))
-        );
-        assert_eq!(
-            state.selections[1].range,
-            TextRange::new(TextPosition::new(0, 6), TextPosition::new(0, 10))
-        );
+        assert_eq!(state.carets.len(), 2);
+        assert_eq!(state.carets[0].head, TextPosition::new(0, 5));
+        assert_eq!(state.carets[1].head, TextPosition::new(0, 10));
+        assert_eq!(state.carets[0].anchor, Some(TextPosition::new(0, 0)));
+        assert_eq!(state.carets[1].anchor, Some(TextPosition::new(0, 6)));
 
         let projection = engine
             .viewport_projection(EditorViewportRequest {
@@ -3064,7 +3414,9 @@ mod tests {
             .expect("viewport projection");
 
         assert_eq!(projection.cursor.line, 0);
-        assert_eq!(projection.cursor.character, 2);
+        // Nonempty selection replacement is authoritative and its forward
+        // endpoints become the caret heads.
+        assert_eq!(projection.cursor.character, 5);
         assert_eq!(projection.selections.len(), 2);
         assert_eq!(projection.selections[0].start.line, 0);
         assert_eq!(projection.selections[0].start.character, 0);
