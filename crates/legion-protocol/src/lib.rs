@@ -98,6 +98,16 @@ pub struct FileId(pub u128);
 #[serde(transparent)]
 pub struct BufferVersion(pub u64);
 
+/// Which side of a soft-wrapped visual row owns a caret at a shared boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum CaretAffinity {
+    /// Prefer the preceding visual row (the compatibility default).
+    #[default]
+    Upstream,
+    /// Prefer the following visual row.
+    Downstream,
+}
+
 /// Canonical file content version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -664,6 +674,12 @@ pub struct ViewportProjection {
     /// Projected cursor coordinates in render order.
     #[serde(default)]
     pub cursors: Vec<TextCoordinate>,
+    /// Visual row affinity aligned one-for-one with [`Self::cursors`].
+    ///
+    /// Legacy payloads omit this field and therefore mean `Upstream` for each
+    /// projected cursor.
+    #[serde(default)]
+    pub cursor_affinities: Vec<CaretAffinity>,
     /// Scroll offsets.
     pub scroll: ViewportScroll,
     /// Viewport dimensions.

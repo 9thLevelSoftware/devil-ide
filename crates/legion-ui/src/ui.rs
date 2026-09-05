@@ -6210,6 +6210,7 @@ mod tests {
             selections: Vec::new(),
             cursor: test_coordinate(10, 0),
             cursors: Vec::new(),
+            cursor_affinities: Vec::new(),
             scroll: ViewportScroll {
                 top_line: 10,
                 left_column: 0,

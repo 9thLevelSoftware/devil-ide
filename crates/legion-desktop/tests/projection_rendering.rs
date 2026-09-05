@@ -443,6 +443,7 @@ fn degraded_snapshot() -> legion_ui::ShellProjectionSnapshot {
             selections: Vec::new(),
             cursor: coord(0, 0, 0),
             cursors: vec![coord(0, 0, 0)],
+            cursor_affinities: vec![],
             scroll: ViewportScroll {
                 top_line: 0,
                 left_column: 0,
@@ -514,6 +515,7 @@ fn streaming_snapshot() -> legion_ui::ShellProjectionSnapshot {
             selections: Vec::new(),
             cursor: coord(0, 0, 0),
             cursors: vec![coord(0, 0, 0)],
+            cursor_affinities: vec![],
             scroll: ViewportScroll {
                 top_line: 0,
                 left_column: 0,
@@ -574,6 +576,7 @@ fn highlighted_snapshot() -> legion_ui::ShellProjectionSnapshot {
             selections: Vec::new(),
             cursor: coord(0, 4, 4),
             cursors: vec![coord(0, 4, 4)],
+            cursor_affinities: vec![],
             scroll: ViewportScroll {
                 top_line: 0,
                 left_column: 0,
@@ -1720,6 +1723,7 @@ fn projection_rendering_projects_editor_polish_summary_rows() {
         selections: Vec::new(),
         cursor: coord(0, 0, 0),
         cursors: vec![coord(0, 0, 0)],
+        cursor_affinities: vec![],
         scroll: ViewportScroll {
             top_line: 0,
             left_column: 0,
@@ -1934,12 +1938,38 @@ fn projection_rendering_maps_editor_pointer_to_text_coordinate() {
                 kind: ViewportSemanticTokenKind::Ident,
             }],
             truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(0, 5),
+            utf16_range: Utf16Range {
+                start: Utf16Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Utf16Position {
+                    line: 0,
+                    character: 5,
+                },
+            },
+            line_start_byte_offset: Some(0),
+            line_start_utf16_offset: None,
         },
         DesktopCodeLineViewModel {
             number: 5,
             text: "beta_value".to_string(),
             highlights: Vec::new(),
             truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(0, 10),
+            utf16_range: Utf16Range {
+                start: Utf16Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Utf16Position {
+                    line: 0,
+                    character: 10,
+                },
+            },
+            line_start_byte_offset: Some(0),
+            line_start_utf16_offset: None,
         },
     ];
 
@@ -1976,14 +2006,27 @@ fn projection_rendering_computes_word_and_line_selection_ranges() {
         text: "let beta_value = 42;".to_string(),
         highlights: Vec::new(),
         truncation_state: ViewportLineTruncationState::None,
+        byte_range: ByteRange::new(0, 20),
+        utf16_range: Utf16Range {
+            start: Utf16Position {
+                line: 0,
+                character: 0,
+            },
+            end: Utf16Position {
+                line: 0,
+                character: 20,
+            },
+        },
+        line_start_byte_offset: Some(0),
+        line_start_utf16_offset: None,
     };
-    let word = word_range_for_coordinate(&line, coord(7, 6, 0)).expect("word range");
+    let word = word_range_for_coordinate(&line, coord(7, 6, 6)).expect("word range");
     assert_eq!(word.start.line, 7);
     assert_eq!(word.start.character, 4);
     assert_eq!(word.end.line, 7);
     assert_eq!(word.end.character, 14);
 
-    let full_line = line_range_for_code_line(&line);
+    let full_line = line_range_for_code_line(&line).expect("complete line origin should map");
     assert_eq!(full_line.start.line, 7);
     assert_eq!(full_line.start.character, 0);
     assert_eq!(full_line.end.line, 7);
@@ -1997,6 +2040,19 @@ fn projection_rendering_anchors_drag_selection_at_gesture_start() {
         text: "let beta_value = 42;".to_string(),
         highlights: Vec::new(),
         truncation_state: ViewportLineTruncationState::None,
+        byte_range: ByteRange::new(0, 20),
+        utf16_range: Utf16Range {
+            start: Utf16Position {
+                line: 0,
+                character: 0,
+            },
+            end: Utf16Position {
+                line: 0,
+                character: 20,
+            },
+        },
+        line_start_byte_offset: Some(0),
+        line_start_utf16_offset: None,
     };
     let old_cursor = coord(20, 0, 0);
     let end = coord(7, 14, 14);
@@ -2019,6 +2075,19 @@ fn projection_rendering_drag_coordinates_use_utf8_byte_columns_and_keep_directio
         text: "aé🙂z".to_string(),
         highlights: Vec::new(),
         truncation_state: ViewportLineTruncationState::None,
+        byte_range: ByteRange::new(0, 8),
+        utf16_range: Utf16Range {
+            start: Utf16Position {
+                line: 0,
+                character: 0,
+            },
+            end: Utf16Position {
+                line: 0,
+                character: 5,
+            },
+        },
+        line_start_byte_offset: Some(0),
+        line_start_utf16_offset: None,
     };
     let anchor = drag_anchor_for_line_pointer(&line, 18.0, egui::vec2(0.0, 0.0), 0.0, 8.0);
     assert_eq!(anchor.character, 3); // after `aé`, before the four-byte scalar

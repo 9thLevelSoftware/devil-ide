@@ -7188,6 +7188,7 @@ mod tests {
             selections: vec![],
             cursor: coordinate(7, 6),
             cursors: vec![],
+            cursor_affinities: vec![],
             scroll: ViewportScroll {
                 top_line: 0,
                 left_column: 0,
@@ -7305,6 +7306,7 @@ mod tests {
                 utf16_offset: Some(2),
             },
             cursors: vec![],
+            cursor_affinities: vec![],
             scroll: ViewportScroll {
                 top_line: 0,
                 left_column: 0,

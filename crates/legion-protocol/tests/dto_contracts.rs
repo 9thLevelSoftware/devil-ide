@@ -808,6 +808,7 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
             utf16_offset: Some(10),
         },
         cursors: Vec::new(),
+        cursor_affinities: Vec::new(),
         scroll: ViewportScroll {
             top_line: 120,
             left_column: 4,
@@ -879,6 +880,7 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
         ],
         "cursor": {"line": 1, "character": 4, "byte_offset": 12, "utf16_offset": 10},
         "cursors": [],
+        "cursor_affinities": [],
         "scroll": {"top_line": 120, "left_column": 4},
         "dimensions": {"width_px": 1280, "height_px": 720},
         "line_wrapping_policy": "viewport",
@@ -970,6 +972,7 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
     );
     assert_eq!(legacy_roundtrip.wrap_column, None);
     assert!(legacy_roundtrip.large_file_status.is_none());
+    assert!(legacy_roundtrip.cursor_affinities.is_empty());
 
     let mut missing_workspace = value.clone();
     remove_required_field::<ViewportProjection>(&mut missing_workspace, "workspace_id");
@@ -998,10 +1001,9 @@ fn viewport_line_metric_origins_are_optional_for_legacy_payloads() {
         line_ending_width: 2,
         exact: true,
     };
-    let roundtrip: ViewportLineMetric = serde_json::from_value(
-        serde_json::to_value(current).expect("serialize current metric"),
-    )
-    .expect("deserialize current metric");
+    let roundtrip: ViewportLineMetric =
+        serde_json::from_value(serde_json::to_value(current).expect("serialize current metric"))
+            .expect("deserialize current metric");
     assert_eq!(roundtrip, current);
 }
 
@@ -4819,6 +4821,7 @@ fn dto_contracts_text_coordinate_and_viewport_projection_golden() {
             utf16_offset: Some(18),
         },
         cursors: Vec::new(),
+        cursor_affinities: Vec::new(),
         scroll: ViewportScroll {
             top_line: 1,
             left_column: 0,
@@ -4856,6 +4859,7 @@ fn dto_contracts_text_coordinate_and_viewport_projection_golden() {
         }],
         "cursor": {"line": 2, "character": 4, "byte_offset": 20, "utf16_offset": 18},
         "cursors": [],
+        "cursor_affinities": [],
         "scroll": {"top_line": 1, "left_column": 0},
         "dimensions": {"width_px": 1280, "height_px": 720},
         "line_wrapping_policy": "off",

@@ -9,15 +9,16 @@ use std::sync::Mutex;
 
 use legion_observability::{NoopEventSink, transaction_event};
 use legion_protocol::{
-    BufferId, BufferOpened, BufferVersion, ByteRange, CanonicalPath, CausalityId, ChangedTextRange,
-    CompletionItem, CompletionRequest, CorrelationId, EditorApplyTransactionRequest,
-    EditorBufferMetadata, EditorOpenBufferRequest, EditorPort, EditorRequest, EditorResponse,
-    EditorSaveAcknowledgement, EditorSaveOutcome, EditorSaveRequest, EditorViewportRequest,
-    EventSequence, EventSinkPort, EventSinkRequest, FileConflictLifecycleState, FileConflictState,
-    FileFingerprint, FileId, LargeFileStatus, LineIndexRange, LspCompletionResponse,
-    ProtocolDiagnostic, ProtocolError, ProtocolResult, ProtocolTextRange, SnapshotChunkDescriptor,
-    SnapshotConsumerKind, SnapshotId, SnapshotLeaseChunk, SnapshotLeaseDescriptor, TextCoordinate,
-    TextOffset, TextTransactionDescriptor, TimestampMillis, TransactionSource,
+    BufferId, BufferOpened, BufferVersion, ByteRange, CanonicalPath, CaretAffinity, CausalityId,
+    ChangedTextRange, CompletionItem, CompletionRequest, CorrelationId,
+    EditorApplyTransactionRequest, EditorBufferMetadata, EditorOpenBufferRequest, EditorPort,
+    EditorRequest, EditorResponse, EditorSaveAcknowledgement, EditorSaveOutcome, EditorSaveRequest,
+    EditorViewportRequest, EventSequence, EventSinkPort, EventSinkRequest,
+    FileConflictLifecycleState, FileConflictState, FileFingerprint, FileId, LargeFileStatus,
+    LineIndexRange, LspCompletionResponse, ProtocolDiagnostic, ProtocolError, ProtocolResult,
+    ProtocolTextRange, SnapshotChunkDescriptor, SnapshotConsumerKind, SnapshotId,
+    SnapshotLeaseChunk, SnapshotLeaseDescriptor, TextCoordinate, TextOffset,
+    TextTransactionDescriptor, TimestampMillis, TransactionSource,
     Utf16Position as ProtocolUtf16Position, Utf16Range as ProtocolUtf16Range,
     ViewportDecorationSpan, ViewportFoldRange, ViewportLineMetric, ViewportLineSlice,
     ViewportLineTruncationState, ViewportProjection, ViewportProjectionMode,
@@ -61,6 +62,20 @@ pub enum EditorError {
     /// Completion request used an offset that could not be resolved safely.
     #[error("invalid completion position: {0}")]
     InvalidCompletionPosition(&'static str),
+    /// Visual caret placement targeted an older snapshot or buffer version.
+    #[error(
+        "visual caret placement is stale: expected snapshot {expected_snapshot_id:?}/version {expected_buffer_version:?}, current snapshot {actual_snapshot_id:?}/version {actual_buffer_version:?}"
+    )]
+    StaleVisualCaretPlacement {
+        /// Snapshot identifier supplied by the visual input producer.
+        expected_snapshot_id: SnapshotId,
+        /// Current snapshot identifier owned by the editor.
+        actual_snapshot_id: SnapshotId,
+        /// Buffer version supplied by the visual input producer.
+        expected_buffer_version: BufferVersion,
+        /// Current buffer version owned by the editor.
+        actual_buffer_version: BufferVersion,
+    },
     /// File is already open in another buffer.
     #[error("file {0:?} is already open")]
     FileAlreadyOpen(FileId),
@@ -169,12 +184,24 @@ pub struct DirectedCaret {
     pub head: TextPosition,
     /// Optional anchor retained while extending a selection.
     pub anchor: Option<TextPosition>,
+    /// Visual row affinity at a wrapped-row boundary.
+    pub affinity: CaretAffinity,
 }
 
 impl DirectedCaret {
     /// Construct a directed caret.
     pub const fn new(head: TextPosition, anchor: Option<TextPosition>) -> Self {
-        Self { head, anchor }
+        Self {
+            head,
+            anchor,
+            affinity: CaretAffinity::Upstream,
+        }
+    }
+
+    /// Return this caret with an explicitly selected visual row affinity.
+    pub const fn with_affinity(mut self, affinity: CaretAffinity) -> Self {
+        self.affinity = affinity;
+        self
     }
 }
 
@@ -1270,6 +1297,11 @@ impl EditorEngine {
                     Self::protocol_coordinate_from_offset(&state.buffer, offset)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
+            cursor_affinities: state
+                .carets
+                .iter()
+                .map(|caret| caret.affinity)
+                .collect(),
             scroll: request.scroll,
             dimensions: request.dimensions,
             line_wrapping_policy: legion_protocol::LineWrappingPolicy::Off,
@@ -2371,6 +2403,55 @@ impl EditorEngine {
                 .buffers
                 .get(&buffer_id)
                 .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            for caret in &carets {
+                state.buffer.try_byte_offset(caret.head)?;
+                if let Some(anchor) = caret.anchor {
+                    state.buffer.try_byte_offset(anchor)?;
+                }
+            }
+        }
+        self.buffers
+            .get_mut(&buffer_id)
+            .expect("buffer checked")
+            .carets = carets;
+        Ok(())
+    }
+
+    /// Atomically install visually placed directed carets for a snapshot.
+    ///
+    /// Visual placement changes only caret state: it does not create a text
+    /// transaction, change the buffer version, or add an undo entry. Snapshot
+    /// and version checks, followed by endpoint validation, complete before
+    /// any authoritative state is changed.
+    pub fn set_visual_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        expected_snapshot_id: SnapshotId,
+        expected_buffer_version: BufferVersion,
+        carets: Vec<DirectedCaret>,
+    ) -> Result<(), EditorError> {
+        if carets.is_empty() {
+            return Err(EditorError::InvalidEdit(
+                "buffer must retain at least one caret",
+            ));
+        }
+        {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            let actual_snapshot_id = state.current_snapshot.snapshot_id();
+            let actual_buffer_version = state.current_snapshot.buffer_version();
+            if actual_snapshot_id != expected_snapshot_id
+                || actual_buffer_version != expected_buffer_version
+            {
+                return Err(EditorError::StaleVisualCaretPlacement {
+                    expected_snapshot_id,
+                    actual_snapshot_id,
+                    expected_buffer_version,
+                    actual_buffer_version,
+                });
+            }
             for caret in &carets {
                 state.buffer.try_byte_offset(caret.head)?;
                 if let Some(anchor) = caret.anchor {

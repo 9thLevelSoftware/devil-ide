@@ -112,16 +112,17 @@ use components::{
 };
 
 use legion_protocol::{
-    AssistedAiProviderAvailabilityState, BufferId, CANONICAL_PRODUCT_MODES, CanonicalPath,
-    CanonicalProductMode, ContextManifestEgressStatus, ContextManifestInclusionState,
-    DelegatedTaskProposalHunkDisposition, DelegatedTaskRiskTolerance,
-    DelegatedTaskRuntimeActivationState, DelegatedTaskScope, DelegatedTaskScopeTargetKind,
-    DelegatedTaskToolPermissionDecision, FileId, LanguageInlayHintProjection,
-    LanguageLocationProjection, LanguageProblemProjection, LegionToolKind, LineWrappingPolicy,
-    PluginCommandDescriptor, PluginContribution, PluginContributionProjection,
-    PrivacyInspectorRedactionState, ProposalId, ProposalLifecycleState, ProposalRejectionReason,
-    ProposalRiskLabel, ProtocolDiagnosticSeverity, ProtocolTextRange, TextCoordinate,
-    ViewportLineTruncationState, ViewportProjectionMode, ViewportScroll, ViewportSemanticTokenKind,
+    AssistedAiProviderAvailabilityState, BufferId, ByteRange, CANONICAL_PRODUCT_MODES,
+    CanonicalPath, CanonicalProductMode, ContextManifestEgressStatus,
+    ContextManifestInclusionState, DelegatedTaskProposalHunkDisposition,
+    DelegatedTaskRiskTolerance, DelegatedTaskRuntimeActivationState, DelegatedTaskScope,
+    DelegatedTaskScopeTargetKind, DelegatedTaskToolPermissionDecision, FileId,
+    LanguageInlayHintProjection, LanguageLocationProjection, LanguageProblemProjection,
+    LegionToolKind, LineWrappingPolicy, PluginCommandDescriptor, PluginContribution,
+    PluginContributionProjection, PrivacyInspectorRedactionState, ProposalId,
+    ProposalLifecycleState, ProposalRejectionReason, ProposalRiskLabel, ProtocolDiagnosticSeverity,
+    ProtocolTextRange, TextCoordinate, Utf16Range, ViewportLineTruncationState,
+    ViewportProjectionMode, ViewportScroll, ViewportSemanticTokenKind,
     ViewportSemanticTokenOverlay,
 };
 use legion_ui::{
@@ -479,6 +480,14 @@ pub struct DesktopCodeLineViewModel {
     pub highlights: Vec<DesktopCodeHighlightSpan>,
     /// Truncation state for the visible viewport slice backing this row.
     pub truncation_state: ViewportLineTruncationState,
+    /// Snapshot byte range represented by this visible slice.
+    pub byte_range: ByteRange,
+    /// Snapshot UTF-16 range represented by this visible slice.
+    pub utf16_range: Utf16Range,
+    /// Snapshot byte origin of the logical line, when exact metrics provide it.
+    pub line_start_byte_offset: Option<u64>,
+    /// Snapshot UTF-16 origin of the logical line, when exact metrics provide it.
+    pub line_start_utf16_offset: Option<u64>,
 }
 
 /// Renderer-ready semantic highlight span for a single visible code line.
@@ -3909,37 +3918,44 @@ fn render_code_lines(
                     code_line_wrap_width(model, ui.available_width()),
                 );
                 let response =
-                    ui.add(egui::Label::new(galley).sense(egui::Sense::click_and_drag()));
+                    ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::click_and_drag()));
                 if let Some(position) = response.interact_pointer_pos()
                     && let Some(buffer_id) = active_buffer_id
                 {
-                    let coordinate = editor_coordinate_for_line_x(
+                    let Some(coordinate) = editor_coordinate_from_galley_pointer(
                         line,
-                        position.x,
-                        response.rect.left(),
-                        char_width,
-                    );
+                        galley.as_ref(),
+                        position,
+                        response.rect.min,
+                    ) else {
+                        return;
+                    };
                     let drag_anchor_id = code_drag_anchor_id(buffer_id);
                     if response.drag_started() {
                         let drag_delta = response
                             .total_drag_delta()
                             .unwrap_or_else(|| response.drag_delta());
-                        let anchor = drag_anchor_for_line_pointer(
+                        let Some(anchor) = drag_anchor_for_line_pointer_with_galley(
                             line,
+                            galley.as_ref(),
                             position.x,
                             drag_delta,
-                            response.rect.left(),
-                            char_width,
-                        );
+                            position.y,
+                            response.rect.min,
+                        ) else {
+                            return;
+                        };
                         response
                             .ctx
                             .data_mut(|data| data.insert_temp(drag_anchor_id, anchor));
                     }
                     if response.triple_clicked() {
-                        actions.push(DesktopAction::SetSelection {
-                            buffer_id: Some(buffer_id),
-                            range: line_range_for_code_line(line),
-                        });
+                        if let Some(range) = line_range_for_code_line(line) {
+                            actions.push(DesktopAction::SetSelection {
+                                buffer_id: Some(buffer_id),
+                                range,
+                            });
+                        }
                     } else if response.double_clicked() {
                         if let Some(range) = word_range_for_coordinate(line, coordinate) {
                             actions.push(DesktopAction::SetSelection {
@@ -3977,7 +3993,13 @@ fn render_code_lines(
                     paint_current_line_highlight(ui, line, &response, current_cursor);
                 }
                 if let Some(viewport) = viewport {
-                    paint_code_selections(ui, line, &response, &viewport.selections, char_width);
+                    paint_code_selections(
+                        ui,
+                        line,
+                        &response,
+                        &viewport.selections,
+                        galley.as_ref(),
+                    );
                 }
                 // Every cursor, not only the primary. The projection has
                 // carried the full set all along; painting one made a
@@ -3985,10 +4007,10 @@ fn render_code_lines(
                 match viewport {
                     Some(viewport) if viewport.cursors.len() > 1 => {
                         for cursor in &viewport.cursors {
-                            paint_code_cursor(ui, line, &response, *cursor, char_width);
+                            paint_code_cursor(ui, line, &response, *cursor, galley.as_ref());
                         }
                     }
-                    _ => paint_code_cursor(ui, line, &response, current_cursor, char_width),
+                    _ => paint_code_cursor(ui, line, &response, current_cursor, galley.as_ref()),
                 }
                 paint_find_match_highlights(
                     ui,
@@ -4023,12 +4045,14 @@ fn render_code_lines(
                     && ui.input(|i| i.modifiers.ctrl)
                     && let Some(hover_pos) = response.hover_pos()
                 {
-                    let hover_coord = editor_coordinate_for_line_x(
+                    let Some(hover_coord) = editor_coordinate_from_galley_pointer(
                         line,
-                        hover_pos.x,
-                        response.rect.left(),
-                        char_width,
-                    );
+                        galley.as_ref(),
+                        hover_pos,
+                        response.rect.min,
+                    ) else {
+                        return;
+                    };
                     if let Some(range) = word_range_for_coordinate(line, hover_coord) {
                         let start_x =
                             response.rect.left() + range.start.character as f32 * char_width;
@@ -4045,12 +4069,14 @@ fn render_code_lines(
                     && !ui.input(|i| i.modifiers.ctrl)
                     && let Some(hover_pos) = response.hover_pos()
                 {
-                    let hover_coord = editor_coordinate_for_line_x(
+                    let Some(hover_coord) = editor_coordinate_from_galley_pointer(
                         line,
-                        hover_pos.x,
-                        response.rect.left(),
-                        char_width,
-                    );
+                        galley.as_ref(),
+                        hover_pos,
+                        response.rect.min,
+                    ) else {
+                        return;
+                    };
                     let hover_pos_id = egui::Id::new("lsp_last_hover_pos");
                     let last_pos: Option<(u32, u32)> =
                         ui.ctx().data_mut(|d| d.get_temp(hover_pos_id));
@@ -4069,7 +4095,7 @@ fn render_code_lines(
                         line,
                         &response,
                         current_cursor,
-                        char_width,
+                        galley.as_ref(),
                         ime_composition,
                     );
                 }
@@ -4295,40 +4321,93 @@ fn paint_code_selections(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     selections: &[ProtocolTextRange],
-    char_width: f32,
+    galley: &egui::Galley,
 ) {
-    let line_index = line.number.saturating_sub(1);
-    let line_len = line.text.chars().count() as u32;
     for selection in selections {
-        if line_index < selection.start.line || line_index > selection.end.line {
+        let Some((start_col, end_col, include_empty_line)) =
+            editor_selection_columns_for_line(line, *selection)
+        else {
             continue;
-        }
-        let start_col = if line_index == selection.start.line {
-            selection.start.character.min(line_len)
-        } else {
-            0
         };
-        let end_col = if line_index == selection.end.line {
-            selection.end.character.min(line_len)
-        } else {
-            line_len
-        };
-        if start_col >= end_col {
-            continue;
+        for selection_rect in editor_selection_rects_for_galley(
+            line,
+            galley,
+            response.rect.min,
+            start_col,
+            end_col,
+            include_empty_line,
+        ) {
+            ui.painter()
+                .rect_filled(selection_rect, 0.0, theme::tokens().code_canvas.selection);
         }
-        let selection_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                response.rect.left() + start_col as f32 * char_width,
-                response.rect.top(),
-            ),
-            egui::pos2(
-                response.rect.left() + end_col as f32 * char_width,
-                response.rect.bottom(),
-            ),
-        );
-        ui.painter()
-            .rect_filled(selection_rect, 0.0, theme::tokens().code_canvas.selection);
     }
+}
+
+/// Return the visible scalar interval of a logical selection for one rendered line.
+pub fn editor_selection_columns_for_line(
+    line: &DesktopCodeLineViewModel,
+    selection: ProtocolTextRange,
+) -> Option<(usize, usize, bool)> {
+    let selection = normalized_text_range(selection);
+    let line_index = line.number.saturating_sub(1);
+    if line_index < selection.start.line || line_index > selection.end.line {
+        return None;
+    }
+    let line_len = line.text.chars().count();
+    let start_col = if line_index == selection.start.line {
+        clipped_scalar_for_coordinate(line, selection.start)?
+    } else {
+        0
+    };
+    let end_col = if line_index == selection.end.line {
+        clipped_scalar_for_coordinate(line, selection.end)?
+    } else {
+        line_len
+    };
+    let include_empty_line = line.text.is_empty()
+        && selection.start != selection.end
+        && line_index >= selection.start.line
+        && line_index < selection.end.line;
+    if start_col > end_col || (start_col == end_col && !include_empty_line) {
+        return None;
+    }
+    Some((start_col, end_col, include_empty_line))
+}
+
+fn normalized_text_range(range: ProtocolTextRange) -> ProtocolTextRange {
+    if (range.end.line, range.end.character) < (range.start.line, range.start.character) {
+        ProtocolTextRange {
+            start: range.end,
+            end: range.start,
+        }
+    } else {
+        range
+    }
+}
+
+fn clipped_scalar_for_coordinate(
+    line: &DesktopCodeLineViewModel,
+    coordinate: TextCoordinate,
+) -> Option<usize> {
+    let absolute_byte = if let Some(byte) = coordinate.byte_offset {
+        byte
+    } else if let Some(origin) = line.line_start_byte_offset {
+        origin.checked_add(u64::from(coordinate.character))?
+    } else if matches!(
+        line.truncation_state,
+        ViewportLineTruncationState::Leading | ViewportLineTruncationState::Both
+    ) {
+        return None;
+    } else {
+        line.byte_range
+            .start
+            .checked_add(u64::from(coordinate.character))?
+    };
+    let clipped_byte = absolute_byte.clamp(line.byte_range.start, line.byte_range.end);
+    Some(byte_column_to_scalar_index(
+        &line.text,
+        (clipped_byte - line.byte_range.start) as u32,
+    ))
 }
 
 fn paint_code_cursor(
@@ -4336,18 +4415,16 @@ fn paint_code_cursor(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     cursor: TextCoordinate,
-    char_width: f32,
+    galley: &egui::Galley,
 ) {
     if cursor.line != line.number.saturating_sub(1) {
         return;
     }
     ui.ctx().request_repaint_after(Duration::from_millis(530));
-    let col = cursor.character.min(line.text.chars().count() as u32);
-    let x = response.rect.left() + col as f32 * char_width;
-    let cursor_rect = egui::Rect::from_min_max(
-        egui::pos2(x, response.rect.top()),
-        egui::pos2(x + 1.0, response.rect.bottom()),
-    );
+    let Some(scalar_index) = local_scalar_for_coordinate(line, cursor) else {
+        return;
+    };
+    let cursor_rect = editor_cursor_rect_for_galley(line, galley, response.rect.min, scalar_index);
     let to_global = ui
         .ctx()
         .layer_transform_to_global(ui.layer_id())
@@ -4365,10 +4442,7 @@ fn paint_code_cursor(
         return;
     }
     ui.painter().line_segment(
-        [
-            egui::pos2(x, response.rect.top()),
-            egui::pos2(x, response.rect.bottom()),
-        ],
+        [cursor_rect.left_top(), cursor_rect.left_bottom()],
         egui::Stroke::new(1.0_f32, theme::tokens().code_canvas.cursor),
     );
 }
@@ -4381,6 +4455,208 @@ fn byte_column_to_display_column(line: &str, byte_column: u32) -> u32 {
     line.get(..byte_column)
         .map(|prefix| prefix.chars().count() as u32)
         .unwrap_or_else(|| line.chars().count() as u32)
+}
+
+fn byte_column_to_scalar_index(line: &str, byte_column: u32) -> usize {
+    let mut boundary = (byte_column as usize).min(line.len());
+    while boundary > 0 && !line.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    line[..boundary].chars().count()
+}
+
+fn scalar_index_to_byte_column(line: &str, scalar_index: usize) -> u32 {
+    line.char_indices()
+        .nth(scalar_index)
+        .map(|(offset, _)| offset)
+        .unwrap_or(line.len()) as u32
+}
+
+/// Shape an editor line with the same layout job used by the live code canvas.
+///
+/// This small seam is used by headless geometry tests; it does not own editor
+/// state or change the renderer's text authority.
+pub fn editor_galley_for_geometry(
+    ctx: &egui::Context,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+) -> Arc<egui::Galley> {
+    let mut galley = None;
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        galley = Some(ui.ctx().fonts_mut(|fonts| {
+            let mut job = code_line_layout_job(line);
+            job.wrap.max_width = wrap_width;
+            fonts.layout_job(job)
+        }));
+    });
+    galley.expect("geometry galley should be shaped during an egui frame")
+}
+
+/// Map a pointer in a rendered line label to the protocol's UTF-8 byte column.
+pub fn editor_coordinate_from_galley_pointer(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer: egui::Pos2,
+    origin: egui::Pos2,
+) -> Option<TextCoordinate> {
+    let cursor = galley.cursor_from_pos(pointer - origin);
+    let scalar_index = cursor.index.min(line.text.chars().count());
+    text_coordinate_for_line_scalar(line, scalar_index)
+}
+
+/// Map a drag anchor through the rendered galley, including wrapped-row Y.
+pub fn drag_anchor_for_line_pointer_with_galley(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer_x: f32,
+    total_drag_delta: egui::Vec2,
+    pointer_y: f32,
+    origin: egui::Pos2,
+) -> Option<TextCoordinate> {
+    editor_coordinate_from_galley_pointer(
+        line,
+        galley,
+        egui::pos2(
+            pointer_x - total_drag_delta.x,
+            pointer_y - total_drag_delta.y,
+        ),
+        origin,
+    )
+}
+
+fn text_coordinate_for_line_scalar(
+    line: &DesktopCodeLineViewModel,
+    scalar_index: usize,
+) -> Option<TextCoordinate> {
+    let scalar_index = scalar_index.min(line.text.chars().count());
+    let local_byte = scalar_index_to_byte_column(&line.text, scalar_index) as u64;
+    let local_utf16 = line.text[..local_byte as usize].encode_utf16().count() as u64;
+    let logical_base = line
+        .line_start_byte_offset
+        .map(|origin| line.byte_range.start.checked_sub(origin))
+        .unwrap_or_else(|| {
+            matches!(
+                line.truncation_state,
+                ViewportLineTruncationState::None | ViewportLineTruncationState::Trailing
+            )
+            .then_some(0)
+        })?;
+    let byte_offset = line.byte_range.start.checked_add(local_byte)?;
+    let character = logical_base.checked_add(local_byte)?;
+    let utf16_offset = line
+        .line_start_utf16_offset
+        .and_then(|origin| origin.checked_add(u64::from(line.utf16_range.start.character)))
+        .and_then(|base| base.checked_add(local_utf16));
+    let character = u32::try_from(character).ok()?;
+    let mut coordinate = text_coordinate(line.number.saturating_sub(1), character);
+    coordinate.byte_offset = Some(byte_offset);
+    coordinate.utf16_offset = utf16_offset;
+    Some(coordinate)
+}
+
+fn local_scalar_for_coordinate(
+    line: &DesktopCodeLineViewModel,
+    coordinate: TextCoordinate,
+) -> Option<usize> {
+    let local_byte = if let Some(absolute) = coordinate.byte_offset {
+        if absolute < line.byte_range.start || absolute > line.byte_range.end {
+            return None;
+        }
+        absolute - line.byte_range.start
+    } else {
+        let logical_base = line
+            .line_start_byte_offset
+            .map(|origin| line.byte_range.start.checked_sub(origin))
+            .unwrap_or_else(|| {
+                matches!(
+                    line.truncation_state,
+                    ViewportLineTruncationState::None | ViewportLineTruncationState::Trailing
+                )
+                .then_some(0)
+            })?;
+        u64::from(coordinate.character).checked_sub(logical_base)?
+    };
+    if local_byte > line.text.len() as u64 {
+        return None;
+    }
+    Some(byte_column_to_scalar_index(&line.text, local_byte as u32))
+}
+
+/// Return a short caret rectangle at a scalar cursor position in a rendered line.
+pub fn editor_cursor_rect_for_galley(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    scalar_index: usize,
+) -> egui::Rect {
+    let scalar_index = scalar_index.min(line.text.chars().count());
+    let position = if galley.rows.is_empty()
+        || galley
+            .pos_from_cursor(egui::text::CCursor::new(scalar_index))
+            .height()
+            <= 0.0
+    {
+        egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(0.0, code_line_fallback_height()),
+        )
+    } else {
+        galley.pos_from_cursor(egui::text::CCursor::new(scalar_index))
+    };
+    egui::Rect::from_min_max(
+        origin + position.min.to_vec2(),
+        origin + egui::vec2(position.min.x + 1.0, position.max.y),
+    )
+}
+
+/// Split a selection into one rectangle per rendered galley row.
+pub fn editor_selection_rects_for_galley(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    start_scalar: usize,
+    end_scalar: usize,
+    include_empty_line: bool,
+) -> Vec<egui::Rect> {
+    let line_len = line.text.chars().count();
+    let start_scalar = start_scalar.min(line_len);
+    let end_scalar = end_scalar.min(line_len);
+    if start_scalar == end_scalar && !(include_empty_line && line_len == 0) {
+        return Vec::new();
+    }
+    if start_scalar > end_scalar {
+        return Vec::new();
+    }
+    if galley.rows.is_empty() || galley.rows.iter().all(|row| row.rect().height() <= 0.0) {
+        return vec![egui::Rect::from_min_size(
+            origin,
+            egui::vec2(1.0, code_line_fallback_height()),
+        )];
+    }
+    let mut row_start = 0usize;
+    let mut rectangles = Vec::new();
+    for placed_row in &galley.rows {
+        let row_end = row_start + placed_row.glyphs.len();
+        let selection_start = start_scalar.max(row_start);
+        let selection_end = end_scalar.min(row_end);
+        if selection_start < selection_end {
+            let start_column = selection_start - row_start;
+            let end_column = selection_end - row_start;
+            let left = placed_row.pos.x + placed_row.x_offset(start_column);
+            let right = (placed_row.pos.x + placed_row.x_offset(end_column)).max(left + 1.0);
+            let row_rect = placed_row.rect();
+            rectangles.push(egui::Rect::from_min_max(
+                origin + egui::vec2(left, row_rect.top()),
+                origin + egui::vec2(right, row_rect.bottom()),
+            ));
+        }
+        row_start = row_end + if placed_row.ends_with_newline { 1 } else { 0 };
+    }
+    rectangles
+}
+
+fn code_line_fallback_height() -> f32 {
+    (theme::tokens().typography.code as f32 * 1.2).max(1.0)
 }
 
 fn paint_find_match_highlights(
@@ -4629,7 +4905,7 @@ fn paint_ime_composition(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     cursor: TextCoordinate,
-    char_width: f32,
+    source_galley: &egui::Galley,
     ime_composition: &ImeCompositionProjection,
 ) {
     if cursor.line != line.number.saturating_sub(1) || !ime_composition.active {
@@ -4640,13 +4916,16 @@ fn paint_ime_composition(
         return;
     }
 
-    let col = cursor.character.min(line.text.chars().count() as u32);
-    let x = response.rect.left() + col as f32 * char_width;
+    let Some(scalar_index) = local_scalar_for_coordinate(line, cursor) else {
+        return;
+    };
+    let cursor_rect =
+        editor_cursor_rect_for_galley(line, source_galley, response.rect.min, scalar_index);
     let font_id = egui::FontId::monospace(theme::tokens().typography.code as f32);
     let galley =
         ui.painter()
             .layout_no_wrap(preedit.to_string(), font_id, theme::tokens().accent.orange);
-    let top_left = egui::pos2(x, response.rect.top());
+    let top_left = cursor_rect.left_top();
     let ime_rect = egui::Rect::from_min_size(top_left, galley.size());
     ui.painter().rect_filled(
         ime_rect.expand2(egui::vec2(2.0, 1.0)),
@@ -7670,7 +7949,8 @@ pub fn word_range_for_coordinate(
     if chars.is_empty() {
         return None;
     }
-    let mut index = (coordinate.character as usize).min(chars.len().saturating_sub(1));
+    let mut index =
+        local_scalar_for_coordinate(line, coordinate)?.min(chars.len().saturating_sub(1));
     if !is_word_char(chars[index]) && index > 0 && is_word_char(chars[index - 1]) {
         index -= 1;
     }
@@ -7688,20 +7968,17 @@ pub fn word_range_for_coordinate(
     }
 
     Some(ProtocolTextRange {
-        start: text_coordinate(line.number.saturating_sub(1), start as u32),
-        end: text_coordinate(line.number.saturating_sub(1), end as u32),
+        start: text_coordinate_for_line_scalar(line, start)?,
+        end: text_coordinate_for_line_scalar(line, end)?,
     })
 }
 
 /// Return the full visible-line selection range for a code-canvas row.
-pub fn line_range_for_code_line(line: &DesktopCodeLineViewModel) -> ProtocolTextRange {
-    ProtocolTextRange {
-        start: text_coordinate(line.number.saturating_sub(1), 0),
-        end: text_coordinate(
-            line.number.saturating_sub(1),
-            line.text.chars().count() as u32,
-        ),
-    }
+pub fn line_range_for_code_line(line: &DesktopCodeLineViewModel) -> Option<ProtocolTextRange> {
+    Some(ProtocolTextRange {
+        start: text_coordinate_for_line_scalar(line, 0)?,
+        end: text_coordinate_for_line_scalar(line, line.text.chars().count())?,
+    })
 }
 
 fn code_line_truncation_marker(truncation_state: ViewportLineTruncationState) -> &'static str {
@@ -9073,7 +9350,8 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
         return viewport
             .line_slices
             .iter()
-            .map(|line| DesktopCodeLineViewModel {
+            .enumerate()
+            .map(|(index, line)| DesktopCodeLineViewModel {
                 number: line.line_number + 1,
                 text: line.visible_text.clone(),
                 highlights: semantic_highlights_for_line(
@@ -9082,6 +9360,16 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
                     &viewport.semantic_token_overlays,
                 ),
                 truncation_state: line.truncation_state,
+                byte_range: line.byte_range,
+                utf16_range: line.utf16_range,
+                line_start_byte_offset: viewport
+                    .line_metrics
+                    .get(index)
+                    .and_then(|metric| metric.line_start_byte_offset),
+                line_start_utf16_offset: viewport
+                    .line_metrics
+                    .get(index)
+                    .and_then(|metric| metric.line_start_utf16_offset),
             })
             .collect();
     }
@@ -9089,19 +9377,71 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
     if !active.degraded
         && let Some(text) = active.small_buffer_text()
     {
-        return text
-            .lines()
-            .enumerate()
-            .map(|(index, line)| DesktopCodeLineViewModel {
-                number: index as u32 + 1,
-                text: line.to_string(),
-                highlights: Vec::new(),
-                truncation_state: ViewportLineTruncationState::None,
-            })
-            .collect();
+        return small_buffer_code_lines(text);
     }
 
     Vec::new()
+}
+
+fn small_buffer_code_lines(text: &str) -> Vec<DesktopCodeLineViewModel> {
+    let mut rows = Vec::new();
+    let mut byte_start = 0u64;
+    let mut utf16_start = 0u64;
+    for (index, segment) in text.split_inclusive('\n').enumerate() {
+        let content = segment.strip_suffix('\n').unwrap_or(segment);
+        let content = content.strip_suffix('\r').unwrap_or(content);
+        let byte_len = content.len() as u64;
+        let utf16_len = content.encode_utf16().count() as u32;
+        rows.push(DesktopCodeLineViewModel {
+            number: index as u32 + 1,
+            text: content.to_string(),
+            highlights: Vec::new(),
+            truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(byte_start, byte_start + byte_len),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: index as u32,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: index as u32,
+                    character: utf16_len,
+                },
+            },
+            line_start_byte_offset: Some(byte_start),
+            line_start_utf16_offset: Some(utf16_start),
+        });
+        byte_start += segment.len() as u64;
+        utf16_start += u64::from(utf16_len)
+            + if segment.ends_with("\r\n") {
+                2_u64
+            } else {
+                1_u64
+            };
+    }
+    if rows.is_empty() || text.ends_with('\n') {
+        let index = rows.len() as u32;
+        rows.push(DesktopCodeLineViewModel {
+            number: index + 1,
+            text: String::new(),
+            highlights: Vec::new(),
+            truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(byte_start, byte_start),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: index,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: index,
+                    character: 0,
+                },
+            },
+            line_start_byte_offset: Some(byte_start),
+            line_start_utf16_offset: Some(utf16_start),
+        });
+    }
+    rows
 }
 
 fn semantic_highlights_for_line(
@@ -11234,12 +11574,40 @@ mod tests {
             text: "fn main() {}".to_string(),
             highlights: Vec::new(),
             truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(0, 12),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 12,
+                },
+            },
+            line_start_byte_offset: Some(0),
+            line_start_utf16_offset: None,
         };
 
         assert_eq!(
             code_line_content_fingerprint(&line),
             code_line_content_fingerprint(&line)
         );
+    }
+
+    #[test]
+    fn small_buffer_geometry_preserves_multiline_byte_and_utf16_origins() {
+        let rows = small_buffer_code_lines("é\r\n🙂\n");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].text, "é");
+        assert_eq!(rows[0].byte_range, ByteRange::new(0, 2));
+        assert_eq!(rows[0].line_start_utf16_offset, Some(0));
+        assert_eq!(rows[1].text, "🙂");
+        assert_eq!(rows[1].byte_range, ByteRange::new(3, 7));
+        assert_eq!(rows[1].line_start_byte_offset, Some(3));
+        assert_eq!(rows[1].line_start_utf16_offset, Some(2));
+        assert!(rows[2].text.is_empty());
+        assert_eq!(rows[2].line_start_byte_offset, Some(8));
     }
 
     #[test]
@@ -11273,6 +11641,19 @@ mod tests {
                 kind: ViewportSemanticTokenKind::Keyword,
             }],
             truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(0, 12),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 12,
+                },
+            },
+            line_start_byte_offset: Some(0),
+            line_start_utf16_offset: None,
         };
         let keyword_hash = code_line_content_fingerprint(&keyword);
         keyword.highlights[0].kind = ViewportSemanticTokenKind::Function;
@@ -11319,6 +11700,19 @@ mod tests {
             text: "let value = 1;".to_string(),
             highlights: Vec::new(),
             truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(0, 14),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: 0,
+                    character: 14,
+                },
+            },
+            line_start_byte_offset: Some(0),
+            line_start_utf16_offset: None,
         };
         let snapshot_id = Some(legion_protocol::SnapshotId(11));
         let base = code_line_galley_cache_key(

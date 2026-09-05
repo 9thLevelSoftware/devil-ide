@@ -77,3 +77,22 @@ buffers. A missing origin is legacy or unavailable metadata and must remain
 `None`; consumers must never infer zero. Byte and UTF-16 origins are separate
 coordinates because line-local character metrics cannot recover either absolute
 snapshot origin.
+
+## S1-04g visual caret affinity addendum
+
+`CaretAffinity` is protocol-owned and defaults to `Upstream`, preserving the
+legacy side of a shared soft-wrap boundary. `DirectedCaret` stores that value
+alongside its head and optional anchor; `with_affinity` provides explicit
+visual placement while the legacy constructor remains upstream-compatible.
+`ViewportProjection.cursor_affinities` is an optional, ordered vector aligned
+with `cursors`; omitted legacy metadata means upstream affinity for every
+cursor. The editor emits the complete vector from its authoritative caret
+state.
+
+`EditorEngine::set_visual_directed_carets` requires the expected snapshot ID
+and buffer version, validates all endpoints before mutation, and updates only
+the caret vector. Stale identity or invalid endpoint failures preserve text,
+version, history, and the prior ordered caret vector. Text edits and semantic
+coordinate movement construct fresh upstream carets, while undo and redo
+restore the complete captured caret vector including affinity. Visual
+placement itself never creates a text transaction or undo entry.
