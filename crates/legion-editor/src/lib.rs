@@ -9,16 +9,15 @@ use std::sync::Mutex;
 
 use legion_observability::{NoopEventSink, transaction_event};
 use legion_protocol::{
-    BufferId, BufferOpened, BufferVersion, ByteRange, CanonicalPath, CaretAffinity, CausalityId,
-    ChangedTextRange, CompletionItem, CompletionRequest, CorrelationId,
-    EditorApplyTransactionRequest, EditorBufferMetadata, EditorOpenBufferRequest, EditorPort,
-    EditorRequest, EditorResponse, EditorSaveAcknowledgement, EditorSaveOutcome, EditorSaveRequest,
-    EditorViewportRequest, EventSequence, EventSinkPort, EventSinkRequest,
-    FileConflictLifecycleState, FileConflictState, FileFingerprint, FileId, LargeFileStatus,
-    LineIndexRange, LspCompletionResponse, ProtocolDiagnostic, ProtocolError, ProtocolResult,
-    ProtocolTextRange, SnapshotChunkDescriptor, SnapshotConsumerKind, SnapshotId,
-    SnapshotLeaseChunk, SnapshotLeaseDescriptor, TextCoordinate, TextOffset,
-    TextTransactionDescriptor, TimestampMillis, TransactionSource,
+    BufferId, BufferOpened, BufferVersion, ByteRange, CanonicalPath, CausalityId, ChangedTextRange,
+    CompletionItem, CompletionRequest, CorrelationId, EditorApplyTransactionRequest,
+    EditorBufferMetadata, EditorOpenBufferRequest, EditorPort, EditorRequest, EditorResponse,
+    EditorSaveAcknowledgement, EditorSaveOutcome, EditorSaveRequest, EditorViewportRequest,
+    EventSequence, EventSinkPort, EventSinkRequest, FileConflictLifecycleState, FileConflictState,
+    FileFingerprint, FileId, LargeFileStatus, LineIndexRange, LspCompletionResponse,
+    ProtocolDiagnostic, ProtocolError, ProtocolResult, ProtocolTextRange, SnapshotChunkDescriptor,
+    SnapshotConsumerKind, SnapshotId, SnapshotLeaseChunk, SnapshotLeaseDescriptor, TextCoordinate,
+    TextOffset, TextTransactionDescriptor, TimestampMillis, TransactionSource,
     Utf16Position as ProtocolUtf16Position, Utf16Range as ProtocolUtf16Range,
     ViewportDecorationSpan, ViewportFoldRange, ViewportLineMetric, ViewportLineSlice,
     ViewportLineTruncationState, ViewportProjection, ViewportProjectionMode,
@@ -32,6 +31,7 @@ use regex::RegexBuilder;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub use legion_protocol::CaretAffinity;
 pub use legion_text::{TextEdit, TextPosition, TextRange};
 
 /// Multiple cursors: creating them, and editing at all of them at once.
@@ -168,6 +168,111 @@ pub enum DeleteDirection {
     Forward,
 }
 
+/// A finite, non-negative row-local rendered X coordinate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreferredX(u32);
+
+impl PreferredX {
+    /// Validate and construct a preferred rendered X from rendering points.
+    pub fn new(value: f32) -> Result<Self, EditorError> {
+        if value.is_finite() && value >= 0.0 {
+            Ok(Self(value.to_bits()))
+        } else {
+            Err(EditorError::InvalidEdit(
+                "preferred X must be finite and non-negative",
+            ))
+        }
+    }
+
+    /// Return the rendering-point value.
+    pub fn get(self) -> f32 {
+        f32::from_bits(self.0)
+    }
+}
+
+/// Opaque identity for the shaped layout facts used by vertical movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VerticalLayoutId(u128);
+
+impl VerticalLayoutId {
+    /// Construct a nonzero layout identity.
+    pub const fn new(value: u128) -> Option<Self> {
+        if value == 0 { None } else { Some(Self(value)) }
+    }
+
+    /// Return the opaque identity value.
+    pub const fn get(self) -> u128 {
+        self.0
+    }
+}
+
+/// Direction for semantic visual-row movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalDirection {
+    /// Move to the preceding visual row.
+    Up,
+    /// Move to the following visual row.
+    Down,
+}
+
+/// One renderer-shaped caret stop on the adjacent visual row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerticalCaretStop {
+    /// Valid UTF-8 source position represented by the stop.
+    pub position: TextPosition,
+    /// Row-local rendered X in the request's layout coordinate space.
+    pub x: PreferredX,
+    /// Wrap-side affinity at this stop.
+    pub affinity: CaretAffinity,
+}
+
+/// Renderer-shaped visual row and its bounded caret stops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapedVisualRow {
+    /// Logical text line containing this visual row.
+    pub logical_line: u32,
+    /// Zero-based visual-row ordinal within the logical line.
+    pub row_index: Option<u32>,
+    /// Number of visual rows in the logical line.
+    pub row_count: Option<u32>,
+    /// Inclusive row start position.
+    pub start: TextPosition,
+    /// Inclusive row end position.
+    pub end: TextPosition,
+    /// Ordered valid caret stops on the target row.
+    pub stops: Vec<VerticalCaretStop>,
+}
+
+/// Renderer-shaped source row facts for one ordered source caret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerticalSourceRow {
+    /// Source visual row containing the source caret.
+    pub row: ShapedVisualRow,
+    /// Source row-local rendered X measured by the renderer's galley.
+    pub source_x: PreferredX,
+}
+
+/// Atomic request for moving every directed caret across one visual row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerticalMovementRequest {
+    /// Snapshot expected by the renderer that shaped the facts.
+    pub expected_snapshot_id: SnapshotId,
+    /// Buffer version expected by the renderer that shaped the facts.
+    pub expected_buffer_version: BufferVersion,
+    /// Exact ordered source caret vector used to shape the facts.
+    pub expected_carets: Vec<DirectedCaret>,
+    /// Opaque identity for the renderer layout facts.
+    pub layout_id: VerticalLayoutId,
+    /// Requested visual-row direction.
+    pub direction: VerticalDirection,
+    /// Whether to preserve or initialize directed anchors.
+    pub extend: bool,
+    /// Bounded source-row facts for each ordered source caret.
+    pub source_rows: Vec<VerticalSourceRow>,
+    /// Bounded adjacent target-row facts for each source caret.
+    pub target_rows: Vec<ShapedVisualRow>,
+}
+
 /// Direction for semantic horizontal caret movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HorizontalDirection {
@@ -186,6 +291,8 @@ pub struct DirectedCaret {
     pub anchor: Option<TextPosition>,
     /// Visual row affinity at a wrapped-row boundary.
     pub affinity: CaretAffinity,
+    /// Editor-owned preferred row-local rendered X for vertical movement.
+    pub preferred_x: Option<PreferredX>,
 }
 
 impl DirectedCaret {
@@ -195,12 +302,19 @@ impl DirectedCaret {
             head,
             anchor,
             affinity: CaretAffinity::Upstream,
+            preferred_x: None,
         }
     }
 
     /// Return this caret with an explicitly selected visual row affinity.
     pub const fn with_affinity(mut self, affinity: CaretAffinity) -> Self {
         self.affinity = affinity;
+        self
+    }
+
+    /// Return this caret with an editor-owned preferred rendered X.
+    pub const fn with_preferred_x(mut self, preferred_x: PreferredX) -> Self {
+        self.preferred_x = Some(preferred_x);
         self
     }
 }
@@ -364,6 +478,7 @@ pub enum SaveAcknowledgement {
 struct UndoEntry {
     snapshot: legion_text::TextSnapshot,
     carets: Vec<DirectedCaret>,
+    vertical_layout_id: Option<VerticalLayoutId>,
     undo_group_id: Option<Uuid>,
 }
 
@@ -450,6 +565,7 @@ struct EditorBufferState {
     mode: BufferMode,
     dirty: bool,
     carets: Vec<DirectedCaret>,
+    vertical_layout_id: Option<VerticalLayoutId>,
     overlays: Vec<UiOverlay>,
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
@@ -491,6 +607,7 @@ impl EditorBufferState {
             streamed,
             dirty: false,
             carets: vec![DirectedCaret::new(TextPosition::zero(), None)],
+            vertical_layout_id: None,
             overlays: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -1519,6 +1636,7 @@ impl EditorEngine {
                 state.undo_stack.push(UndoEntry {
                     snapshot: plan.pre_snapshot.clone(),
                     carets: plan.pre_carets.clone(),
+                    vertical_layout_id: state.vertical_layout_id,
                     undo_group_id,
                 });
             }
@@ -1532,6 +1650,7 @@ impl EditorEngine {
             state.redo_stack.clear();
             state.buffer = staged_buffer;
             state.carets = mapped_carets;
+            state.vertical_layout_id = None;
             state.mode = next_mode;
             state.current_snapshot = post_snapshot;
             state.dirty = true;
@@ -1882,12 +2001,14 @@ impl EditorEngine {
             state.redo_stack.push(UndoEntry {
                 snapshot: pre_snapshot.clone(),
                 carets: state.carets.clone(),
+                vertical_layout_id: state.vertical_layout_id,
                 undo_group_id: undo_entry.undo_group_id,
             });
             state.buffer = restored_buffer;
             state.mode = restored_mode;
             state.current_snapshot = restored_snapshot;
             state.carets = undo_entry.carets.clone();
+            state.vertical_layout_id = undo_entry.vertical_layout_id;
             state.active_undo_group = None;
             state.active_group_evicted = false;
             state.dirty = true;
@@ -1989,12 +2110,14 @@ impl EditorEngine {
             state.undo_stack.push(UndoEntry {
                 snapshot: pre_snapshot.clone(),
                 carets: state.carets.clone(),
+                vertical_layout_id: state.vertical_layout_id,
                 undo_group_id: redo_entry.undo_group_id,
             });
             state.buffer = restored_buffer;
             state.mode = restored_mode;
             state.current_snapshot = restored_snapshot;
             state.carets = redo_entry.carets.clone();
+            state.vertical_layout_id = redo_entry.vertical_layout_id;
             state.active_undo_group = None;
             state.active_group_evicted = false;
             state.dirty = true;
@@ -2410,10 +2533,12 @@ impl EditorEngine {
                 }
             }
         }
-        self.buffers
-            .get_mut(&buffer_id)
-            .expect("buffer checked")
-            .carets = carets;
+        let state = self.buffers.get_mut(&buffer_id).expect("buffer checked");
+        state.carets = carets
+            .into_iter()
+            .map(|caret| DirectedCaret::new(caret.head, caret.anchor).with_affinity(caret.affinity))
+            .collect();
+        state.vertical_layout_id = None;
         Ok(())
     }
 
@@ -2459,10 +2584,12 @@ impl EditorEngine {
                 }
             }
         }
-        self.buffers
-            .get_mut(&buffer_id)
-            .expect("buffer checked")
-            .carets = carets;
+        let state = self.buffers.get_mut(&buffer_id).expect("buffer checked");
+        state.carets = carets
+            .into_iter()
+            .map(|caret| DirectedCaret::new(caret.head, caret.anchor).with_affinity(caret.affinity))
+            .collect();
+        state.vertical_layout_id = None;
         Ok(())
     }
 
@@ -2730,6 +2857,333 @@ impl EditorEngine {
                 .collect::<Result<Vec<_>, EditorError>>()?
         };
         self.set_directed_carets(buffer_id, targets)
+    }
+
+    /// Move every directed caret across one renderer-shaped visual row.
+    ///
+    /// All source and target facts are validated against the current buffer
+    /// before any caret is changed. The renderer supplies shaped row spans and
+    /// stops; the editor chooses the closest stop to each caret's preferred X.
+    pub fn move_vertically(
+        &mut self,
+        buffer_id: BufferId,
+        request: VerticalMovementRequest,
+    ) -> Result<(), EditorError> {
+        const MAX_STOPS_PER_ROW: usize = 4096;
+        let (targets, layout_id) = {
+            let state = self
+                .buffers
+                .get(&buffer_id)
+                .ok_or(EditorError::BufferNotFound(buffer_id))?;
+            if state.current_snapshot.snapshot_id() != request.expected_snapshot_id
+                || state.current_snapshot.buffer_version() != request.expected_buffer_version
+            {
+                return Err(EditorError::StaleVisualCaretPlacement {
+                    expected_snapshot_id: request.expected_snapshot_id,
+                    actual_snapshot_id: state.current_snapshot.snapshot_id(),
+                    expected_buffer_version: request.expected_buffer_version,
+                    actual_buffer_version: state.current_snapshot.buffer_version(),
+                });
+            }
+            if state.carets != request.expected_carets
+                || request.source_rows.len() != state.carets.len()
+                || request.target_rows.len() != state.carets.len()
+            {
+                return Err(EditorError::InvalidEdit(
+                    "vertical source caret or row fact cardinality is stale",
+                ));
+            }
+            let layout_id = request.layout_id;
+            let same_layout = state.vertical_layout_id == Some(layout_id);
+            let line_count = state.buffer.line_index().line_count().max(1) as u32;
+            let mut targets = Vec::with_capacity(state.carets.len());
+            for (index, caret) in state.carets.iter().enumerate() {
+                let source = &request.source_rows[index];
+                let target_row = &request.target_rows[index];
+                Self::validate_shaped_row(&state.buffer, &source.row, false, MAX_STOPS_PER_ROW)?;
+                Self::validate_shaped_row(&state.buffer, target_row, true, MAX_STOPS_PER_ROW)?;
+                let head_offset = state.buffer.try_byte_offset(caret.head)?;
+                Self::ensure_grapheme_boundary(&state.buffer, head_offset)?;
+                let source_start = state.buffer.try_byte_offset(source.row.start)?;
+                let source_end = state.buffer.try_byte_offset(source.row.end)?;
+                if caret.head.line as u32 != source.row.logical_line
+                    || head_offset < source_start
+                    || head_offset > source_end
+                {
+                    return Err(EditorError::InvalidEdit(
+                        "caret is outside its shaped source row",
+                    ));
+                }
+                Self::validate_row_boundary_affinity(
+                    &state.buffer,
+                    &source.row,
+                    caret.head,
+                    caret.affinity,
+                )?;
+                let target_is_same_row = Self::validate_vertical_adjacency(
+                    &state.buffer,
+                    source,
+                    target_row,
+                    request.direction,
+                    line_count,
+                )?;
+                let preferred = if same_layout {
+                    caret.preferred_x.unwrap_or(source.source_x)
+                } else {
+                    source.source_x
+                };
+                let (head, affinity) = if target_is_same_row {
+                    if !target_row
+                        .stops
+                        .iter()
+                        .any(|stop| stop.position == caret.head)
+                    {
+                        return Err(EditorError::InvalidEdit(
+                            "document-edge no-op row lacks the source caret stop",
+                        ));
+                    }
+                    (caret.head, caret.affinity)
+                } else {
+                    let mut stop = target_row
+                        .stops
+                        .first()
+                        .ok_or(EditorError::InvalidEdit("vertical target row has no stops"))?;
+                    let mut best_distance = (stop.x.get() - preferred.get()).abs();
+                    for candidate in target_row.stops.iter().skip(1) {
+                        let distance = (candidate.x.get() - preferred.get()).abs();
+                        if distance < best_distance {
+                            stop = candidate;
+                            best_distance = distance;
+                        }
+                    }
+                    (stop.position, stop.affinity)
+                };
+                let anchor = request.extend.then_some(caret.anchor.unwrap_or(caret.head));
+                targets.push(
+                    DirectedCaret::new(head, anchor)
+                        .with_affinity(affinity)
+                        .with_preferred_x(preferred),
+                );
+            }
+            (targets, layout_id)
+        };
+        let state = self.buffers.get_mut(&buffer_id).expect("buffer checked");
+        state.carets = targets;
+        state.vertical_layout_id = Some(layout_id);
+        Ok(())
+    }
+
+    fn validate_shaped_row(
+        buffer: &TextBuffer,
+        row: &ShapedVisualRow,
+        target: bool,
+        max_stops: usize,
+    ) -> Result<(), EditorError> {
+        if row.row_count == Some(0)
+            || matches!((row.row_index, row.row_count), (Some(index), Some(count)) if index >= count)
+            || row.row_index.is_some() != row.row_count.is_some()
+        {
+            return Err(EditorError::InvalidEdit(
+                "invalid shaped visual row identity",
+            ));
+        }
+        if target && row.stops.is_empty() {
+            return Err(EditorError::InvalidEdit("vertical target row has no stops"));
+        }
+        if row.stops.len() > max_stops {
+            return Err(EditorError::InvalidEdit(
+                "vertical target row exceeds stop bound",
+            ));
+        }
+        if row.start.line as u32 != row.logical_line || row.end.line as u32 != row.logical_line {
+            return Err(EditorError::InvalidEdit(
+                "shaped row spans multiple logical lines",
+            ));
+        }
+        let start = buffer.try_byte_offset(row.start)?;
+        let end = buffer.try_byte_offset(row.end)?;
+        if start > end {
+            return Err(EditorError::InvalidEdit("shaped row start follows its end"));
+        }
+        for stop in &row.stops {
+            if stop.position.line as u32 != row.logical_line {
+                return Err(EditorError::InvalidEdit(
+                    "vertical stop is on the wrong line",
+                ));
+            }
+            let offset = buffer.try_byte_offset(stop.position)?;
+            if offset < start || offset > end {
+                return Err(EditorError::InvalidEdit(
+                    "vertical stop is outside its row span",
+                ));
+            }
+            Self::ensure_grapheme_boundary(buffer, offset)?;
+            Self::validate_row_boundary_affinity(buffer, row, stop.position, stop.affinity)?;
+            let _ = stop.x.get();
+        }
+        Self::ensure_grapheme_boundary(buffer, start)?;
+        Self::ensure_grapheme_boundary(buffer, end)?;
+        Ok(())
+    }
+
+    fn ensure_grapheme_boundary(buffer: &TextBuffer, offset: usize) -> Result<(), EditorError> {
+        if offset == 0 || offset == buffer.len() {
+            return Ok(());
+        }
+        let previous = buffer
+            .previous_grapheme_boundary(offset)?
+            .ok_or(EditorError::InvalidEdit("invalid grapheme boundary"))?;
+        if buffer.next_grapheme_boundary(previous)? == Some(offset) {
+            Ok(())
+        } else {
+            Err(EditorError::InvalidEdit("vertical stop splits a grapheme"))
+        }
+    }
+
+    fn validate_row_boundary_affinity(
+        buffer: &TextBuffer,
+        row: &ShapedVisualRow,
+        position: TextPosition,
+        affinity: CaretAffinity,
+    ) -> Result<(), EditorError> {
+        let position = buffer.try_byte_offset(position)?;
+        let start = buffer.try_byte_offset(row.start)?;
+        let end = buffer.try_byte_offset(row.end)?;
+        let line_end = buffer
+            .line_index()
+            .line_byte_len(row.logical_line as usize)?;
+        if (row.row_index.is_some_and(|index| index > 0) || row.start.column > 0)
+            && position == start
+            && affinity != CaretAffinity::Downstream
+        {
+            return Err(EditorError::InvalidEdit(
+                "source row start requires downstream affinity",
+            ));
+        }
+        if (row
+            .row_index
+            .zip(row.row_count)
+            .is_some_and(|(index, count)| index + 1 < count)
+            || row.end.column < line_end)
+            && position == end
+            && affinity != CaretAffinity::Upstream
+        {
+            return Err(EditorError::InvalidEdit(
+                "source row end requires upstream affinity",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_vertical_adjacency(
+        buffer: &TextBuffer,
+        source: &VerticalSourceRow,
+        target: &ShapedVisualRow,
+        direction: VerticalDirection,
+        line_count: u32,
+    ) -> Result<bool, EditorError> {
+        let source_line = source.row.logical_line;
+        let target_line = target.logical_line;
+        if source_line == target_line {
+            let contiguous = match direction {
+                VerticalDirection::Up => {
+                    target.end == source.row.start
+                        && target.start != target.end
+                        && Self::rows_are_adjacent_if_numbered(&source.row, target)
+                }
+                VerticalDirection::Down => {
+                    target.start == source.row.end
+                        && target.start != target.end
+                        && Self::rows_are_adjacent_if_numbered(&source.row, target)
+                }
+            };
+            let at_edge = match direction {
+                VerticalDirection::Up => {
+                    source_line == 0
+                        && source.row.start.column == 0
+                        && source.row.start == target.start
+                        && source.row.end == target.end
+                }
+                VerticalDirection::Down => {
+                    source_line + 1 == line_count
+                        && source.row.start == target.start
+                        && source.row.end == target.end
+                        && source.row.end.column
+                            == buffer.line_index().line_byte_len(source_line as usize)?
+                }
+            };
+            if at_edge {
+                return Ok(true);
+            }
+            if contiguous {
+                return Ok(false);
+            }
+            return Err(EditorError::InvalidEdit(
+                "vertical target row is not adjacent",
+            ));
+        }
+        let adjacent_logical = match direction {
+            VerticalDirection::Up => {
+                source_line > 0
+                    && target_line + 1 == source_line
+                    && Self::source_row_is_first(&source.row)
+                    && Self::target_row_is_last(target)
+                    && source.row.start.column == 0
+                    && target.end.column
+                        == buffer.line_index().line_byte_len(target_line as usize)?
+            }
+            VerticalDirection::Down => {
+                target_line == source_line + 1
+                    && target_line < line_count
+                    && Self::source_row_is_last(&source.row)
+                    && Self::target_row_is_first(target)
+                    && source.row.end.column
+                        == buffer.line_index().line_byte_len(source_line as usize)?
+                    && target.start.column == 0
+            }
+        };
+        if adjacent_logical {
+            Ok(false)
+        } else {
+            Err(EditorError::InvalidEdit(
+                "vertical target row is not adjacent",
+            ))
+        }
+    }
+
+    fn rows_are_adjacent_if_numbered(source: &ShapedVisualRow, target: &ShapedVisualRow) -> bool {
+        match (
+            source.row_index,
+            source.row_count,
+            target.row_index,
+            target.row_count,
+        ) {
+            (Some(source_index), Some(source_count), Some(target_index), Some(target_count)) => {
+                source_count == target_count && source_index.abs_diff(target_index) == 1
+            }
+            (None, None, None, None) => true,
+            _ => false,
+        }
+    }
+
+    fn source_row_is_first(row: &ShapedVisualRow) -> bool {
+        row.row_index.is_none_or(|index| index == 0)
+    }
+
+    fn source_row_is_last(row: &ShapedVisualRow) -> bool {
+        row.row_index
+            .zip(row.row_count)
+            .is_none_or(|(index, count)| index + 1 == count)
+    }
+
+    fn target_row_is_first(row: &ShapedVisualRow) -> bool {
+        row.row_index.is_none_or(|index| index == 0)
+    }
+
+    fn target_row_is_last(row: &ShapedVisualRow) -> bool {
+        row.row_index
+            .zip(row.row_count)
+            .is_none_or(|(index, count)| index + 1 == count)
     }
 
     fn mode_for_byte_len(&self, len: usize) -> BufferMode {
@@ -3690,6 +4144,7 @@ mod tests {
                 .map(|snapshot| UndoEntry {
                     snapshot: snapshot.clone(),
                     carets: carets.clone(),
+                    vertical_layout_id: None,
                     undo_group_id: None,
                 })
                 .collect();

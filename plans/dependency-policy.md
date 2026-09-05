@@ -84,6 +84,16 @@ Every current workspace crate must have an explicit internal dependency policy e
 
 - `legion-editor` MUST NOT depend on `legion-project`.
 
+The S1-04h vertical-caret contract adds no dependency edge. `legion-editor`
+continues to own ordered carets, typed row-local preferred X, grapheme and
+affinity validation, layout-identity guards, bounded shaped-stop validation,
+and reset/undo/redo state. Renderer-shaped geometry is supplied through the
+protocol/app route; `legion-desktop` remains an adapter and must not depend on
+`legion-editor`. The associated contract coverage belongs in
+`crates/legion-editor/tests/vertical_carets.rs` and must distinguish the tested
+editor core from the pending live desktop route and huge-line/native
+qualification. No new external or workspace dependency is authorized.
+
 - `legion-ui` may depend on:
   - `legion-protocol`
 

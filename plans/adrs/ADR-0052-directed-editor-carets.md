@@ -96,3 +96,52 @@ version, history, and the prior ordered caret vector. Text edits and semantic
 coordinate movement construct fresh upstream carets, while undo and redo
 restore the complete captured caret vector including affinity. Visual
 placement itself never creates a text transaction or undo entry.
+
+## S1-04h vertical authority addendum
+
+The vertical contract is editor-owned. Each directed caret may carry a typed,
+finite, non-negative row-local `PreferredX` in rendering-point space plus its
+existing grapheme-boundary `CaretAffinity`; the editor owns the preferred value
+and its validity. It is not a UI state, absolute screen coordinate, scalar
+column, or UTF-16 offset. The renderer supplies the shaped geometry through the
+forthcoming protocol/app route; it does not become an authority or a new
+desktop-to-editor dependency.
+
+The transient layout identity is separate from `snapshot_id` and
+`buffer_version`. It identifies the shaping configuration used for the supplied
+facts: font/settings revision, wrapping policy and width, and tab policy. It
+does not authenticate the supplied row geometry and does not include text or
+per-row facts. A nonzero layout identity is required, and a preferred X is
+reusable only when that configuration identity is unchanged. Snapshot/version,
+buffer identity, and the exact ordered source-caret vector are the content
+guards; the caller and renderer/app route must supply a current coherent
+configuration and matching bounded facts. The editor core cannot independently
+distinguish a stale opaque layout token from another valid nonzero configuration
+identity.
+
+`move_vertically` validates the complete ordered source-caret vector before
+processing targets: buffer identity, snapshot ID, buffer version, caret count,
+head/optional-anchor UTF-8 validity, source line/span containment, grapheme
+boundary validity, affinity validity, and finite preferred X. For every caret it
+then validates the target row's bounded shaped stops, exact span adjacency,
+source-to-target logical-line adjacency, target-stop bounds, and affinity at a
+shared wrap boundary. Optional row ordinals are descriptive only; they are
+never used to infer adjacency when absent. The renderer may provide only the
+bounded source/target stops needed for the request, including for streamed or
+huge lines; full-file materialization and unbounded row enumeration are
+forbidden. The entire ordered target vector commits atomically only after all
+guards pass.
+
+Vertical movement retains each caret's preferred X for the same layout and
+re-seeds it from renderer-shaped source geometry when a valid layout
+configuration identity changes. Any nonvertical placement or movement, edit, reset, or explicit caret
+replacement clears preferred X while preserving the established directional
+anchor/affinity rules. Undo and redo restore the complete caret vector,
+preferred X, affinity, and layout identity with the text snapshot. Rejected
+requests change none of these values, text, version, history, or events.
+
+The bounded editor core and its contract tests implement and test these guards,
+resets, and undo/redo semantics. The live desktop key route, protocol/app
+transport of the shaped facts, and native GUI qualification remain pending;
+the current core evidence does not claim completion of the full vertical
+workflow.
