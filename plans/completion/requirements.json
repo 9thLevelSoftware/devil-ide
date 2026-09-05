@@ -10612,67 +10612,511 @@
       "defect_ids": []
     },
     {
-      "id": "COMP-SCOPE-FAMILY-09",
-      "title": "Work preservation",
+      "id": "COMP-PRES-001",
+      "title": "Every save uses the authoritative proposal and write path with expected fingerprint, file-content version, workspace generation, buffer version, snapshot, correlation, and causality preconditions, writing atomically or failing closed without losing dirty text.",
       "kind": "product",
       "required": true,
       "source_refs": [
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md#required-feature-families",
-          "identity": "family-09"
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
         },
         {
-          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
-          "identity": "required feature families"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
         },
         {
           "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
-          "identity": "additional requirement sources and gaps"
+          "identity": "#additional-requirement-sources-and-gaps"
         },
         {
-          "path": "plans/legion-production-master-plan-v0.2.md",
-          "identity": "master plan"
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "AppComposition save/proposal authority"
         },
         {
-          "path": "plans/legion-production-roadmap-v1.0.md",
-          "identity": "production roadmap"
+          "path": "crates/legion-platform/src/lib.rs",
+          "identity": "filesystem encoding and write error model"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-002",
+      "title": "Save, Save All, and Save As preserve the intended buffer contents, path identity, encoding, and newline policy, report per-file failures, and leave unrelated dirty buffers recoverable when one write is denied or fails.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
         },
         {
-          "path": "plans/product-readiness-ledger.md",
-          "identity": "readiness ledger"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
         },
         {
-          "path": "plans/phase-status-ledger.md",
-          "identity": "phase ledger"
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
         },
         {
-          "path": "plans/p0-installed-product-sequence-v0.1.md",
-          "identity": "installed sequence"
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "save command and buffer authority"
         },
         {
-          "path": "plans/control-first-adaptive-ide-granular-implementation-plan-v0.1.md",
-          "identity": "adaptive implementation"
+          "path": "crates/legion-project/src/lib.rs",
+          "identity": "workspace/file identity authority"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-003",
+      "title": "Autosave and hot-exit recovery preserve dirty buffers and session metadata across ordinary close, denied save, and interrupted shutdown, with a visible recoverable state and no silent overwrite of newer disk contents.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
         },
         {
-          "path": "plans/control-first-adaptive-ide-technical-design-v0.1.md",
-          "identity": "adaptive technical design"
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
         },
         {
-          "path": "plans/foundational-core-ide-platform-roadmap-v0.1.md",
-          "identity": "foundational roadmap"
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
         },
         {
-          "path": "plans/remaining-implementation-tasks-plan-v0.1.md",
-          "identity": "remaining tasks"
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "dirty/status/recovery projection"
         },
         {
-          "path": "docs/ui/canvas-workspace-direction.md",
-          "identity": "canvas direction"
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "workspace lifecycle and persistence authority"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-08",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-004",
+      "title": "Crash and restart recovery restores recoverable dirty text, open-buffer identity, and approved persistence metadata while detecting corrupt or incomplete state and retaining the original disk file.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "restart/status and recovery-facing projection"
+        },
+        {
+          "path": "crates/legion-platform/src/lib.rs",
+          "identity": "storage and filesystem failure model"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-08",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-005",
+      "title": "Checkpoint creation and restore preserve non-conflicting manual edits, identify the selected checkpoint, reject stale or conflicting restore preconditions, and expose rollback/recovery metadata.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-desktop/src/bridge.rs",
+          "identity": "RestoreCheckpoint app-authority action"
+        },
+        {
+          "path": "crates/legion-desktop/src/view.rs",
+          "identity": "durable checkpoint timeline projection"
+        },
+        {
+          "path": "crates/legion-protocol/tests/dto_contracts.rs",
+          "identity": "checkpoint rollback projection contracts"
         }
       ],
       "legacy_ids": [],
       "stage": "S1",
       "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-006",
+      "title": "Local history lists prior versions and restores a selected file through proposal authority with external-change detection, stale/conflict denial, and preserved current work when restoration is rejected.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-storage/src/local_history.rs",
+          "identity": "local history storage authority"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "local-history restore and proposal authority"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-07",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-007",
+      "title": "Undo and redo preserve grouped editor transactions across multi-cursor, paste, and compound edits, keep cursor/buffer versions coherent, and do not create duplicate or partial history entries.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-editor/src/lib.rs",
+          "identity": "editor text and undo authority"
+        },
+        {
+          "path": "crates/legion-protocol/tests/dto_contracts.rs",
+          "identity": "EditorUndoGroup protocol contract"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-008",
+      "title": "An external overwrite or stale snapshot during save or proposal apply yields an explicit conflict, preserves the in-memory dirty buffer and disk contents, and requires an intentional resolution before any write proceeds.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-app/tests/workspace_vfs_integration.rs",
+          "identity": "external overwrite save conflict workflow"
+        },
+        {
+          "path": "crates/legion-observability/src/lib.rs",
+          "identity": "stale proposal rejection event"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-009",
+      "title": "Partial write, low-storage, permission, encoding, and migration failures fail closed, retain the last known good file, surface actionable diagnostics, and leave retry or recovery possible without fabricated success.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-platform/src/lib.rs",
+          "identity": "encoding/filesystem error classification"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "save failure and proposal result authority"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-05",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-010",
+      "title": "Text persistence preserves declared encoding, line-ending/newline policy, and final-newline behavior through open/edit/save/restart and history restore, reporting unsupported or malformed input rather than silently rewriting it.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "crates/legion-platform/src/lib.rs",
+          "identity": "UTF-8 encoding error model"
+        },
+        {
+          "path": "crates/legion-protocol/tests/dto_contracts.rs",
+          "identity": "text encoding and final-newline contract fields"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-04",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-011",
+      "title": "The packaged native work-preservation journey records host-observed disk, buffer, checkpoint/history, restart, conflict, and recovery effects on supported OSes with independent reviewer coverage; UI labels and harness/protocol fixtures are supporting evidence only.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-07-complete-git-review-surface-and-local-history-recovery"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md",
+          "identity": "#additional-requirement-sources-and-gaps"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#native-scenario-manual-git-history-recovery and cross-stage acceptance"
+        },
+        {
+          "path": "xtask/src/completion/schema.rs",
+          "identity": "EvidenceRun schema and acceptance data model"
+        },
+        {
+          "path": "plans/evidence/production/WS-MANUAL-01/WS-MANUAL-01-evidence.md",
+          "identity": "historical manual evidence"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-08",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-012",
+      "title": "When a terminal session is cancelled or its child process is lost, the active editor buffer's text, selection, and undo/redo history remain intact while the terminal reports truthful failure and offers cleanup or retry/restart state.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation and failure classes"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s1-06-make-terminal-execution-and-interactive-tui-behavior-real; cancellation and child cleanup"
+        },
+        {
+          "path": "crates/legion-terminal/src/session.rs",
+          "identity": "terminal session cancellation, process lifecycle, and cleanup authority"
+        },
+        {
+          "path": "crates/legion-app/src/lib.rs",
+          "identity": "terminal workflow dispatch and active-buffer ownership boundary"
+        },
+        {
+          "path": "crates/legion-editor/src/lib.rs",
+          "identity": "editor buffer, selection, and undo/redo state"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S1",
+      "package_id": "S1-06",
+      "owner_role": "luna_worker",
+      "depends_on": [],
+      "implementation": "partial",
+      "acceptance": "unassessed",
+      "scenario_ids": [],
+      "configuration_ids": [],
+      "protected_product_ids": [],
+      "defect_ids": []
+    },
+    {
+      "id": "COMP-PRES-013",
+      "title": "When a debug adapter is cancelled or lost, the active editor buffer's text, selection, and undo/redo history remain intact while the debug workflow reports truthful crash or unavailable state and permits cleanup or retry/restart.",
+      "kind": "product",
+      "required": true,
+      "source_refs": [
+        {
+          "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md",
+          "identity": "#required-feature-families; family-09 Work preservation and failure classes"
+        },
+        {
+          "path": "docs/superpowers/plans/2026-09-04-manual-language-completion.md",
+          "identity": "#s2-05-design-and-deliver-real-debug-adapter-support-for-each-supported-language; terminate and crash recovery"
+        },
+        {
+          "path": "crates/legion-app/src/debug_workflow.rs",
+          "identity": "debug adapter lifecycle, termination, crash, and recovery authority"
+        },
+        {
+          "path": "crates/legion-debug/src/live_session.rs",
+          "identity": "live debug process/session loss and termination state"
+        },
+        {
+          "path": "crates/legion-editor/src/lib.rs",
+          "identity": "editor buffer, selection, and undo/redo state"
+        }
+      ],
+      "legacy_ids": [],
+      "stage": "S2",
+      "package_id": "S2-05",
       "owner_role": "luna_worker",
       "depends_on": [],
       "implementation": "partial",
