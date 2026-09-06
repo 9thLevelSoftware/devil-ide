@@ -12,7 +12,8 @@ use crate::{
     text::{
         Galley, LayoutJob, LayoutSection, MetricGlyphBatch, MetricLayoutContinuation,
         MetricLayoutError, TextFormat, TextOptions, UnwrappedGlyphBatch,
-        UnwrappedLayoutContinuation, UnwrappedLayoutError, VariationCoords,
+        UnwrappedLayoutContinuation, UnwrappedLayoutError, VariationCoords, WrappedRowBatch,
+        WrappedRowContinuation, WrappedRowError,
         font::{Font, FontFace, GlyphInfo},
     },
 };
@@ -748,6 +749,62 @@ impl FontsView<'_> {
             identity,
             format,
             source_key,
+            chunk_start_byte,
+            chunk,
+            is_final_chunk,
+            continuation,
+            max_output_glyphs,
+        )
+    }
+
+    /// Discover bounded wrapped row descriptors without allocating atlas glyphs.
+    pub fn layout_wrapped_row_chunk(
+        &mut self,
+        format: TextFormat,
+        source_key: u128,
+        chunk_start_byte: u64,
+        chunk: &str,
+        is_final_chunk: bool,
+        paragraph_span: std::ops::Range<u64>,
+        metric_summary: super::text_layout::MetricLayoutSummary,
+        wrap_width: f32,
+        break_anywhere: bool,
+        continuation: Option<WrappedRowContinuation>,
+        max_output_rows: usize,
+    ) -> Result<WrappedRowBatch, WrappedRowError> {
+        let identity = self.fonts.metric_identity();
+        super::text_layout::layout_wrapped_row_chunk(
+            self.fonts,
+            self.pixels_per_point,
+            identity,
+            format,
+            source_key,
+            chunk_start_byte,
+            chunk,
+            is_final_chunk,
+            paragraph_span,
+            metric_summary,
+            wrap_width,
+            break_anywhere,
+            continuation,
+            max_output_rows,
+        )
+    }
+
+    /// Replay one bounded row descriptor into fresh atlas-backed glyphs.
+    pub fn replay_wrapped_row_chunk(
+        &mut self,
+        descriptor: &super::text_layout::WrappedRowDescriptor,
+        chunk_start_byte: u64,
+        chunk: &str,
+        is_final_chunk: bool,
+        continuation: Option<UnwrappedLayoutContinuation>,
+        max_output_glyphs: usize,
+    ) -> Result<UnwrappedGlyphBatch, UnwrappedLayoutError> {
+        super::text_layout::replay_wrapped_row_chunk(
+            self.fonts,
+            self.pixels_per_point,
+            descriptor,
             chunk_start_byte,
             chunk,
             is_final_chunk,

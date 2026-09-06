@@ -54,7 +54,7 @@ impl PointScale {
 /// This is deliberately separate from [`Paragraph`], whose glyph vector is
 /// retained by the ordinary layout path only. A streaming continuation can
 /// therefore be cloned without copying any output-sized storage.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct ShapeState {
     /// Start of the next glyph to be added. In screen-space / physical pixels.
     cursor_x_px: f32,
@@ -363,6 +363,154 @@ pub struct MetricGlyphBatch {
     pub summary: Option<MetricLayoutSummary>,
 }
 
+#[derive(Clone, Debug)]
+struct WrappedRowCandidate {
+    end_byte: u64,
+    post: ShapeState,
+    next_x: f32,
+    last_x: f32,
+    advance: f32,
+    following_max_x: f32,
+}
+
+#[derive(Clone)]
+pub struct WrappedRowContinuation {
+    source_key: u128,
+    expected_byte: u64,
+    format: TextFormat,
+    pixels_per_point: f32,
+    wrap_width: f32,
+    break_anywhere: bool,
+    fit_to_summary: bool,
+    metric_identity: Arc<()>,
+    shape: ShapeState,
+    row_start_shape: ShapeState,
+    row_start_byte: u64,
+    row_start_x: f32,
+    first_row_indentation: f32,
+    candidates: [Option<WrappedRowCandidate>; 6],
+    pending: Option<(MetricGlyph, ShapeState)>,
+    row_first_x: Option<f32>,
+    row_max_x: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WrappedRowDescriptor {
+    source_byte_range: std::ops::Range<u64>,
+    row_start_x: f32,
+    width: f32,
+    line_height: f32,
+    row_start_shape: ShapeState,
+    source_key: u128,
+    format: TextFormat,
+    pixels_per_point: f32,
+    metric_identity: Arc<()>,
+}
+
+impl WrappedRowDescriptor {
+    pub fn source_byte_range(&self) -> std::ops::Range<u64> {
+        self.source_byte_range.clone()
+    }
+
+    pub fn row_start_x(&self) -> f32 {
+        self.row_start_x
+    }
+
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    pub fn line_height(&self) -> f32 {
+        self.line_height
+    }
+}
+
+pub struct WrappedRowBatch {
+    pub rows: Vec<WrappedRowDescriptor>,
+    pub consumed_bytes: usize,
+    pub continuation: Option<WrappedRowContinuation>,
+    pub status: WrappedRowStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WrappedRowStatus {
+    NeedMoreInput,
+    Complete,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WrappedRowError {
+    InvalidFormat,
+    ChangedLayoutKey,
+    InputChunkTooLarge,
+    OffsetOverflow,
+    OutputBudgetOutOfRange,
+    NoProgress,
+}
+
+pub(crate) fn replay_wrapped_row_chunk(
+    fonts: &mut FontsImpl,
+    pixels_per_point: f32,
+    descriptor: &WrappedRowDescriptor,
+    chunk_start_byte: u64,
+    chunk: &str,
+    is_final_chunk: bool,
+    continuation: Option<UnwrappedLayoutContinuation>,
+    max_output_glyphs: usize,
+) -> Result<UnwrappedGlyphBatch, UnwrappedLayoutError> {
+    let identity = fonts.layout_identity();
+    let metric_identity = fonts.metric_identity();
+    let chunk_end = chunk_start_byte.saturating_add(chunk.len() as u64);
+    let valid_range = if continuation.is_some() {
+        chunk_start_byte >= descriptor.source_byte_range.start
+            && chunk_end <= descriptor.source_byte_range.end
+    } else {
+        chunk_start_byte == descriptor.source_byte_range.start
+            && chunk_end == descriptor.source_byte_range.end
+    };
+    if pixels_per_point != descriptor.pixels_per_point
+        || !valid_range
+        || !Arc::ptr_eq(&metric_identity, &descriptor.metric_identity)
+    {
+        return Err(UnwrappedLayoutError::ChangedLayoutKey);
+    }
+    let continuation = continuation.or_else(|| {
+        Some(UnwrappedLayoutContinuation {
+            source_key: descriptor.source_key,
+            expected_byte: descriptor.source_byte_range.start,
+            format: descriptor.format.clone(),
+            pixels_per_point,
+            font_identity: identity.clone(),
+            shape: descriptor.row_start_shape,
+            initial_byte: descriptor.source_byte_range.start,
+        })
+    });
+    let mut batch = layout_unwrapped_chunk(
+        fonts,
+        pixels_per_point,
+        identity,
+        descriptor.format.clone(),
+        descriptor.source_key,
+        chunk_start_byte,
+        chunk,
+        is_final_chunk,
+        continuation,
+        max_output_glyphs,
+    )?;
+    for glyph in &mut batch.glyphs {
+        glyph.pos.x -= descriptor.row_start_x;
+    }
+    Ok(batch)
+}
+
+impl std::fmt::Debug for WrappedRowContinuation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WrappedRowContinuation")
+            .finish_non_exhaustive()
+    }
+}
+
 impl std::fmt::Debug for MetricLayoutContinuation {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -505,13 +653,41 @@ fn shape_metric_chars(
     glyphs: &mut Vec<MetricGlyph>,
     max_glyphs: usize,
 ) -> usize {
+    shape_metric_chars_each(
+        font,
+        pixels_per_point,
+        format,
+        source_start_byte,
+        text,
+        line_height,
+        shape,
+        max_glyphs,
+        |glyph, _| {
+            glyphs.push(glyph);
+            true
+        },
+    )
+}
+
+fn shape_metric_chars_each(
+    font: &mut crate::text::font::Font<'_>,
+    pixels_per_point: f32,
+    format: &TextFormat,
+    source_start_byte: u64,
+    text: &str,
+    line_height: f32,
+    shape: &mut ShapeState,
+    max_glyphs: usize,
+    mut sink: impl FnMut(MetricGlyph, ShapeState) -> bool,
+) -> usize {
     let font_size = format.font_id.size;
     let font_metrics = font.styled_metrics(pixels_per_point, font_size, &format.coords);
     let mut current_font = FontFaceKey::INVALID;
     let mut current_font_face_metrics = StyledMetrics::default();
     let mut consumed = 0;
+    let mut emitted = 0;
     for (offset, chr) in text.char_indices() {
-        if glyphs.len() >= max_glyphs {
+        if emitted >= max_glyphs {
             break;
         }
         let (font_id, glyph_info) = font.glyph_info(chr);
@@ -551,7 +727,7 @@ fn shape_metric_chars(
         } else {
             (0.0, 0, Default::default())
         };
-        glyphs.push(MetricGlyph {
+        let glyph = MetricGlyph {
             chr,
             source_byte_range: (source_start_byte + offset as u64)
                 ..(source_start_byte + (offset + chr.len_utf8()) as u64),
@@ -563,11 +739,434 @@ fn shape_metric_chars(
             font_face_ascent: current_font_face_metrics.ascent,
             font_height: font_metrics.row_height,
             font_ascent: font_metrics.ascent,
-        });
+        };
         shape.commit_glyph(advance_width_px, glyph_id);
+        let keep_going = sink(glyph, *shape);
+        emitted += 1;
         consumed = offset + chr.len_utf8();
+        if !keep_going {
+            break;
+        }
     }
     consumed
+}
+
+/// Discover bounded row descriptors for one newline-free, single-format
+/// source chunk. The shaping pen remains continuous across row breaks; only
+/// the row origin and candidate slots change.
+pub(crate) fn layout_wrapped_row_chunk(
+    fonts: &mut FontsImpl,
+    pixels_per_point: f32,
+    metric_identity: Arc<()>,
+    format: TextFormat,
+    source_key: u128,
+    chunk_start_byte: u64,
+    chunk: &str,
+    is_final_chunk: bool,
+    paragraph_span: std::ops::Range<u64>,
+    metric_summary: MetricLayoutSummary,
+    wrap_width: f32,
+    break_anywhere: bool,
+    continuation: Option<WrappedRowContinuation>,
+    max_output_rows: usize,
+) -> Result<WrappedRowBatch, WrappedRowError> {
+    const MAX_CHUNK_BYTES: usize = 96 * 1024;
+    if chunk.len() > MAX_CHUNK_BYTES {
+        return Err(WrappedRowError::InputChunkTooLarge);
+    }
+    let chunk_end = chunk_start_byte
+        .checked_add(chunk.len() as u64)
+        .ok_or(WrappedRowError::OffsetOverflow)?;
+    if !(1..=4096).contains(&max_output_rows)
+        || !pixels_per_point.is_finite()
+        || pixels_per_point <= 0.0
+        || !wrap_width.is_finite()
+        || wrap_width < 0.0
+        || !format.font_id.size.is_finite()
+        || format.font_id.size <= 0.0
+        || !format.extra_letter_spacing.is_finite()
+        || chunk.contains('\n')
+    {
+        return Err(WrappedRowError::InvalidFormat);
+    }
+    metric_summary
+        .validate_for_layout(
+            source_key,
+            paragraph_span.clone(),
+            &format,
+            pixels_per_point,
+            &metric_identity,
+        )
+        .map_err(|_| WrappedRowError::ChangedLayoutKey)?;
+    if continuation.is_none() && chunk_start_byte != paragraph_span.start {
+        return Err(WrappedRowError::ChangedLayoutKey);
+    }
+    let fit_to_summary = metric_summary.precise_width() <= wrap_width;
+    if fit_to_summary {
+        if paragraph_span.start == chunk_start_byte
+            && is_final_chunk
+            && paragraph_span.end == chunk_end
+        {
+            let line_height = format.line_height.unwrap_or_else(|| {
+                fonts
+                    .font(&format.font_id.family)
+                    .styled_metrics(pixels_per_point, format.font_id.size, &format.coords)
+                    .row_height
+            });
+            let rows = vec![WrappedRowDescriptor {
+                source_byte_range: chunk_start_byte..chunk_end,
+                row_start_x: 0.0,
+                width: metric_summary.precise_width(),
+                line_height: PointScale::new(pixels_per_point).round_to_pixel(line_height),
+                row_start_shape: ShapeState::default(),
+                source_key,
+                format,
+                pixels_per_point,
+                metric_identity,
+            }];
+            return Ok(WrappedRowBatch {
+                rows,
+                consumed_bytes: chunk.len(),
+                continuation: None,
+                status: WrappedRowStatus::Complete,
+            });
+        }
+    }
+    let mut state = continuation.unwrap_or_else(|| WrappedRowContinuation {
+        source_key,
+        expected_byte: chunk_start_byte,
+        format: format.clone(),
+        pixels_per_point,
+        wrap_width,
+        break_anywhere,
+        fit_to_summary,
+        metric_identity: Arc::clone(&metric_identity),
+        shape: ShapeState::default(),
+        row_start_shape: ShapeState::default(),
+        row_start_byte: chunk_start_byte,
+        row_start_x: 0.0,
+        first_row_indentation: 0.0,
+        candidates: std::array::from_fn(|_| None),
+        pending: None,
+        row_first_x: None,
+        row_max_x: 0.0,
+    });
+    if state.source_key != source_key
+        || state.expected_byte != chunk_start_byte
+        || state.format != format
+        || state.pixels_per_point != pixels_per_point
+        || state.wrap_width != wrap_width
+        || state.break_anywhere != break_anywhere
+        || state.fit_to_summary != fit_to_summary
+        || !Arc::ptr_eq(&state.metric_identity, &metric_identity)
+    {
+        return Err(WrappedRowError::ChangedLayoutKey);
+    }
+    let line_height = format.line_height.unwrap_or_else(|| {
+        fonts
+            .font(&format.font_id.family)
+            .styled_metrics(pixels_per_point, format.font_id.size, &format.coords)
+            .row_height
+    });
+    let descriptor_line_height = PointScale::new(pixels_per_point).round_to_pixel(line_height);
+    let mut rows = Vec::with_capacity(max_output_rows);
+    let mut pending = state.pending.take();
+    let mut consumed = 0;
+    let mut shape = state.shape;
+    let mut font = fonts.font(&format.font_id.family);
+    shape_metric_chars_each(
+        &mut font,
+        pixels_per_point,
+        &format,
+        chunk_start_byte,
+        chunk,
+        line_height,
+        &mut shape,
+        4096,
+        |glyph, post| {
+            if state.fit_to_summary {
+                consumed = glyph
+                    .source_byte_range
+                    .end
+                    .checked_sub(chunk_start_byte)
+                    .and_then(|bytes| usize::try_from(bytes).ok())
+                    .unwrap_or(0);
+                return true;
+            }
+            let previous_was_pending = pending.is_some();
+            if let Some((previous, previous_post)) = pending.take() {
+                state.shape = previous_post;
+                let can_continue = wrapped_row_consider_glyph(
+                    &mut state,
+                    previous,
+                    Some(&glyph),
+                    post,
+                    pixels_per_point,
+                    wrap_width,
+                    break_anywhere,
+                    descriptor_line_height,
+                    &mut rows,
+                    max_output_rows,
+                );
+                if !can_continue {
+                    pending = Some((glyph, post));
+                    consumed = pending.as_ref().map_or(consumed, |(glyph, _)| {
+                        (glyph.source_byte_range.end - chunk_start_byte) as usize
+                    });
+                    return false;
+                }
+            }
+            pending = Some((glyph, post));
+            consumed = pending.as_ref().map_or(consumed, |(glyph, _)| {
+                (glyph.source_byte_range.end - chunk_start_byte) as usize
+            });
+            !previous_was_pending || rows.len() < max_output_rows
+        },
+    );
+    state.shape = shape;
+    state.pending = pending;
+    if is_final_chunk && state.fit_to_summary {
+        let consumed_end = chunk_start_byte + consumed as u64;
+        if consumed_end == paragraph_span.end
+            && ((state.row_start_byte < consumed_end)
+                || (paragraph_span.is_empty()
+                    && state.row_start_byte == consumed_end
+                    && rows.is_empty()))
+        {
+            rows.push(WrappedRowDescriptor {
+                source_byte_range: paragraph_span.clone(),
+                row_start_x: 0.0,
+                width: metric_summary.precise_width(),
+                line_height: descriptor_line_height,
+                row_start_shape: ShapeState::default(),
+                source_key: state.source_key,
+                format: state.format.clone(),
+                pixels_per_point: state.pixels_per_point,
+                metric_identity: Arc::clone(&state.metric_identity),
+            });
+            state.row_start_byte = consumed_end;
+        }
+    } else if is_final_chunk && rows.len() < max_output_rows {
+        if let Some((glyph, post)) = state.pending.take() {
+            state.shape = post;
+            let final_post = state.shape;
+            wrapped_row_consider_glyph(
+                &mut state,
+                glyph,
+                None,
+                final_post,
+                pixels_per_point,
+                wrap_width,
+                break_anywhere,
+                descriptor_line_height,
+                &mut rows,
+                max_output_rows,
+            );
+        }
+        let consumed_end = chunk_start_byte + consumed as u64;
+        if state.row_start_byte < consumed_end && rows.len() < max_output_rows {
+            rows.push(WrappedRowDescriptor {
+                source_byte_range: state.row_start_byte..consumed_end,
+                row_start_x: state.row_first_x.unwrap_or(state.row_start_x),
+                width: state.row_first_x.map_or(0.0, |first| {
+                    (state.row_max_x - state.row_start_x) - (first - state.row_start_x)
+                }),
+                line_height: descriptor_line_height,
+                row_start_shape: state.row_start_shape,
+                source_key: state.source_key,
+                format: state.format.clone(),
+                pixels_per_point: state.pixels_per_point,
+                metric_identity: Arc::clone(&state.metric_identity),
+            });
+            state.row_start_byte = consumed_end;
+        }
+    }
+    state.expected_byte = chunk_start_byte + consumed as u64;
+    let consumed_end = chunk_start_byte + consumed as u64;
+    // A final pending glyph can be consumed while sealing the last row and
+    // fill the output budget at the same time. In that case `pending` is
+    // empty, but the row beginning at `row_start_byte` still has to be
+    // emitted on a subsequent empty final drain. Keep the continuation alive
+    // until that residual row has a budget slot.
+    let residual_row = state.row_start_byte < consumed_end;
+    let blocked_by_output_budget =
+        rows.len() >= max_output_rows && (state.pending.is_some() || residual_row);
+    let complete = is_final_chunk && consumed == chunk.len() && !blocked_by_output_budget;
+    if !chunk.is_empty() && consumed == 0 {
+        return Err(WrappedRowError::NoProgress);
+    }
+    Ok(WrappedRowBatch {
+        rows,
+        consumed_bytes: consumed,
+        continuation: (!complete).then_some(state),
+        status: if complete {
+            WrappedRowStatus::Complete
+        } else {
+            WrappedRowStatus::NeedMoreInput
+        },
+    })
+}
+
+fn wrapped_row_consider_glyph(
+    state: &mut WrappedRowContinuation,
+    glyph: MetricGlyph,
+    next: Option<&MetricGlyph>,
+    post: ShapeState,
+    pixels_per_point: f32,
+    wrap_width: f32,
+    break_anywhere: bool,
+    line_height: f32,
+    rows: &mut Vec<WrappedRowDescriptor>,
+    max_output_rows: usize,
+) -> bool {
+    let potential = glyph.logical_x + glyph.advance_width - state.row_start_x;
+    let glyph_max_x = glyph.logical_x + glyph.advance_width;
+    // Every live candidate also needs the extent of the suffix which would
+    // become the next row if that candidate is selected.  This is constant
+    // storage (six slots), and is necessary when an older candidate is chosen
+    // after several already-seen glyphs.
+    for candidate in &mut state.candidates {
+        if let Some(candidate) = candidate {
+            candidate.following_max_x = glyph_max_x;
+        }
+    }
+    if state.row_first_x.is_none() {
+        state.row_first_x = Some(glyph.logical_x);
+    }
+    // The ordinary oracle uses the last glyph's max_x for row size (rather
+    // than a geometric maximum), which matters when spacing is negative.
+    state.row_max_x = glyph_max_x;
+    if wrap_width < potential {
+        if state.first_row_indentation > 0.0 && !wrapped_has_good_candidate(state, break_anywhere) {
+            if rows.len() >= max_output_rows {
+                return false;
+            }
+            rows.push(WrappedRowDescriptor {
+                source_byte_range: state.row_start_byte..state.row_start_byte,
+                row_start_x: 0.0,
+                width: 0.0,
+                line_height,
+                row_start_shape: state.row_start_shape,
+                source_key: state.source_key,
+                format: state.format.clone(),
+                pixels_per_point: state.pixels_per_point,
+                metric_identity: Arc::clone(&state.metric_identity),
+            });
+            state.row_start_x += state.first_row_indentation;
+            state.first_row_indentation = 0.0;
+        } else if let Some(candidate) = wrapped_take_candidate(state, break_anywhere) {
+            if rows.len() >= max_output_rows {
+                return false;
+            }
+            rows.push(WrappedRowDescriptor {
+                source_byte_range: state.row_start_byte..candidate.end_byte,
+                row_start_x: state.row_start_x,
+                width: (candidate.last_x - state.row_start_x) + candidate.advance,
+                line_height,
+                row_start_shape: state.row_start_shape,
+                source_key: state.source_key,
+                format: state.format.clone(),
+                pixels_per_point: state.pixels_per_point,
+                metric_identity: Arc::clone(&state.metric_identity),
+            });
+            state.row_start_byte = candidate.end_byte;
+            state.row_start_x = candidate.next_x;
+            state.row_start_shape = candidate.post;
+            // The current glyph is the first glyph considered after the
+            // break only in the common case where the selected candidate is
+            // immediately before it.  A candidate may be older (for example
+            // after an overrun), so retain the candidate's exact next-glyph
+            // origin instead of allowing the overrun glyph to redefine it.
+            state.row_first_x = Some(candidate.next_x);
+            state.row_max_x = candidate.following_max_x;
+            wrapped_forget_candidates(state);
+        }
+    }
+    let candidate_post = state.shape;
+    wrapped_add_candidate(state, &glyph, next, pixels_per_point, candidate_post);
+    state.shape = post;
+    true
+}
+
+fn wrapped_has_good_candidate(state: &WrappedRowContinuation, break_anywhere: bool) -> bool {
+    if break_anywhere {
+        state.candidates[5].is_some()
+    } else {
+        state.candidates[0].is_some()
+            || state.candidates[1].is_some()
+            || state.candidates[2].is_some()
+    }
+}
+
+fn wrapped_take_candidate(
+    state: &mut WrappedRowContinuation,
+    break_anywhere: bool,
+) -> Option<WrappedRowCandidate> {
+    let indices = if break_anywhere { [5, 5, 5] } else { [0, 1, 2] };
+    let mut best = None;
+    for index in indices {
+        if let Some(candidate) = state.candidates[index].clone() {
+            if best
+                .as_ref()
+                .is_none_or(|current: &WrappedRowCandidate| candidate.end_byte > current.end_byte)
+            {
+                best = Some(candidate);
+            }
+        }
+    }
+    if break_anywhere {
+        best
+    } else {
+        best.or_else(|| {
+            [3, 4, 5]
+                .into_iter()
+                .find_map(|index| state.candidates[index].clone())
+        })
+    }
+}
+
+fn wrapped_forget_candidates(state: &mut WrappedRowContinuation) {
+    for candidate in &mut state.candidates {
+        if candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.end_byte <= state.row_start_byte)
+        {
+            *candidate = None;
+        }
+    }
+}
+
+fn wrapped_add_candidate(
+    state: &mut WrappedRowContinuation,
+    glyph: &MetricGlyph,
+    next: Option<&MetricGlyph>,
+    _pixels_per_point: f32,
+    post: ShapeState,
+) {
+    let index = if glyph.chr.is_whitespace() && glyph.chr != '\u{A0}' {
+        Some(0)
+    } else if is_cjk(glyph.chr) && (next.is_none() || is_cjk_break_allowed(next.unwrap().chr)) {
+        Some(1)
+    } else if glyph.chr == '-' {
+        Some(3)
+    } else if glyph.chr.is_ascii_punctuation() {
+        Some(4)
+    } else if next.is_some_and(|next| is_cjk(next.chr)) {
+        Some(2)
+    } else {
+        None
+    };
+    state.candidates[5] = Some(WrappedRowCandidate {
+        end_byte: glyph.source_byte_range.end,
+        post,
+        next_x: next.map_or(glyph.logical_x + glyph.advance_width, |next| next.logical_x),
+        last_x: glyph.logical_x,
+        advance: glyph.advance_width,
+        following_max_x: glyph.logical_x + glyph.advance_width,
+    });
+    if let Some(index) = index {
+        state.candidates[index] = state.candidates[5].clone();
+    }
 }
 
 /// Shape one bounded, newline-free, single-format chunk while preserving the
@@ -3006,5 +3605,735 @@ mod tests {
         assert_eq!(empty.status, MetricLayoutStatus::Complete);
         assert!(empty.glyphs.is_empty());
         assert_eq!(empty.summary.unwrap().byte_span(), 0..0);
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_row_descriptors_replay_against_full_layout() {
+        let text = "alpha beta gamma delta";
+        let format = TextFormat::default();
+        let mut baseline_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let mut job = LayoutJob::single_section(text.to_owned(), format.clone());
+        job.wrap.max_width = 45.0;
+        job.round_output_to_gui = false;
+        let baseline = layout(&mut baseline_fonts, 1.0, Arc::new(job));
+
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let metric_summary = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(format.clone(), 905, 0, text, true, None, 4096)
+                .expect("wrapped metric summary")
+                .summary
+                .expect("complete wrapped metric summary")
+        };
+        let batch = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_wrapped_row_chunk(
+                format.clone(),
+                905,
+                0,
+                text,
+                true,
+                0..text.len() as u64,
+                metric_summary,
+                45.0,
+                false,
+                None,
+                64,
+            )
+            .expect("wrapped descriptor scan")
+        };
+        assert_eq!(batch.status, WrappedRowStatus::Complete);
+        assert!(!batch.rows.is_empty());
+        assert_eq!(batch.rows.len(), baseline.rows.len());
+        let mut covered = 0u64..0u64;
+        let mut replayed = 0;
+        for (descriptor, baseline_row) in batch.rows.iter().zip(&baseline.rows) {
+            let range = descriptor.source_byte_range.clone();
+            covered.end = range.end;
+            let glyphs = {
+                let mut view = owner.with_pixels_per_point(1.0);
+                view.replay_wrapped_row_chunk(
+                    descriptor,
+                    range.start,
+                    &text[range.start as usize..range.end as usize],
+                    true,
+                    None,
+                    4096,
+                )
+                .expect("wrapped descriptor replay")
+            };
+            assert_eq!(glyphs.glyphs.len(), baseline_row.glyphs.len());
+            for (glyph_index, (actual, expected)) in
+                glyphs.glyphs.iter().zip(&baseline_row.glyphs).enumerate()
+            {
+                assert_eq!(actual.chr, expected.chr);
+                assert_eq!(
+                    actual.pos.x.to_bits(),
+                    expected.pos.x.to_bits(),
+                    "row range {:?}, glyph {glyph_index} {:?}: actual x={} expected x={}",
+                    range,
+                    actual.chr,
+                    actual.pos.x,
+                    expected.pos.x
+                );
+                assert_eq!(
+                    actual.advance_width.to_bits(),
+                    expected.advance_width.to_bits(),
+                    "row range {:?}, glyph {glyph_index} {:?}: actual advance={} expected advance={}",
+                    range,
+                    actual.chr,
+                    actual.advance_width,
+                    expected.advance_width
+                );
+            }
+            replayed += glyphs.glyphs.len();
+        }
+        assert_eq!(covered, 0..text.len() as u64);
+        assert_eq!(
+            replayed,
+            baseline.rows.iter().map(|row| row.glyphs.len()).sum()
+        );
+    }
+
+    fn wrapped_scan_for_test(
+        text: &str,
+        wrap_width: f32,
+        break_anywhere: bool,
+        chunk_bytes: usize,
+        row_budget: usize,
+    ) -> (Fonts, Vec<WrappedRowDescriptor>) {
+        let format = TextFormat::default();
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let key = 0x9e37_u128;
+        let mut metric_continuation = None;
+        let mut metric_summary = None;
+        let mut offset = 0usize;
+        while offset < text.len() || (text.is_empty() && metric_summary.is_none()) {
+            let mut end = (offset + chunk_bytes.min(96 * 1024)).min(text.len());
+            while end > offset && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            let final_chunk = end == text.len();
+            let chunk = &text[offset..end];
+            let batch = owner
+                .with_pixels_per_point(1.0)
+                .layout_unwrapped_metrics_chunk(
+                    format.clone(),
+                    key,
+                    offset as u64,
+                    chunk,
+                    final_chunk,
+                    metric_continuation,
+                    4096,
+                )
+                .expect("metric seam");
+            let consumed = batch.consumed_bytes;
+            metric_continuation = batch.continuation;
+            metric_summary = batch.summary;
+            assert!(chunk.is_empty() || consumed == chunk.len());
+            offset += consumed;
+            if chunk.is_empty() {
+                break;
+            }
+        }
+        let summary = metric_summary.expect("complete metric summary");
+        let mut rows = Vec::new();
+        let mut continuation = None;
+        let mut offset = 0usize;
+        let mut drain_rounds = 0usize;
+        while offset < text.len()
+            || continuation.is_some()
+            || (text.is_empty() && continuation.is_none())
+        {
+            let mut end = (offset + chunk_bytes.min(96 * 1024)).min(text.len());
+            while end > offset && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            let final_chunk = end == text.len();
+            let chunk = &text[offset..end];
+            let batch = owner
+                .with_pixels_per_point(1.0)
+                .layout_wrapped_row_chunk(
+                    format.clone(),
+                    key,
+                    offset as u64,
+                    chunk,
+                    final_chunk,
+                    0..text.len() as u64,
+                    summary.clone(),
+                    wrap_width,
+                    break_anywhere,
+                    continuation,
+                    row_budget,
+                )
+                .expect("wrapped seam");
+            let consumed = batch.consumed_bytes;
+            rows.extend(batch.rows);
+            continuation = batch.continuation;
+            assert!(
+                chunk.is_empty() || consumed > 0,
+                "wrapped seam made no progress"
+            );
+            offset += consumed;
+            drain_rounds += 1;
+            assert!(drain_rounds < 1_000_000, "wrapped drain made no progress");
+            if chunk.is_empty() {
+                if continuation.is_none() {
+                    break;
+                }
+            }
+        }
+        assert!(continuation.is_none(), "wrapped scan did not complete");
+        (owner, rows)
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_match_oracle_at_utf8_seams_and_row_budget() {
+        let text = "one deux 三四 five—six punctuation, tail";
+        let (mut owner, rows) = wrapped_scan_for_test(text, 42.0, false, 5, 1);
+        let format = TextFormat::default();
+        let mut baseline_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let mut job = LayoutJob::single_section(text.to_owned(), format.clone());
+        job.wrap.max_width = 42.0;
+        job.round_output_to_gui = false;
+        let baseline = layout(&mut baseline_fonts, 1.0, Arc::new(job));
+        assert_eq!(rows.len(), baseline.rows.len());
+        for (descriptor, expected) in rows.iter().zip(&baseline.rows) {
+            let range = descriptor.source_byte_range();
+            let actual = owner
+                .with_pixels_per_point(1.0)
+                .replay_wrapped_row_chunk(
+                    descriptor,
+                    range.start,
+                    &text[range.start as usize..range.end as usize],
+                    true,
+                    None,
+                    4096,
+                )
+                .expect("row replay");
+            assert_eq!(actual.glyphs.len(), expected.glyphs.len());
+            for (actual, expected) in actual.glyphs.iter().zip(&expected.glyphs) {
+                assert_eq!(actual.chr, expected.chr);
+                assert_eq!(actual.pos.x.to_bits(), expected.pos.x.to_bits());
+                assert_eq!(
+                    actual.advance_width.to_bits(),
+                    expected.advance_width.to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_cover_candidate_classes_and_cjk_lookahead() {
+        let text = "word word-word, next 界界界 日本語 end";
+        let (_, rows) = wrapped_scan_for_test(text, 35.0, false, 3, 2);
+        let mut baseline_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let mut job = LayoutJob::single_section(text.to_owned(), TextFormat::default());
+        job.wrap.max_width = 35.0;
+        job.round_output_to_gui = false;
+        let baseline = layout(&mut baseline_fonts, 1.0, Arc::new(job));
+        assert_eq!(rows.len(), baseline.rows.len());
+        assert!(rows.len() > 2);
+        assert_eq!(rows.first().unwrap().source_byte_range().start, 0);
+        assert_eq!(
+            rows.last().unwrap().source_byte_range().end,
+            text.len() as u64
+        );
+        for (descriptor, expected) in rows.iter().zip(&baseline.rows) {
+            assert_eq!(descriptor.width().to_bits(), expected.row.size.x.to_bits());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_preserve_negative_spacing_and_precise_fit_fastpath() {
+        let mut format = TextFormat::default();
+        format.extra_letter_spacing = -2.0;
+        let text = "negative spacing still fits";
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let summary = owner
+            .with_pixels_per_point(1.0)
+            .layout_unwrapped_metrics_chunk(format.clone(), 77, 0, text, true, None, 4096)
+            .expect("metric summary")
+            .summary
+            .expect("complete summary");
+        let batch = owner
+            .with_pixels_per_point(1.0)
+            .layout_wrapped_row_chunk(
+                format,
+                77,
+                0,
+                text,
+                true,
+                0..text.len() as u64,
+                summary.clone(),
+                summary.precise_width() + 1.0,
+                false,
+                None,
+                1,
+            )
+            .expect("fit row");
+        assert_eq!(batch.status, WrappedRowStatus::Complete);
+        assert_eq!(batch.rows.len(), 1);
+        assert_eq!(
+            batch.rows[0].width().to_bits(),
+            summary.precise_width().to_bits()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_empty_paragraph_emits_one_row_across_final_drain() {
+        let format = TextFormat::default();
+        let mut baseline_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let mut job = LayoutJob::single_section(String::new(), format.clone());
+        job.wrap.max_width = 100.0;
+        job.round_output_to_gui = false;
+        let baseline = layout(&mut baseline_fonts, 1.0, Arc::new(job));
+        assert_eq!(baseline.rows.len(), 1);
+        assert!(baseline.rows[0].glyphs.is_empty());
+
+        let (mut owner, rows) = wrapped_scan_for_test("", 100.0, false, 1, 1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source_byte_range(), 0..0);
+        assert_eq!(
+            rows[0].width().to_bits(),
+            baseline.rows[0].row.size.x.to_bits()
+        );
+        assert_eq!(
+            rows[0].line_height().to_bits(),
+            baseline.rows[0].row.size.y.to_bits()
+        );
+        let replay = owner
+            .with_pixels_per_point(1.0)
+            .replay_wrapped_row_chunk(&rows[0], 0, "", true, None, 1)
+            .expect("empty row replay");
+        assert!(replay.glyphs.is_empty());
+
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let summary = owner
+            .with_pixels_per_point(1.0)
+            .layout_unwrapped_metrics_chunk(format.clone(), 906, 0, "", true, None, 4096)
+            .expect("empty metric summary")
+            .summary
+            .expect("empty summary");
+        let first = owner
+            .with_pixels_per_point(1.0)
+            .layout_wrapped_row_chunk(
+                format.clone(),
+                906,
+                0,
+                "",
+                false,
+                0..0,
+                summary.clone(),
+                100.0,
+                false,
+                None,
+                1,
+            )
+            .expect("empty non-final chunk");
+        assert!(first.rows.is_empty());
+        let second = owner
+            .with_pixels_per_point(1.0)
+            .layout_wrapped_row_chunk(
+                format,
+                906,
+                0,
+                "",
+                true,
+                0..0,
+                summary,
+                100.0,
+                false,
+                first.continuation,
+                1,
+            )
+            .expect("empty final drain");
+        assert_eq!(second.status, WrappedRowStatus::Complete);
+        assert_eq!(second.rows.len(), 1);
+        assert_eq!(second.rows[0].source_byte_range(), 0..0);
+
+        let (_, nonempty_rows) = wrapped_scan_for_test("x", 100.0, false, 1, 1);
+        assert_eq!(
+            nonempty_rows.len(),
+            1,
+            "non-empty final must not gain an empty row"
+        );
+        assert_eq!(nonempty_rows[0].source_byte_range(), 0..1);
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_empty_row_rounds_explicit_line_height_at_scale() {
+        let pixels_per_point = 1.25;
+        let format = TextFormat {
+            line_height: Some(17.13),
+            ..TextFormat::default()
+        };
+        let mut baseline_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let mut job = LayoutJob::single_section(String::new(), format.clone());
+        job.wrap.max_width = 100.0;
+        job.round_output_to_gui = false;
+        let baseline = layout(&mut baseline_fonts, pixels_per_point, Arc::new(job));
+        let expected_height = baseline.rows[0].row.size.y;
+
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let summary = owner
+            .with_pixels_per_point(pixels_per_point)
+            .layout_unwrapped_metrics_chunk(format.clone(), 907, 0, "", true, None, 4096)
+            .expect("scaled empty metric summary")
+            .summary
+            .expect("scaled empty summary");
+        let batch = owner
+            .with_pixels_per_point(pixels_per_point)
+            .layout_wrapped_row_chunk(
+                format,
+                907,
+                0,
+                "",
+                true,
+                0..0,
+                summary,
+                100.0,
+                false,
+                None,
+                1,
+            )
+            .expect("scaled empty row");
+        assert_eq!(batch.status, WrappedRowStatus::Complete);
+        assert_eq!(batch.rows.len(), 1);
+        assert_eq!(
+            batch.rows[0].line_height().to_bits(),
+            expected_height.to_bits()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_nonempty_row_rounds_line_height_like_oracle() {
+        for pixels_per_point in [1.25, 1.5] {
+            for line_height in [None, Some(17.13)] {
+                let format = TextFormat {
+                    line_height,
+                    ..TextFormat::default()
+                };
+                let mut baseline_fonts =
+                    FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+                let mut job = LayoutJob::single_section("A".to_owned(), format.clone());
+                job.wrap.max_width = 100.0;
+                job.round_output_to_gui = false;
+                let baseline = layout(&mut baseline_fonts, pixels_per_point, Arc::new(job));
+
+                let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+                let summary = owner
+                    .with_pixels_per_point(pixels_per_point)
+                    .layout_unwrapped_metrics_chunk(format.clone(), 908, 0, "A", true, None, 4096)
+                    .expect("nonempty metric summary")
+                    .summary
+                    .expect("nonempty summary");
+                let batch = owner
+                    .with_pixels_per_point(pixels_per_point)
+                    .layout_wrapped_row_chunk(
+                        format,
+                        908,
+                        0,
+                        "A",
+                        true,
+                        0..1,
+                        summary,
+                        100.0,
+                        false,
+                        None,
+                        1,
+                    )
+                    .expect("nonempty row");
+                assert_eq!(batch.rows.len(), 1);
+                assert_eq!(
+                    batch.rows[0].line_height().to_bits(),
+                    baseline.rows[0].row.size.y.to_bits(),
+                    "pixels_per_point={pixels_per_point}, line_height={line_height:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_reject_changed_source_format_scale_and_wrap_identity() {
+        let text = "identity checks across wrapped descriptors";
+        let format = TextFormat::default();
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let summary = owner
+            .with_pixels_per_point(1.0)
+            .layout_unwrapped_metrics_chunk(format.clone(), 99, 0, text, true, None, 4096)
+            .expect("metric summary")
+            .summary
+            .expect("complete summary");
+        let wrong_format = TextFormat {
+            extra_letter_spacing: 1.0,
+            ..format.clone()
+        };
+        let wrong_format_result = owner.with_pixels_per_point(1.0).layout_wrapped_row_chunk(
+            wrong_format,
+            99,
+            0,
+            text,
+            true,
+            0..text.len() as u64,
+            summary.clone(),
+            30.0,
+            false,
+            None,
+            4,
+        );
+        assert!(matches!(
+            wrong_format_result,
+            Err(WrappedRowError::ChangedLayoutKey)
+        ));
+        let wrong_source_result = owner.with_pixels_per_point(1.0).layout_wrapped_row_chunk(
+            format.clone(),
+            100,
+            0,
+            text,
+            true,
+            0..text.len() as u64,
+            summary.clone(),
+            30.0,
+            false,
+            None,
+            4,
+        );
+        assert!(matches!(
+            wrong_source_result,
+            Err(WrappedRowError::ChangedLayoutKey)
+        ));
+        let wrong_scale_result = owner.with_pixels_per_point(2.0).layout_wrapped_row_chunk(
+            format.clone(),
+            99,
+            0,
+            text,
+            true,
+            0..text.len() as u64,
+            summary.clone(),
+            30.0,
+            false,
+            None,
+            4,
+        );
+        assert!(matches!(
+            wrong_scale_result,
+            Err(WrappedRowError::ChangedLayoutKey)
+        ));
+        let mut other_options = TextOptions::default();
+        other_options.max_texture_side = 1024;
+        let mut other_owner = Fonts::new(other_options, FontDefinitions::default());
+        let wrong_options_result = other_owner
+            .with_pixels_per_point(1.0)
+            .layout_wrapped_row_chunk(
+                format.clone(),
+                99,
+                0,
+                text,
+                true,
+                0..text.len() as u64,
+                summary.clone(),
+                30.0,
+                false,
+                None,
+                4,
+            );
+        assert!(matches!(
+            wrong_options_result,
+            Err(WrappedRowError::ChangedLayoutKey)
+        ));
+        let valid = owner
+            .with_pixels_per_point(1.0)
+            .layout_wrapped_row_chunk(
+                format,
+                99,
+                0,
+                text,
+                true,
+                0..text.len() as u64,
+                summary,
+                30.0,
+                false,
+                None,
+                4,
+            )
+            .expect("descriptor");
+        assert!(!valid.rows.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_stream_large_unbreakable_source_without_row_loss() {
+        let text = "x".repeat(5 * 1024 * 1024 + 17);
+        let (_, rows) = wrapped_scan_for_test(&text, 100_000_000.0, false, 4096, 4096);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source_byte_range(), 0..text.len() as u64);
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_large_glyph_budget_one_drains_final_pending_row() {
+        let text = "x".repeat(8193);
+        let (_, rows) = wrapped_scan_for_test(&text, 0.0, false, 4096, 1);
+        let mut baseline_fonts = FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+        let mut job = LayoutJob::single_section(text.clone(), TextFormat::default());
+        job.wrap.max_width = 0.0;
+        job.round_output_to_gui = false;
+        let baseline = layout(&mut baseline_fonts, 1.0, Arc::new(job));
+        assert_eq!(rows.len(), baseline.rows.len());
+        let mut next = 0u64;
+        for (descriptor, expected) in rows.iter().zip(&baseline.rows) {
+            let range = descriptor.source_byte_range();
+            assert_eq!(range.start, next);
+            assert_eq!(range.end - range.start, expected.glyphs.len() as u64);
+            assert_eq!(descriptor.width().to_bits(), expected.row.size.x.to_bits());
+            next = range.end;
+        }
+        assert_eq!(next, text.len() as u64);
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_budget_one_preserves_exact_final_boundaries() {
+        for length in [1usize, 2, 4095, 4096, 4097, 8193] {
+            let text = "x".repeat(length);
+            let chunk_bytes = if length <= 2 { 1 } else { 4096 };
+            let (mut owner, rows) = wrapped_scan_for_test(&text, 0.0, false, chunk_bytes, 1);
+            let mut baseline_fonts =
+                FontsImpl::new(TextOptions::default(), FontDefinitions::default());
+            let mut job = LayoutJob::single_section(text.clone(), TextFormat::default());
+            job.wrap.max_width = 0.0;
+            job.round_output_to_gui = false;
+            let baseline = layout(&mut baseline_fonts, 1.0, Arc::new(job));
+            assert_eq!(rows.len(), baseline.rows.len(), "length {length}");
+            for (descriptor, expected) in rows.iter().zip(&baseline.rows) {
+                let range = descriptor.source_byte_range();
+                assert_eq!(descriptor.width().to_bits(), expected.row.size.x.to_bits());
+                let replay = owner
+                    .with_pixels_per_point(1.0)
+                    .replay_wrapped_row_chunk(
+                        descriptor,
+                        range.start,
+                        &text[range.start as usize..range.end as usize],
+                        true,
+                        None,
+                        4096,
+                    )
+                    .expect("exact-boundary row replay");
+                assert_eq!(replay.glyphs.len(), expected.glyphs.len());
+                for (actual, expected) in replay.glyphs.iter().zip(&expected.glyphs) {
+                    assert_eq!(actual.pos.x.to_bits(), expected.pos.x.to_bits());
+                    assert_eq!(
+                        actual.advance_width.to_bits(),
+                        expected.advance_width.to_bits()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_replay_restarts_after_atlas_only_reset() {
+        let options = TextOptions {
+            max_texture_side: 1024,
+            ..TextOptions::default()
+        };
+        let format = TextFormat::default();
+        let text = "atlas reset replay";
+        let mut owner = Fonts::new(options, FontDefinitions::default());
+        let summary = owner
+            .with_pixels_per_point(1.0)
+            .layout_unwrapped_metrics_chunk(format.clone(), 88, 0, text, true, None, 4096)
+            .expect("metric summary")
+            .summary
+            .expect("complete summary");
+        let descriptor = owner
+            .with_pixels_per_point(1.0)
+            .layout_wrapped_row_chunk(
+                format.clone(),
+                88,
+                0,
+                text,
+                true,
+                0..text.len() as u64,
+                summary,
+                1000.0,
+                false,
+                None,
+                1,
+            )
+            .expect("descriptor")
+            .rows
+            .pop()
+            .expect("row descriptor");
+
+        let fill = {
+            let mut font = owner.fonts.font(&FontFamily::Monospace);
+            font.characters().keys().copied().collect::<String>()
+        };
+        let first_batch = owner
+            .with_pixels_per_point(1.0)
+            .replay_wrapped_row_chunk(
+                &descriptor,
+                descriptor.source_byte_range().start,
+                text,
+                true,
+                None,
+                1,
+            )
+            .expect("initial bounded replay");
+        let stale_continuation = first_batch.continuation.expect("pending UV batch");
+        let stale_start = descriptor.source_byte_range().start + first_batch.consumed_bytes as u64;
+        let mut fill_view = owner.with_pixels_per_point(1.0);
+        fill_view.layout(
+            fill,
+            FontId::monospace(100.0),
+            crate::Color32::WHITE,
+            f32::INFINITY,
+        );
+        assert!(owner.font_atlas_fill_ratio() > 0.8);
+        owner.begin_pass(options);
+
+        let range = descriptor.source_byte_range();
+        let stale_replay = owner.with_pixels_per_point(1.0).replay_wrapped_row_chunk(
+            &descriptor,
+            stale_start,
+            &text[stale_start as usize..range.end as usize],
+            true,
+            Some(stale_continuation),
+            1,
+        );
+        assert!(matches!(
+            stale_replay,
+            Err(UnwrappedLayoutError::ChangedLayoutKey)
+        ));
+        let replay = owner
+            .with_pixels_per_point(1.0)
+            .replay_wrapped_row_chunk(
+                &descriptor,
+                range.start,
+                &text[range.start as usize..range.end as usize],
+                true,
+                None,
+                4096,
+            )
+            .expect("descriptor replay after atlas reset");
+        assert_eq!(
+            replay
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.chr)
+                .collect::<String>(),
+            text
+        );
     }
 }

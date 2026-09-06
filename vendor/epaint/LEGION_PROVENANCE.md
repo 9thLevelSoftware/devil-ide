@@ -30,8 +30,9 @@ archive:
   `5c0c11c053e362af2aadc3d788c6c2aa1662ee217c01f3ea115f7f00f9824361`.
 * `src/text/text_layout.rs` — adds bounded continuation state, glyph-free
   checkpoint cloning, completed-pass precise summaries, atlas-independent
-  metric descriptors, shared shaping arithmetic, validation, and regression
-  tests. SHA-256: `64d92452e4c71545508fe28630f75827f28d8128091de3d84b9f2217b843f1df`.
+  metric and wrapped-row descriptors, shared shaping arithmetic, validation,
+  and regression tests. SHA-256:
+  `042f737d4aa44255300771ff9371ba7645d88939c82c6b5e5e7c2cd403e16182`.
 * `src/text/font.rs` — factors atlas-independent glyph metrics and preserves
   resolved ID/advance with empty UVs when rasterization fails. SHA-256:
   `b308014c5c15d1196d3ca1dafc57847e22acb55188ca0413ce9f90804a43f151`.
@@ -52,15 +53,20 @@ Using the bundled Python runtime at
 `C:\Users\dasbl\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`,
 the archive member inventory and hashes above were compared against this
 directory. The earlier standalone command passed 45 tests and remains
-historical evidence. The current metric-scan standalone command
+historical evidence. The current standalone wrapped-row run passed 61 tests
+with zero failures; its raw output and exit code are retained in
+`s1-04l-wrapped-root-r15.log`. The standalone vendor check passed with exit
+code zero; its raw output is retained in `s1-04l-wrapped-check-root.log`.
+A historical metric-scan standalone command
 `cargo test --manifest-path vendor/epaint/Cargo.toml --lib` passed: 49 passed,
 0 failed; its raw output and exit code are retained in
-`s1-04k-metric-scan-final.log`. The current metric source hash is
+`s1-04k-metric-scan-final.log`. The source hash recorded with that historical
+metric evidence was
 `src/text/text_layout.rs` SHA-256
-`64d92452e4c71545508fe28630f75827f28d8128091de3d84b9f2217b843f1df`. The
-matching standalone `cargo check --manifest-path vendor/epaint/Cargo.toml
---lib` also passed. This is source-level vendor evidence only; it does not
-qualify huge wrapped-line continuation or full product readiness.
+`0bfcd138132798332b59de0e4f5b25cc7248726e647e1f424e5c50650e5a8378`. The
+current wrapped-row source has subsequent source-only changes after that
+historical metric run. This is source-level vendor evidence only and does not
+qualify full product readiness.
 
 The earlier 40-test vendor run remains historical evidence in
 `s1-04h-vendor-fix-tests.log`.
