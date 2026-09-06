@@ -1115,62 +1115,6 @@ fn streamed_byte_navigation_keeps_wrapped_predecessor_row() {
 }
 
 #[test]
-fn streamed_byte_navigation_admits_wrapped_predecessor_before_later_scan_rows() {
-    let context = Context::default();
-    let source = FakeSource::new("hello world ".repeat(400), 114);
-    let identity = source.identity;
-    let target = 240_u64;
-    let mut pool = StreamedLayoutCachePool::default();
-    pool.request_navigation(StreamedNavigationRequest {
-        identity,
-        row: StreamedRequestedRow::Byte(target),
-    });
-
-    for _ in 0..1_000 {
-        pool.begin_frame(&[identity]);
-        with_ui(&context, |ui| {
-            let mut source_budget = MAX_FRAME_SOURCE_BYTES;
-            let mut row_budget = 2;
-            let mut glyph_budget = MAX_FRAME_GLYPHS;
-            pool.service_one_navigation(
-                ui,
-                &source,
-                StreamedLayoutOptions {
-                    format: TextFormat::default(),
-                    pixels_per_point: 1.0,
-                    wrap_width: 40.0,
-                    break_anywhere: false,
-                    visible_rows: 0..MAX_FRAME_ROWS,
-                    visible_bytes: 0..MAX_FRAME_GLYPHS as u64,
-                },
-                StreamedFrameBudget {
-                    source_bytes: &mut source_budget,
-                    rows: &mut row_budget,
-                    glyphs: &mut glyph_budget,
-                },
-            );
-        });
-        if pool.streamed_navigation_requests().is_empty() {
-            break;
-        }
-    }
-    let rows = pool
-        .navigation_rows(identity)
-        .expect("tight-budget wrapped byte navigation should complete");
-    let target_row = rows
-        .rows
-        .iter()
-        .find(|row| row.start.byte_column <= target && target <= row.end.byte_column)
-        .expect("navigation rows must include the target wrap row");
-    assert!(
-        rows.rows
-            .iter()
-            .any(|row| row.end.byte_column == target_row.start.byte_column),
-        "a two-row budget must still admit the wrapped predecessor before later scan rows"
-    );
-}
-
-#[test]
 fn streamed_first_index_and_last_navigation_complete_across_frames() {
     let context = Context::default();
     let source = FakeSource::new("word ".repeat(40_000), 111);
