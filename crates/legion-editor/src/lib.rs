@@ -5,7 +5,7 @@
 pub mod diff;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use legion_observability::{NoopEventSink, transaction_event};
 use legion_protocol::{
@@ -537,6 +537,67 @@ struct SaveSnapshotPayload {
 struct SnapshotLeaseRecord {
     snapshot: legion_text::TextSnapshot,
     descriptor: SnapshotLeaseDescriptor,
+    owned_state: Option<Arc<Mutex<Option<legion_text::TextSnapshot>>>>,
+}
+
+/// Maximum UTF-8 bytes returned by one worker-owned snapshot line read.
+pub const MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES: usize = 96 * 1024;
+
+/// An immutable, revocable snapshot lease that can cross to a background worker.
+///
+/// The snapshot is intentionally private: callers can request only bounded line chunks. All
+/// clones share revocation state, so releasing the originating editor lease invalidates every
+/// worker clone without retaining an unbounded text representation.
+#[derive(Debug, Clone)]
+pub struct OwnedSnapshotLease {
+    descriptor: SnapshotLeaseDescriptor,
+    snapshot: Arc<Mutex<Option<legion_text::TextSnapshot>>>,
+}
+
+impl OwnedSnapshotLease {
+    /// Return the descriptor bound to this immutable snapshot.
+    pub fn descriptor(&self) -> &SnapshotLeaseDescriptor {
+        &self.descriptor
+    }
+
+    /// Read one bounded logical-line chunk without borrowing the editor or app owner.
+    pub fn read_line_chunk(
+        &self,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> Result<SnapshotLeaseLineChunk, EditorError> {
+        let now = TimestampMillis::now();
+        if now.0 > self.descriptor.expires_at.0 {
+            if let Ok(mut snapshot) = self.snapshot.lock() {
+                *snapshot = None;
+            }
+            return Err(EditorError::SnapshotLeaseExpired {
+                lease_id: self.descriptor.lease_id,
+                expired_at: self.descriptor.expires_at,
+                now,
+            });
+        }
+        if max_bytes == 0 || max_bytes > MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES {
+            return Err(EditorError::Text(TextError::InvalidWindowBudget {
+                requested: max_bytes,
+                maximum: MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES,
+            }));
+        }
+        let snapshot = self
+            .snapshot
+            .lock()
+            .map_err(|_| EditorError::InvalidEdit("snapshot lease state lock poisoned"))?
+            .as_ref()
+            .cloned()
+            .ok_or(EditorError::SnapshotLeaseNotFound(self.descriptor.lease_id))?;
+        let line = snapshot.line_chunk_from_byte(line, start_byte, max_bytes)?;
+        Ok(SnapshotLeaseLineChunk {
+            lease: self.descriptor.clone(),
+            line,
+            schema_version: 1,
+        })
+    }
 }
 
 /// Bounded logical-line data read through a validated snapshot lease.
@@ -658,6 +719,21 @@ pub struct EditorEngine {
     thresholds: EditorThresholds,
     snapshot_retention_policy: SnapshotRetentionPolicy,
     retained_snapshots: VecDeque<RetainedSnapshotDescriptor>,
+}
+
+impl Drop for EditorEngine {
+    fn drop(&mut self) {
+        // Worker-owned leases must not keep immutable source readable after the authoritative
+        // editor owner disappears. Clear the shared cells before the editor's snapshot tables
+        // are dropped; clones then fail closed without retaining the snapshot until expiry.
+        for lease in self.snapshot_leases.values() {
+            if let Some(state) = &lease.owned_state
+                && let Ok(mut snapshot) = state.lock()
+            {
+                *snapshot = None;
+            }
+        }
+    }
 }
 
 struct EditorEventContext<'a> {
@@ -819,18 +895,16 @@ impl EditorEngine {
 
     /// Create an engine with explicit threshold tuning for degraded mode and retention controls.
     pub fn with_thresholds(thresholds: EditorThresholds) -> Self {
-        Self {
-            thresholds,
-            ..Self::new()
-        }
+        let mut engine = Self::new();
+        engine.thresholds = thresholds;
+        engine
     }
 
     /// Create an engine with explicit snapshot retention policy.
     pub fn with_snapshot_retention_policy(policy: SnapshotRetentionPolicy) -> Self {
-        Self {
-            snapshot_retention_policy: policy,
-            ..Self::new()
-        }
+        let mut engine = Self::new();
+        engine.snapshot_retention_policy = policy;
+        engine
     }
 
     /// Create an engine with an explicit bounded transaction event queue capacity.
@@ -1141,9 +1215,56 @@ impl EditorEngine {
             SnapshotLeaseRecord {
                 snapshot,
                 descriptor: descriptor.clone(),
+                owned_state: None,
             },
         );
         Ok(descriptor)
+    }
+
+    /// Create an owned worker-readable view from an existing validated lease.
+    ///
+    /// The returned handle shares the immutable snapshot and may be moved to a background thread.
+    /// Releasing the editor lease revokes all clones. The descriptor is checked exactly before the
+    /// snapshot is exposed to the worker.
+    pub fn owned_snapshot_lease(
+        &mut self,
+        expected_lease: &SnapshotLeaseDescriptor,
+    ) -> Result<OwnedSnapshotLease, EditorError> {
+        let now = TimestampMillis::now();
+        let lease = self
+            .snapshot_leases
+            .get_mut(&expected_lease.lease_id)
+            .ok_or(EditorError::SnapshotLeaseNotFound(expected_lease.lease_id))?;
+        if now.0 > lease.descriptor.expires_at.0 {
+            return Err(EditorError::SnapshotLeaseExpired {
+                lease_id: expected_lease.lease_id,
+                expired_at: lease.descriptor.expires_at,
+                now,
+            });
+        }
+        if lease.descriptor != *expected_lease {
+            return Err(EditorError::SnapshotLeaseStale {
+                lease_id: expected_lease.lease_id,
+                expected_buffer_id: expected_lease.buffer_id,
+                actual_buffer_id: lease.descriptor.buffer_id,
+                expected_snapshot_id: expected_lease.snapshot_id,
+                actual_snapshot_id: lease.descriptor.snapshot_id,
+                expected_buffer_version: expected_lease.buffer_version,
+                actual_buffer_version: lease.descriptor.buffer_version,
+            });
+        }
+        if lease.owned_state.is_none() {
+            lease.owned_state = Some(Arc::new(Mutex::new(Some(lease.snapshot.clone()))));
+        }
+        let state = lease
+            .owned_state
+            .as_ref()
+            .expect("owned state initialized")
+            .clone();
+        Ok(OwnedSnapshotLease {
+            descriptor: lease.descriptor.clone(),
+            snapshot: state,
+        })
     }
 
     /// Read a bounded chunk through an active snapshot lease after validating identity and expiry.
@@ -1283,6 +1404,11 @@ impl EditorEngine {
     /// Release a previously acquired snapshot lease.
     pub fn release_snapshot_lease(&mut self, lease_id: Uuid) -> Option<SnapshotLeaseDescriptor> {
         let lease = self.snapshot_leases.remove(&lease_id)?;
+        if let Some(state) = lease.owned_state
+            && let Ok(mut snapshot) = state.lock()
+        {
+            *snapshot = None;
+        }
         self.release_snapshot_descriptor_if_unreferenced(lease.snapshot.snapshot_id());
         Some(lease.descriptor)
     }
@@ -4244,6 +4370,7 @@ mod tests {
                     chunk_count: lease_snapshot.chunk_descriptors().len() as u32,
                     schema_version: 2,
                 },
+                owned_state: None,
             },
         );
         {
@@ -5057,12 +5184,7 @@ mod tests {
         let mut chunks = 0;
         loop {
             let payload = engine
-                .read_snapshot_lease_line_chunk(
-                    &lease,
-                    0,
-                    offset,
-                    4096,
-                )
+                .read_snapshot_lease_line_chunk(&lease, 0, offset, 4096)
                 .expect("read leased line chunk");
             assert_eq!(payload.lease, lease);
             assert_eq!(payload.line.line, 0);
@@ -5077,6 +5199,140 @@ mod tests {
             }
         }
         assert!(chunks > 1);
+    }
+
+    #[test]
+    fn owned_snapshot_lease_is_send_sync_and_reads_from_worker() {
+        fn assert_send_sync_static<T: Send + Sync + 'static>() {}
+        assert_send_sync_static::<OwnedSnapshotLease>();
+
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(481), "owned.rs", "éclair\nsecond")
+            .expect("open buffer");
+        let descriptor = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+            .expect("lease snapshot");
+        let owned = engine
+            .owned_snapshot_lease(&descriptor)
+            .expect("owned lease");
+        let worker = std::thread::spawn(move || {
+            owned
+                .read_line_chunk(0, 0, 16)
+                .expect("worker read")
+                .line
+                .text
+        });
+        assert_eq!(worker.join().expect("worker joined"), "éclair");
+    }
+
+    #[test]
+    fn owned_snapshot_lease_keeps_old_version_after_edit_without_full_cache() {
+        let mut engine = EditorEngine::new();
+        let original = format!(
+            "before\n{}",
+            "x".repeat(DEFAULT_FULL_CACHE_BYTE_BUDGET_BYTES)
+        );
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(482), "owned-large.rs", original)
+            .expect("open buffer");
+        let descriptor = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+            .expect("lease snapshot");
+        let owned = engine
+            .owned_snapshot_lease(&descriptor)
+            .expect("owned lease");
+        engine
+            .apply_edit(
+                buffer,
+                TextEdit::insert(TextPosition::new(0, 0), "new "),
+                TransactionSource::User,
+                None,
+                None,
+            )
+            .expect("edit");
+        assert!(matches!(
+            engine.text(buffer),
+            Err(EditorError::Text(TextError::FullCacheBudgetExceeded { .. }))
+        ));
+        let chunk = owned
+            .read_line_chunk(0, 0, 4096)
+            .expect("read old snapshot");
+        assert_eq!(chunk.line.text, "before");
+        assert!(chunk.line.text.len() <= 4096);
+    }
+
+    #[test]
+    fn releasing_owned_snapshot_lease_revokes_all_clones() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(483), "owned-release.rs", "abc")
+            .expect("open buffer");
+        let descriptor = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+            .expect("lease snapshot");
+        let first = engine
+            .owned_snapshot_lease(&descriptor)
+            .expect("owned lease");
+        let second = first.clone();
+        engine
+            .release_snapshot_lease(descriptor.lease_id)
+            .expect("release lease");
+        assert!(matches!(
+            first.read_line_chunk(0, 0, 8),
+            Err(EditorError::SnapshotLeaseNotFound(id)) if id == descriptor.lease_id
+        ));
+        assert!(matches!(
+            second.read_line_chunk(0, 0, 8),
+            Err(EditorError::SnapshotLeaseNotFound(id)) if id == descriptor.lease_id
+        ));
+    }
+
+    #[test]
+    fn dropping_editor_engine_revokes_owned_snapshot_clones() {
+        let owned = {
+            let mut engine = EditorEngine::new();
+            let buffer = engine
+                .open_buffer(WorkspaceId(1), FileId(485), "owned-drop.rs", "abc")
+                .expect("open buffer");
+            let descriptor = engine
+                .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+                .expect("lease snapshot");
+            engine
+                .owned_snapshot_lease(&descriptor)
+                .expect("owned lease")
+        };
+
+        assert!(matches!(
+            owned.read_line_chunk(0, 0, 8),
+            Err(EditorError::SnapshotLeaseNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn owned_snapshot_lease_rejects_expiry_and_oversize_reads() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(484), "owned-expiry.rs", "abc")
+            .expect("open buffer");
+        let descriptor = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+            .expect("lease snapshot");
+        let owned = engine
+            .owned_snapshot_lease(&descriptor)
+            .expect("owned lease");
+        assert!(matches!(
+            owned.read_line_chunk(0, 0, MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES + 1),
+            Err(EditorError::Text(TextError::InvalidWindowBudget { maximum, .. }))
+                if maximum == MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES
+        ));
+        let mut expired = owned.clone();
+        expired.descriptor.expires_at = TimestampMillis(0);
+        assert!(matches!(
+            expired.read_line_chunk(0, 0, 8),
+            Err(EditorError::SnapshotLeaseExpired { lease_id, .. })
+                if lease_id == descriptor.lease_id
+        ));
     }
 
     #[test]
@@ -5121,7 +5377,10 @@ mod tests {
             8,
             TimestampMillis(lease.expires_at.0.saturating_add(1)),
         );
-        assert!(matches!(expired, Err(EditorError::SnapshotLeaseExpired { .. })));
+        assert!(matches!(
+            expired,
+            Err(EditorError::SnapshotLeaseExpired { .. })
+        ));
     }
 
     #[test]
