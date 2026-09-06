@@ -1261,10 +1261,12 @@ fn unix_bounded_reader<R: io::Read + std::os::fd::AsRawFd>(
     let mut chunk = [0u8; 8192];
     loop {
         if Instant::now() >= deadline {
+            // Deadline is the process timeout, not a stream IO failure. The
+            // parent loop owns Timeout classification after the child is reaped.
             return BoundedReaderResult {
                 bytes,
                 exceeded: false,
-                failed: true,
+                failed: false,
             };
         }
         match reader.read(&mut chunk) {
@@ -1324,10 +1326,12 @@ fn windows_bounded_reader(
     let mut chunk = [0u8; 8192];
     loop {
         if Instant::now() >= deadline {
+            // Deadline is the process timeout, not a stream IO failure. The
+            // parent loop owns Timeout classification after the child is reaped.
             return BoundedReaderResult {
                 bytes,
                 exceeded: false,
-                failed: true,
+                failed: false,
             };
         }
         if stop.load(Ordering::Acquire) {

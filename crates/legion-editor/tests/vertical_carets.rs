@@ -166,6 +166,58 @@ fn vertical_movement_retains_each_preferred_x_across_short_lines_and_carets() {
 }
 
 #[test]
+fn vertical_movement_accepts_expected_carets_without_preferred_x() {
+    let (mut engine, buffer) = engine_with("abcdefghij\nxy\nabcdefghij");
+    let carets = vec![DirectedCaret::new(TextPosition::new(0, 8), None)];
+    engine.set_directed_carets(buffer, carets.clone()).unwrap();
+    let layout = VerticalLayoutId::new(7).unwrap();
+    engine
+        .move_vertically(
+            buffer,
+            request(
+                &engine,
+                buffer,
+                carets,
+                layout,
+                VerticalDirection::Down,
+                false,
+                vec![VerticalSourceRow {
+                    row: row(0, 0, 1, 10, &[(8, 8.0)]),
+                    source_x: x(8.0),
+                }],
+                vec![row(1, 0, 1, 2, &[(0, 0.0), (2, 2.0)])],
+            ),
+        )
+        .unwrap();
+    let moved = engine.directed_carets(buffer).unwrap();
+    assert!(moved[0].preferred_x.is_some());
+    let without_preferred_x =
+        vec![DirectedCaret::new(moved[0].head, moved[0].anchor).with_affinity(moved[0].affinity)];
+    engine
+        .move_vertically(
+            buffer,
+            request(
+                &engine,
+                buffer,
+                without_preferred_x,
+                layout,
+                VerticalDirection::Down,
+                false,
+                vec![VerticalSourceRow {
+                    row: row(1, 0, 1, 2, &[(2, 2.0)]),
+                    source_x: x(2.0),
+                }],
+                vec![row(2, 0, 1, 10, &[(2, 2.0), (8, 8.0)])],
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap()[0].head,
+        TextPosition::new(2, 8)
+    );
+}
+
+#[test]
 fn vertical_shift_reversal_preserves_anchors_and_affinity() {
     let (mut engine, buffer) = engine_with("abcd\nefgh\nijkl");
     let initial = vec![DirectedCaret::new(TextPosition::new(1, 2), None)];

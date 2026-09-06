@@ -498,6 +498,15 @@ struct BatchEditPlan {
     edits: Vec<PreparedBatchEdit>,
 }
 
+fn carets_match_vertical_source(actual: &[DirectedCaret], expected: &[DirectedCaret]) -> bool {
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(left, right)| {
+            left.head == right.head
+                && left.anchor == right.anchor
+                && left.affinity == right.affinity
+        })
+}
+
 fn map_edit_offset(mut offset: usize, head_affinity: bool, edits: &[PreparedBatchEdit]) -> usize {
     for edit in edits {
         if offset < edit.start {
@@ -3183,7 +3192,7 @@ impl EditorEngine {
                     actual_buffer_version: state.current_snapshot.buffer_version(),
                 });
             }
-            if state.carets != request.expected_carets
+            if !carets_match_vertical_source(&state.carets, &request.expected_carets)
                 || request.source_rows.len() != state.carets.len()
                 || request.target_rows.len() != state.carets.len()
             {
