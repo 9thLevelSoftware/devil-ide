@@ -3239,6 +3239,13 @@ pub fn lsp_diagnostic_uri_fingerprint(uri: &str) -> FileFingerprint {
 // Process-backed stdio transport (WS03.T1).
 // -----------------------------------------------------------------------------
 
+/// Bound on parsed JSON-RPC envelopes waiting between the stdout reader
+/// thread and the session. The per-frame payload cap is 64 MiB, so an
+/// unbounded mailbox can retain gigabytes while `workspace/applyEdit` waits
+/// up to 120 seconds. A `sync_channel` of this depth applies backpressure
+/// into the server pipe instead.
+const STDOUT_READER_QUEUE_CAP: usize = 16;
+
 /// Message produced by the background stdout reader thread and consumed by
 /// the session on the request-driving thread. Carrying parsed frames over a
 /// channel decouples the (blocking) pipe read from the caller, so a fully
@@ -3493,17 +3500,16 @@ impl LspProcessHandle for LspStdioProcess {
     fn kill(&mut self) {
         self.killed = true;
         if let Some(child) = self.child.as_mut() {
-            // Best-effort kill + reap so the test process does not
-            // leave a zombie if it exits between kill and drop.
-            let _ = child.kill();
-            let _ = child.wait();
+            // Kill the process group (Unix) or process tree (Windows) before
+            // joining the stdout reader. A grandchild that inherited stdout
+            // keeps the pipe open after `Child::kill`, so `read_lsp_frame`
+            // never returns and session reset hangs.
+            terminate_stdio_process_tree(child);
         }
-        // Drop pipes so any blocked reader/writer unblocks.
+        // Drop pipes so any blocked writer unblocks. The reader owns stdout
+        // and exits once the tree's write ends close or the mailbox drops.
         self.stdin.take();
         self.stderr.take();
-        // The child is dead, so its stdout closes; the reader thread observes
-        // EOF and exits. Drop the receiver and join the thread so it does not
-        // outlive the process handle.
         if let Some(mut reader) = self.reader.take()
             && let Some(handle) = reader.handle.take()
         {
@@ -3519,7 +3525,7 @@ impl StdoutReader {
     /// recorded in `stats` so a dead reader is observable after the fact
     /// (PKT-S3-WEDGE-R3).
     fn spawn(stdout: ChildStdout, stats: Arc<ReaderStatsShared>) -> LspRuntimeResult<Self> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(STDOUT_READER_QUEUE_CAP);
         let handle = std::thread::Builder::new()
             .name("legion-lsp-stdout-reader".to_string())
             .spawn(move || {
@@ -3555,7 +3561,9 @@ impl StdoutReader {
                     {
                         *slot = Some(terminal_event);
                     }
-                    // If the receiver is gone the session no longer cares; stop.
+                    // Blocking send applies backpressure when the session is
+                    // not draining. Dropping the receiver (session kill)
+                    // unblocks this with an error so the thread can exit.
                     if tx.send(event).is_err() || terminal {
                         return;
                     }
@@ -3644,9 +3652,38 @@ fn spawn_stdio_child(config: &LspServerProcessConfig) -> LspRuntimeResult<Child>
     for (key, value) in &config.env {
         command.env(key, value);
     }
+    // Put the child in its own process group so teardown can SIGKILL
+    // descendants that inherited stdout (see `terminate_stdio_process_tree`).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     command.spawn().map_err(|err| LspRuntimeError::SpawnFailed {
         code: format!("stdio.spawn_failed: {err}"),
     })
+}
+
+/// Forcibly terminates the stdio child and any descendants that still hold
+/// the inherited stdout write end, then reaps the direct child.
+fn terminate_stdio_process_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // The child is its own process-group leader (see `spawn_stdio_child`).
+        let pid = child.id() as i32;
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(-pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Metadata-only progress notification observed while reading LSP frames.

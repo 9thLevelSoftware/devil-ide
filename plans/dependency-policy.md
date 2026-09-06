@@ -368,7 +368,7 @@ Phase 8 production dependency rebaseline permits the following external crates o
   HTTP/archive crate requires an ADR-0055 amendment, cargo-deny/license review,
   and contract tests. Existing provider/remote/updater HTTP clients are not
   reusable language-materializer authority.
-- Native terminal PTY (`legion-platform` and `legion-terminal`): `windows` for ConPTY and either `nix` or `rustix` for Unix PTY, process-group, and signal handling.
+- Native terminal PTY (`legion-platform` and `legion-terminal`): `windows` for ConPTY and either `nix` or `rustix` for Unix PTY, process-group, and signal handling. Supervised LSP stdio (`legion-lsp`) may use the same Unix `nix` signal/process-group slice solely to put the language-server child in its own group and SIGKILL that group on session teardown; it does not authorize PTY ownership or a `legion-platform` runtime edge.
 - Raw-source production vault (`legion-retention`): `aes-gcm` or `chacha20poly1305`, `rand_core`/`getrandom`, `sha2`, `zeroize`, and `keyring` for the bundled OS key-provider. Cloud KMS SDKs are not bundled in Phase 8; KMS integration is represented by a provider contract and deployment-supplied adapters.
 - Local-history content addressing (`legion-app`, M8 WS-GIT-01): `sha2` for SHA-256 content hashes of save-time local-history snapshots (metadata-only records; content blobs stay workspace-local under `.legion/local-history/`).
 

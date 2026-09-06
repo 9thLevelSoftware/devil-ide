@@ -2,14 +2,14 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use legion_lsp::{
-    LspRuntimeError, LspServerProcessConfig, LspStdioProcess, LspStdioSession, LspStdioSpawner,
-    LspSupervisorConfig, LspTextDocumentIdentity, code_lens_request, completion_request,
-    declaration_request, definition_request, document_symbol_request, folding_range_request,
-    hover_request, implementation_request, inlay_hint_request, project_code_lens_response,
-    project_completion_response, project_document_symbol_response, project_hover_response,
-    project_inlay_hint_response, project_location_response, project_workspace_symbol_response,
-    references_request, semantic_tokens_full_request, signature_help_request,
-    type_definition_request, workspace_symbol_request,
+    LspProcessHandle, LspRuntimeError, LspServerProcessConfig, LspStdioProcess, LspStdioSession,
+    LspStdioSpawner, LspSupervisorConfig, LspTextDocumentIdentity, code_lens_request,
+    completion_request, declaration_request, definition_request, document_symbol_request,
+    folding_range_request, hover_request, implementation_request, inlay_hint_request,
+    project_code_lens_response, project_completion_response, project_document_symbol_response,
+    project_hover_response, project_inlay_hint_response, project_location_response,
+    project_workspace_symbol_response, references_request, semantic_tokens_full_request,
+    signature_help_request, type_definition_request, workspace_symbol_request,
 };
 use legion_protocol::{
     BufferId, BufferVersion, CancellationTokenId, CapabilityDecisionId, CapabilityId, CausalityId,
@@ -1070,5 +1070,75 @@ fn stdio_lsp_session_reader_records_malformed_frame_and_child_stays_alive() {
     assert!(
         session.is_running(),
         "mock server must still be alive after emitting a malformed frame"
+    );
+}
+
+fn grandchild_stdout_holder_config() -> LspServerProcessConfig {
+    #[cfg(unix)]
+    {
+        LspServerProcessConfig {
+            command: "/bin/sh".to_string(),
+            args: vec!["-c".to_string(), "sleep 3600 & exec sleep 3600".to_string()],
+            cwd: None,
+            env: Vec::new(),
+        }
+    }
+    #[cfg(windows)]
+    {
+        LspServerProcessConfig {
+            command: "cmd".to_string(),
+            args: vec![
+                "/C".to_string(),
+                "start /B ping -n 3600 127.0.0.1 >NUL & ping -n 3600 127.0.0.1 >NUL".to_string(),
+            ],
+            cwd: None,
+            env: Vec::new(),
+        }
+    }
+}
+
+#[test]
+fn stdio_process_kill_joins_while_grandchild_holds_stdout() {
+    let mut launcher = legion_lsp::LspStdioLauncher::new();
+    let mut process = launcher
+        .spawn_stdio(&grandchild_stdout_holder_config())
+        .expect("spawn grandchild stdout holder");
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let started = std::time::Instant::now();
+    process.kill();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "kill must join the stdout reader even when a grandchild inherited stdout, elapsed {:?}",
+        started.elapsed()
+    );
+    assert!(
+        !process.is_running(),
+        "direct child must be reaped after process-tree kill"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stdio_process_kill_unblocks_full_reader_mailbox() {
+    let mut launcher = legion_lsp::LspStdioLauncher::new();
+    let config = LspServerProcessConfig {
+        command: "/bin/sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "while true; do printf 'Content-Length: 2\\r\\n\\r\\n{}'; done".to_string(),
+        ],
+        cwd: None,
+        env: Vec::new(),
+    };
+    let mut process = launcher
+        .spawn_stdio(&config)
+        .expect("spawn stdout flood writer");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    process.kill();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "kill must unblock a reader parked on a full bounded mailbox, elapsed {:?}",
+        started.elapsed()
     );
 }
