@@ -5,6 +5,7 @@
 pub mod diff;
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use legion_observability::{NoopEventSink, transaction_event};
@@ -99,6 +100,9 @@ pub enum EditorError {
     /// Snapshot lease was not found.
     #[error("snapshot lease {0} does not exist")]
     SnapshotLeaseNotFound(Uuid),
+    /// Snapshot lease was revoked while a worker still held a clone.
+    #[error("snapshot lease {0} was revoked")]
+    SnapshotLeaseRevoked(Uuid),
     /// Snapshot lease has expired and consumers must resynchronize.
     #[error("snapshot lease {lease_id} expired at {expired_at:?} before {now:?}; resynchronize")]
     SnapshotLeaseExpired {
@@ -553,7 +557,7 @@ struct SaveSnapshotPayload {
 struct SnapshotLeaseRecord {
     snapshot: legion_text::TextSnapshot,
     descriptor: SnapshotLeaseDescriptor,
-    owned_state: Option<Arc<Mutex<Option<legion_text::TextSnapshot>>>>,
+    owned_state: Option<Arc<OwnedSnapshotCell>>,
 }
 
 /// Maximum UTF-8 bytes returned by one worker-owned snapshot line read.
@@ -567,7 +571,33 @@ pub const MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES: usize = 96 * 1024;
 #[derive(Debug, Clone)]
 pub struct OwnedSnapshotLease {
     descriptor: SnapshotLeaseDescriptor,
-    snapshot: Arc<Mutex<Option<legion_text::TextSnapshot>>>,
+    cell: Arc<OwnedSnapshotCell>,
+}
+
+#[derive(Debug)]
+struct OwnedSnapshotCell {
+    snapshot: Mutex<Option<legion_text::TextSnapshot>>,
+    revoked: AtomicBool,
+}
+
+impl OwnedSnapshotCell {
+    fn new(snapshot: legion_text::TextSnapshot) -> Arc<Self> {
+        Arc::new(Self {
+            snapshot: Mutex::new(Some(snapshot)),
+            revoked: AtomicBool::new(false),
+        })
+    }
+
+    fn revoke(&self) {
+        self.revoked.store(true, Ordering::Release);
+        if let Ok(mut snapshot) = self.snapshot.try_lock() {
+            *snapshot = None;
+        }
+    }
+
+    fn is_revoked(&self) -> bool {
+        self.revoked.load(Ordering::Acquire)
+    }
 }
 
 impl OwnedSnapshotLease {
@@ -584,10 +614,11 @@ impl OwnedSnapshotLease {
         max_bytes: usize,
     ) -> Result<SnapshotLeaseLineChunk, EditorError> {
         let now = TimestampMillis::now();
+        if self.cell.is_revoked() {
+            return Err(EditorError::SnapshotLeaseRevoked(self.descriptor.lease_id));
+        }
         if now.0 > self.descriptor.expires_at.0 {
-            if let Ok(mut snapshot) = self.snapshot.lock() {
-                *snapshot = None;
-            }
+            self.cell.revoke();
             return Err(EditorError::SnapshotLeaseExpired {
                 lease_id: self.descriptor.lease_id,
                 expired_at: self.descriptor.expires_at,
@@ -600,17 +631,25 @@ impl OwnedSnapshotLease {
                 maximum: MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES,
             }));
         }
-        // Read the bounded chunk while the shared cell is held so a concurrent
-        // revoke cannot hand out stale bytes after the originating lease is
-        // cleared. The lock is released before this function returns.
-        let guard = self
+        // Hold the cell only for the bounded read. Revoke is a non-blocking
+        // try_lock so EditorEngine drop never waits on a worker.
+        let mut guard = self
+            .cell
             .snapshot
             .lock()
             .map_err(|_| EditorError::InvalidEdit("snapshot lease state lock poisoned"))?;
+        if self.cell.is_revoked() {
+            *guard = None;
+            return Err(EditorError::SnapshotLeaseRevoked(self.descriptor.lease_id));
+        }
         let snapshot = guard
             .as_ref()
             .ok_or(EditorError::SnapshotLeaseNotFound(self.descriptor.lease_id))?;
         let line = snapshot.line_chunk_from_byte(line, start_byte, max_bytes)?;
+        if self.cell.is_revoked() {
+            *guard = None;
+            return Err(EditorError::SnapshotLeaseRevoked(self.descriptor.lease_id));
+        }
         drop(guard);
         Ok(SnapshotLeaseLineChunk {
             lease: self.descriptor.clone(),
@@ -747,10 +786,8 @@ impl Drop for EditorEngine {
         // editor owner disappears. Clear the shared cells before the editor's snapshot tables
         // are dropped; clones then fail closed without retaining the snapshot until expiry.
         for lease in self.snapshot_leases.values() {
-            if let Some(state) = &lease.owned_state
-                && let Ok(mut snapshot) = state.lock()
-            {
-                *snapshot = None;
+            if let Some(state) = &lease.owned_state {
+                state.revoke();
             }
         }
     }
@@ -1280,7 +1317,7 @@ impl EditorEngine {
             });
         }
         if lease.owned_state.is_none() {
-            lease.owned_state = Some(Arc::new(Mutex::new(Some(lease.snapshot.clone()))));
+            lease.owned_state = Some(OwnedSnapshotCell::new(lease.snapshot.clone()));
         }
         let state = lease
             .owned_state
@@ -1289,7 +1326,7 @@ impl EditorEngine {
             .clone();
         Ok(OwnedSnapshotLease {
             descriptor: lease.descriptor.clone(),
-            snapshot: state,
+            cell: state,
         })
     }
 
@@ -1430,10 +1467,8 @@ impl EditorEngine {
     /// Release a previously acquired snapshot lease.
     pub fn release_snapshot_lease(&mut self, lease_id: Uuid) -> Option<SnapshotLeaseDescriptor> {
         let lease = self.snapshot_leases.remove(&lease_id)?;
-        if let Some(state) = lease.owned_state
-            && let Ok(mut snapshot) = state.lock()
-        {
-            *snapshot = None;
+        if let Some(state) = lease.owned_state {
+            state.revoke();
         }
         self.release_snapshot_descriptor_if_unreferenced(lease.snapshot.snapshot_id());
         Some(lease.descriptor)
@@ -5411,11 +5446,11 @@ mod tests {
             .expect("release lease");
         assert!(matches!(
             first.read_line_chunk(0, 0, 8),
-            Err(EditorError::SnapshotLeaseNotFound(id)) if id == descriptor.lease_id
+            Err(EditorError::SnapshotLeaseRevoked(id)) if id == descriptor.lease_id
         ));
         assert!(matches!(
             second.read_line_chunk(0, 0, 8),
-            Err(EditorError::SnapshotLeaseNotFound(id)) if id == descriptor.lease_id
+            Err(EditorError::SnapshotLeaseRevoked(id)) if id == descriptor.lease_id
         ));
     }
 
@@ -5436,7 +5471,26 @@ mod tests {
 
         assert!(matches!(
             owned.read_line_chunk(0, 0, 8),
-            Err(EditorError::SnapshotLeaseNotFound(_))
+            Err(EditorError::SnapshotLeaseRevoked(_))
+        ));
+    }
+
+    #[test]
+    fn revoked_flag_fails_closed_even_if_cell_still_holds_snapshot() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(487), "owned-revoked.rs", "abc")
+            .expect("open buffer");
+        let descriptor = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+            .expect("lease snapshot");
+        let owned = engine
+            .owned_snapshot_lease(&descriptor)
+            .expect("owned lease");
+        owned.cell.revoked.store(true, Ordering::Release);
+        assert!(matches!(
+            owned.read_line_chunk(0, 0, 8),
+            Err(EditorError::SnapshotLeaseRevoked(id)) if id == descriptor.lease_id
         ));
     }
 
