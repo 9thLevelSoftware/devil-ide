@@ -1406,8 +1406,11 @@ fn frozen_executable_roots() -> Vec<PathBuf> {
     {
         let mut roots = Vec::new();
         if let Ok(system_root) = std::env::var("SystemRoot") {
-            roots.push(PathBuf::from(system_root).join("System32"));
+            let system32 = PathBuf::from(system_root).join("System32");
+            roots.push(system32.join("WindowsPowerShell").join("v1.0"));
+            roots.push(system32);
         }
+        roots.push(PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0"));
         roots.push(PathBuf::from(r"C:\Windows\System32"));
         roots
     }

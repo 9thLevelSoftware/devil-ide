@@ -17815,7 +17815,7 @@ impl AppComposition {
             LanguageStartupSelection::Configured(process)
         };
         Some(LanguageStartupInputs {
-            root: root.clone(),
+            root: canonical_root_str.clone(),
             authority: self.language_startup_authority.clone(),
             context: crate::language::LanguageStartupContext {
                 workspace_id: opened.workspace_id,

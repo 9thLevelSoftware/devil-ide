@@ -806,7 +806,7 @@ impl LspSessionHandle {
                     if cancel.load(Ordering::Acquire) {
                         return Err(LanguageSessionError::Unavailable);
                     }
-                    if config.workspace_root != expected_root {
+                    if !same_workspace_root(&config.workspace_root, &expected_root) {
                         return Err(LanguageSessionError::InvalidConfiguration(
                             "prepared workspace root does not match requested root".to_string(),
                         ));
@@ -1823,6 +1823,16 @@ fn append_stderr_line(raw_line: &[u8], truncated: bool, ring: &Arc<Mutex<VecDequ
             guard.pop_front();
         }
         guard.push_back(redacted);
+    }
+}
+
+/// True when both paths name the same directory after filesystem
+/// canonicalize. macOS `/var` vs `/private/var` and Windows `\\?\` prefixes
+/// must not refuse an otherwise valid language-server start.
+fn same_workspace_root(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
     }
 }
 

@@ -41,6 +41,19 @@ fn close_owned_terminal(app: &mut DesktopEframeApp) {
     let _ = app
         .runtime_mut_for_test()
         .handle_action(DesktopAction::TerminalClose);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let _ = app.run_headless_full_frame(full_frame_input(Vec::new()));
+        if app
+            .runtime_snapshot()
+            .terminal_panel_projection
+            .active_session_id
+            .is_none()
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Terminal status as the projection reports it.
