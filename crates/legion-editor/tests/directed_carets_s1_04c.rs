@@ -251,6 +251,72 @@ fn edit_maps_directed_heads_and_anchors_and_undo_restores_them() {
 }
 
 #[test]
+fn multi_cursor_insertions_keep_each_anchor_at_its_own_insert() {
+    let (mut engine, buffer) = engine_with("abcde");
+    engine
+        .set_directed_carets(
+            buffer,
+            vec![
+                DirectedCaret::new(TextPosition::new(0, 1), Some(TextPosition::new(0, 1))),
+                DirectedCaret::new(TextPosition::new(0, 3), Some(TextPosition::new(0, 3))),
+            ],
+        )
+        .unwrap();
+    engine
+        .apply_edits(
+            buffer,
+            vec![
+                TextEdit::insert(TextPosition::new(0, 1), "X"),
+                TextEdit::insert(TextPosition::new(0, 3), "Y"),
+            ],
+            TransactionSource::User,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(engine.text(buffer).unwrap(), "aXbcYde");
+    let carets = engine.directed_carets(buffer).unwrap();
+    assert_eq!(
+        carets,
+        vec![
+            DirectedCaret::new(TextPosition::new(0, 2), Some(TextPosition::new(0, 1))),
+            DirectedCaret::new(TextPosition::new(0, 5), Some(TextPosition::new(0, 4))),
+        ]
+    );
+}
+
+#[test]
+fn shorter_replacement_maps_later_caret_offsets_without_wrap() {
+    let (mut engine, buffer) = engine_with("abcdef");
+    engine
+        .set_directed_carets(
+            buffer,
+            vec![DirectedCaret::new(
+                TextPosition::new(0, 5),
+                Some(TextPosition::new(0, 4)),
+            )],
+        )
+        .unwrap();
+    engine
+        .apply_edits(
+            buffer,
+            vec![TextEdit::new(
+                TextRange::new(TextPosition::new(0, 1), TextPosition::new(0, 4)),
+                "Z",
+            )],
+            TransactionSource::User,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(engine.text(buffer).unwrap(), "aZef");
+    assert_eq!(
+        engine.directed_carets(buffer).unwrap()[0],
+        DirectedCaret::new(TextPosition::new(0, 3), Some(TextPosition::new(0, 2)))
+    );
+}
+
+#[test]
 fn empty_selection_clears_anchors_but_retains_heads() {
     let (mut engine, buffer) = engine_with("abcdef");
     engine

@@ -181,10 +181,7 @@ pub fn validate_declared_artifact(
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    value.len() == 64 && value.is_ascii() && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn reject_artifact_path(value: &str) -> Option<String> {

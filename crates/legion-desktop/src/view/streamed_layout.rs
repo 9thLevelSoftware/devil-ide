@@ -373,6 +373,7 @@ impl StreamedLayoutCachePool {
                 cache.navigation_request = Some(request.row);
                 cache.navigation_cache = None;
                 cache.scan.navigation_target_index = None;
+                cache.scan.navigation_predecessor = None;
                 cache.scan.navigation_byte_target =
                     Some(request.identity.line_start_byte.saturating_add(byte));
             } else if cache.navigation_request != Some(request.row) {
@@ -380,6 +381,7 @@ impl StreamedLayoutCachePool {
                 cache.navigation_cache = None;
                 cache.scan.navigation_byte_target = None;
                 cache.scan.navigation_target_index = None;
+                cache.scan.navigation_predecessor = None;
                 cache.navigation_request = Some(request.row);
             }
         }
@@ -902,6 +904,7 @@ struct StreamedScanState {
     visible_rows: Option<Range<usize>>,
     navigation_byte_target: Option<u64>,
     navigation_target_index: Option<usize>,
+    navigation_predecessor: Option<(usize, WrappedRowDescriptor)>,
 }
 
 impl fmt::Debug for StreamedLayoutCache {
@@ -1130,6 +1133,7 @@ impl StreamedLayoutCache {
         if !navigation_window {
             self.scan.navigation_byte_target = None;
             self.scan.navigation_target_index = None;
+            self.scan.navigation_predecessor = None;
         }
         let visible_bytes = visible_bytes.start
             ..visible_bytes
@@ -1382,6 +1386,17 @@ impl StreamedScanState {
         Ok(())
     }
 
+    fn admit_scan_row(&mut self, index: usize, descriptor: WrappedRowDescriptor) {
+        if self.rows.is_empty() {
+            self.rows_start_index = index;
+        }
+        self.rows.push(descriptor);
+        if self.rows.len() > MAX_FRAME_ROWS {
+            self.rows.remove(0);
+            self.rows_start_index += 1;
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn scan_rows(
         &mut self,
@@ -1453,10 +1468,16 @@ impl StreamedScanState {
                 });
                 if contains_navigation_target {
                     self.navigation_target_index = Some(index);
+                    if let Some((pred_index, pred)) = self.navigation_predecessor.take() {
+                        if pred_index + 1 == index {
+                            self.admit_scan_row(pred_index, pred);
+                        }
+                    }
                 }
-                let keep_for_navigation = self
-                    .navigation_target_index
-                    .is_some_and(|target| index <= target.saturating_add(1));
+                let keep_for_navigation = self.navigation_target_index.is_some_and(|target| {
+                    let predecessor = target.saturating_sub(1);
+                    index >= predecessor && index <= target.saturating_add(1)
+                });
                 let keep = if retain_last_tail {
                     true
                 } else if navigation_target.is_some() {
@@ -1465,14 +1486,9 @@ impl StreamedScanState {
                     visible_rows.contains(&index)
                 };
                 if keep {
-                    if self.rows.is_empty() {
-                        self.rows_start_index = index;
-                    }
-                    self.rows.push(descriptor);
-                    if self.rows.len() > MAX_FRAME_ROWS {
-                        self.rows.remove(0);
-                        self.rows_start_index += 1;
-                    }
+                    self.admit_scan_row(index, descriptor);
+                } else if navigation_target.is_some() && self.navigation_target_index.is_none() {
+                    self.navigation_predecessor = Some((index, descriptor));
                 }
             }
             if chunk.is_final && self.row_continuation.is_none() {

@@ -9453,6 +9453,26 @@ fn language_terminal_projection_default_surfaces_are_inert() {
 }
 
 #[test]
+fn language_code_action_projection_deserializes_without_optional_fields() {
+    let parsed: LanguageCodeActionProjection = serde_json::from_str(
+        r#"{
+            "response_id": "response-1",
+            "action_id": "action-1",
+            "title": "Add missing import",
+            "is_preferred": false,
+            "has_edit": true,
+            "has_command": false,
+            "schema_version": 1
+        }"#,
+    )
+    .expect("optional code-action fields default when omitted");
+    assert_eq!(parsed.kind, None);
+    assert_eq!(parsed.disabled_reason, None);
+    assert_eq!(parsed.buffer_id, None);
+    assert_eq!(parsed.snapshot_id, None);
+}
+
+#[test]
 fn vscode_compatibility_contract_roundtrips_and_requires_identity() {
     let manifest = VsCodeExtensionManifest {
         extension_id: VsCodeExtensionId("legion.rust-tools".to_string()),

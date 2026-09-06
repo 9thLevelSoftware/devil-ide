@@ -1054,6 +1054,67 @@ fn streamed_byte_navigation_uses_absolute_source_origin() {
 }
 
 #[test]
+fn streamed_byte_navigation_keeps_wrapped_predecessor_row() {
+    let context = Context::default();
+    let source = FakeSource::new("hello world ".repeat(400), 113);
+    let identity = source.identity;
+    let target = 240_u64;
+    let mut pool = StreamedLayoutCachePool::default();
+    pool.request_navigation(StreamedNavigationRequest {
+        identity,
+        row: StreamedRequestedRow::Byte(target),
+    });
+
+    for _ in 0..1_000 {
+        pool.begin_frame(&[identity]);
+        with_ui(&context, |ui| {
+            let mut source_budget = MAX_FRAME_SOURCE_BYTES;
+            let mut row_budget = MAX_FRAME_ROWS;
+            let mut glyph_budget = MAX_FRAME_GLYPHS;
+            pool.service_one_navigation(
+                ui,
+                &source,
+                StreamedLayoutOptions {
+                    format: TextFormat::default(),
+                    pixels_per_point: 1.0,
+                    wrap_width: 40.0,
+                    break_anywhere: false,
+                    visible_rows: 0..MAX_FRAME_ROWS,
+                    visible_bytes: 0..MAX_FRAME_GLYPHS as u64,
+                },
+                StreamedFrameBudget {
+                    source_bytes: &mut source_budget,
+                    rows: &mut row_budget,
+                    glyphs: &mut glyph_budget,
+                },
+            );
+        });
+        if pool.streamed_navigation_requests().is_empty() {
+            break;
+        }
+    }
+    let rows = pool
+        .navigation_rows(identity)
+        .expect("wrapped byte navigation should complete");
+    let target_row = rows
+        .rows
+        .iter()
+        .find(|row| row.start.byte_column <= target && target <= row.end.byte_column)
+        .expect("navigation rows must include the target wrap row");
+    assert!(
+        target_row.start.byte_column > 0,
+        "target must land after at least one wrapped predecessor row"
+    );
+    assert!(
+        rows.rows
+            .iter()
+            .any(|row| row.end.byte_column == target_row.start.byte_column),
+        "wrapped-boundary navigation must retain the predecessor row ending at {:?}",
+        target_row.start.byte_column
+    );
+}
+
+#[test]
 fn streamed_first_index_and_last_navigation_complete_across_frames() {
     let context = Context::default();
     let source = FakeSource::new("word ".repeat(40_000), 111);

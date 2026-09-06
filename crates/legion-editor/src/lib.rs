@@ -520,8 +520,12 @@ fn map_edit_offset(mut offset: usize, head_affinity: bool, edits: &[PreparedBatc
                 edit.start
             };
         } else {
-            offset = (offset as i64 + edit.new_text.len() as i64 - (edit.end - edit.start) as i64)
-                as usize;
+            // `offset >= edit.end`, so subtracting the removed span cannot
+            // underflow. Avoid i64 casts that wrap on a negative delta.
+            let removed = edit.end - edit.start;
+            offset = offset
+                .saturating_sub(removed)
+                .saturating_add(edit.new_text.len());
         }
     }
     offset
@@ -584,14 +588,18 @@ impl OwnedSnapshotLease {
                 maximum: MAX_OWNED_SNAPSHOT_LINE_CHUNK_BYTES,
             }));
         }
-        let snapshot = self
+        // Read the bounded chunk while the shared cell is held so a concurrent
+        // revoke cannot hand out stale bytes after the originating lease is
+        // cleared. The lock is released before this function returns.
+        let guard = self
             .snapshot
             .lock()
-            .map_err(|_| EditorError::InvalidEdit("snapshot lease state lock poisoned"))?
+            .map_err(|_| EditorError::InvalidEdit("snapshot lease state lock poisoned"))?;
+        let snapshot = guard
             .as_ref()
-            .cloned()
             .ok_or(EditorError::SnapshotLeaseNotFound(self.descriptor.lease_id))?;
         let line = snapshot.line_chunk_from_byte(line, start_byte, max_bytes)?;
+        drop(guard);
         Ok(SnapshotLeaseLineChunk {
             lease: self.descriptor.clone(),
             line,
@@ -1194,6 +1202,7 @@ impl EditorEngine {
         buffer_id: BufferId,
         consumer_kind: SnapshotConsumerKind,
     ) -> Result<SnapshotLeaseDescriptor, EditorError> {
+        self.sweep_expired_snapshot_leases();
         let state = self
             .buffers
             .get(&buffer_id)
@@ -1231,17 +1240,22 @@ impl EditorEngine {
         expected_lease: &SnapshotLeaseDescriptor,
     ) -> Result<OwnedSnapshotLease, EditorError> {
         let now = TimestampMillis::now();
+        if let Some(lease) = self.snapshot_leases.get(&expected_lease.lease_id)
+            && now.0 > lease.descriptor.expires_at.0
+        {
+            let expired_at = lease.descriptor.expires_at;
+            self.release_snapshot_lease(expected_lease.lease_id);
+            return Err(EditorError::SnapshotLeaseExpired {
+                lease_id: expected_lease.lease_id,
+                expired_at,
+                now,
+            });
+        }
+        self.sweep_expired_snapshot_leases();
         let lease = self
             .snapshot_leases
             .get_mut(&expected_lease.lease_id)
             .ok_or(EditorError::SnapshotLeaseNotFound(expected_lease.lease_id))?;
-        if now.0 > lease.descriptor.expires_at.0 {
-            return Err(EditorError::SnapshotLeaseExpired {
-                lease_id: expected_lease.lease_id,
-                expired_at: lease.descriptor.expires_at,
-                now,
-            });
-        }
         if lease.descriptor != *expected_lease {
             return Err(EditorError::SnapshotLeaseStale {
                 lease_id: expected_lease.lease_id,
@@ -1411,6 +1425,26 @@ impl EditorEngine {
         }
         self.release_snapshot_descriptor_if_unreferenced(lease.snapshot.snapshot_id());
         Some(lease.descriptor)
+    }
+
+    fn sweep_expired_snapshot_leases(&mut self) {
+        let now = TimestampMillis::now();
+        let expired: Vec<Uuid> = self
+            .snapshot_leases
+            .iter()
+            .filter(|(_, lease)| now.0 > lease.descriptor.expires_at.0)
+            .map(|(lease_id, _)| *lease_id)
+            .collect();
+        for lease_id in expired {
+            self.release_snapshot_lease(lease_id);
+        }
+    }
+
+    #[cfg(test)]
+    fn expire_snapshot_lease_for_test(&mut self, lease_id: Uuid) {
+        if let Some(lease) = self.snapshot_leases.get_mut(&lease_id) {
+            lease.descriptor.expires_at = TimestampMillis(0);
+        }
     }
 
     /// Return the workspace id and file id for a buffer.
@@ -5398,6 +5432,29 @@ mod tests {
             Err(EditorError::SnapshotLeaseExpired { lease_id, .. })
                 if lease_id == descriptor.lease_id
         ));
+    }
+
+    #[test]
+    fn expired_snapshot_lease_records_are_released_on_next_acquire() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(486), "owned-sweep.rs", "abc")
+            .expect("open buffer");
+        let expired = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Ui)
+            .expect("lease snapshot");
+        engine.expire_snapshot_lease_for_test(expired.lease_id);
+        let replacement = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Editor)
+            .expect("replacement lease");
+        assert_ne!(replacement.lease_id, expired.lease_id);
+        assert!(engine.release_snapshot_lease(expired.lease_id).is_none());
+        assert_eq!(
+            engine
+                .release_snapshot_lease(replacement.lease_id)
+                .map(|lease| lease.lease_id),
+            Some(replacement.lease_id)
+        );
     }
 
     #[test]

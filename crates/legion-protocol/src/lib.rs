@@ -16379,18 +16379,22 @@ pub struct LanguageCodeActionProjection {
     /// Bounded server-provided display title.
     pub title: String,
     /// Optional server-provided action kind.
+    #[serde(default)]
     pub kind: Option<String>,
     /// Whether the server marked this candidate preferred.
     pub is_preferred: bool,
     /// Disabled reason, when the server supplied one.
+    #[serde(default)]
     pub disabled_reason: Option<String>,
     /// Whether the candidate carries a workspace edit.
     pub has_edit: bool,
     /// Whether the candidate carries a command payload.
     pub has_command: bool,
     /// Buffer identity used for the request, when the document is open.
+    #[serde(default)]
     pub buffer_id: Option<BufferId>,
     /// Snapshot identity used for the request, when known.
+    #[serde(default)]
     pub snapshot_id: Option<SnapshotId>,
     /// Candidate row schema version.
     pub schema_version: u16,
