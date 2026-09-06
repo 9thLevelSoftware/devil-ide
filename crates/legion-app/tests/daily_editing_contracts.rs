@@ -17,6 +17,32 @@ use legion_ui::{CommandDispatchIntent, ShellLayoutProjection};
 
 static TEMP_ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+fn recv_did_change(
+    rx: &std::sync::mpsc::Receiver<legion_app::language::LspWorkerRequest>,
+) -> (String, i64, String) {
+    match rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("didChange must be queued")
+    {
+        legion_app::language::LspWorkerRequest::DidChange {
+            uri, version, text, ..
+        } => (uri, version, text),
+        legion_app::language::LspWorkerRequest::DidChangeDeferred {
+            uri,
+            version,
+            text_rx,
+            ..
+        } => {
+            let text = text_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("deferred didChange text")
+                .expect("deferred didChange produced text");
+            (uri, version, text)
+        }
+        _ => panic!("expected didChange request"),
+    }
+}
+
 /// Drop-guarded temporary workspace root. The directory is removed on drop with a
 /// prefix/location check so a panic before the end of a test never leaks the temp dir.
 struct TempWorkspace {
@@ -368,7 +394,7 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
         String,
         legion_protocol::TextTransactionDescriptor,
         legion_protocol::EventEnvelope,
-        legion_app::language::LspWorkerRequest,
+        (String, i64, String),
         bool,
     ) {
         let file = root.join(file_name);
@@ -398,9 +424,7 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
             AppCommandOutcome::Edited(descriptor) => descriptor,
             other => panic!("expected edited outcome, got {other:?}"),
         };
-        let request = request_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .expect("replacement must queue didChange");
+        let request = recv_did_change(&request_rx);
         let canonical_file = std::fs::canonicalize(&file).expect("canonical file path");
         let normalized_file = canonical_file.to_string_lossy().replace('\\', "/");
         let normalized_file = normalized_file.strip_prefix("//?/UNC/").map_or_else(
@@ -421,12 +445,7 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
         } else {
             format!("file:///{normalized_file}")
         };
-        let legion_app::language::LspWorkerRequest::DidChange {
-            uri, version, text, ..
-        } = &request
-        else {
-            panic!("expected queued DidChange request, got another worker request");
-        };
+        let (uri, version, text) = &request;
         assert_eq!(uri, &expected_uri, "didChange URI mismatch");
         assert_eq!(
             *version, descriptor.post_buffer_version.0 as i64,
@@ -491,9 +510,7 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
         AppCommandOutcome::Edited(descriptor) => descriptor,
         other => panic!("expected edited outcome, got {other:?}"),
     };
-    let directed_request = request_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .expect("directed replacement must queue didChange");
+    let directed_request = recv_did_change(&request_rx);
     let directed_event = sink
         .events()
         .expect("directed event snapshot")
@@ -543,30 +560,15 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
         directed_event.causality_id,
         directed_descriptor.causality_id
     );
-    assert!(matches!(
-        directed_request,
-        legion_app::language::LspWorkerRequest::DidChange {
-            ref uri,
-            version,
-            ref text,
-            ..
-        }
-            if uri == &directed_expected_uri
-                && version == directed_descriptor.post_buffer_version.0 as i64
-                && text == "aXd"
-    ));
-    assert!(matches!(
-        ordinary.3,
-        legion_app::language::LspWorkerRequest::DidChange {
-            ref uri,
-            version,
-            ref text,
-            ..
-        }
-            if uri.ends_with("/ordinary.txt")
-                && version == ordinary.1.post_buffer_version.0 as i64
-                && text == "aXd"
-    ));
+    assert_eq!(directed_request.0, directed_expected_uri);
+    assert_eq!(
+        directed_request.1,
+        directed_descriptor.post_buffer_version.0 as i64
+    );
+    assert_eq!(directed_request.2, "aXd");
+    assert!(ordinary.3.0.ends_with("/ordinary.txt"));
+    assert_eq!(ordinary.3.1, ordinary.1.post_buffer_version.0 as i64);
+    assert_eq!(ordinary.3.2, "aXd");
 }
 
 #[test]
@@ -616,13 +618,7 @@ fn daily_editing_contracts_native_delete_routes_all_carets_and_did_change() {
             .find(|event| event.event == "editor.transaction_applied")
             .expect("transaction event");
         assert_eq!(event.correlation_id, descriptor.correlation_id);
-        let request = request_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .expect("native delete must queue didChange");
-        let legion_app::language::LspWorkerRequest::DidChange { version, text, .. } = request
-        else {
-            panic!("expected didChange request");
-        };
+        let (_uri, version, text) = recv_did_change(&request_rx);
         assert_eq!(version, descriptor.post_buffer_version.0 as i64);
         assert_eq!(
             text,

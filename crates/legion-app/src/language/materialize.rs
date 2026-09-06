@@ -479,8 +479,25 @@ impl Guard<'_> {
 }
 
 fn ensure_cache_namespace(root: &Path) -> Result<(), MaterializeError> {
+    if let Ok(meta) = fs::symlink_metadata(root)
+        && (meta.file_type().is_symlink() || !meta.is_dir())
+    {
+        return Err(MaterializeError::CacheTampered);
+    }
+    // Resolve the existing parent before walking so host prefixes such as
+    // macOS `/var` → `/private/var` are not reported as cache tamper.
+    let walk_root = if let Some(parent) = root.parent().filter(|parent| parent.exists()) {
+        let canonical = fs::canonicalize(parent)
+            .map_err(|error| MaterializeError::Io(bounded_text(error.to_string())))?;
+        match root.file_name() {
+            Some(name) => canonical.join(name),
+            None => root.to_path_buf(),
+        }
+    } else {
+        root.to_path_buf()
+    };
     let mut current = PathBuf::new();
-    for component in root.components() {
+    for component in walk_root.components() {
         current.push(component.as_os_str());
         // On Windows a verbatim path begins with a Prefix component such as
         // \\?\C:. Querying that incomplete prefix asks Win32 to stat a

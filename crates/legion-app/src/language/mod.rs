@@ -32,6 +32,7 @@ pub use session::{
     RestartPolicy, RustAnalyzerLaunchConfig, RustAnalyzerSession,
 };
 
+mod local_proposals;
 mod proposal;
 pub use proposal::workspace_edit_to_proposal_input;
 

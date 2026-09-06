@@ -6766,7 +6766,7 @@ fn utf16_position_from_text_coordinate(position: TextCoordinate) -> Utf16Positio
 }
 
 #[derive(Debug, Clone, Copy)]
-enum LanguageProposalKind {
+pub(crate) enum LanguageProposalKind {
     Formatting,
     Rename,
     OrganizeImports,
@@ -8681,7 +8681,7 @@ impl TerminalWorkflow {
 ///   consumed it, so `/tmp/ws/main.rs` became `tmp/ws/main.rs` and the
 ///   lookup silently dropped diagnostics on Unix through this path too.
 /// - `/` becomes `\` on Windows for consistency with the editor's paths.
-fn uri_to_canonical_path(uri: &str) -> String {
+pub(crate) fn uri_to_canonical_path(uri: &str) -> String {
     let path_part = if let Some(rest) = uri.strip_prefix("file:///") {
         let rest = percent_decode_uri_path(rest);
         let bytes = rest.as_bytes();
@@ -17123,6 +17123,7 @@ impl AppComposition {
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn set_lsp_health_for_test(&mut self, health: legion_protocol::LspServerHealthRecord) {
         self.lsp_session.set_live_health_for_test(health);
+        self.mark_injected_lsp_documents_ready_for_test();
     }
 
     /// Test-only: install a live LSP session and return its production request
@@ -17132,8 +17133,15 @@ impl AppComposition {
         &mut self,
         health: legion_protocol::LspServerHealthRecord,
     ) -> std::sync::mpsc::Receiver<LspWorkerRequest> {
-        self.lsp_session
-            .set_live_with_request_receiver_for_test(health)
+        let rx = self
+            .lsp_session
+            .set_live_with_request_receiver_for_test(health);
+        self.mark_injected_lsp_documents_ready_for_test();
+        // The production request queue is cap-one. Catching up the harness
+        // after the injected `didOpen` leaves the slot free for the edit the
+        // test is actually asserting.
+        while rx.try_recv().is_ok() {}
+        rx
     }
 
     /// Test-only: install a cap-one live session and retain its result sender
@@ -17146,8 +17154,12 @@ impl AppComposition {
         std::sync::mpsc::Receiver<LspWorkerRequest>,
         std::sync::mpsc::SyncSender<crate::language::LspWorkerResult>,
     ) {
-        self.lsp_session
-            .set_live_with_request_and_result_sender_for_test(health)
+        let (rx, tx) = self
+            .lsp_session
+            .set_live_with_request_and_result_sender_for_test(health);
+        self.mark_injected_lsp_documents_ready_for_test();
+        while rx.try_recv().is_ok() {}
+        (rx, tx)
     }
 
     /// Test-only: run a one-shot callback after workspace-edit preflight and
@@ -20961,19 +20973,19 @@ impl AppComposition {
                 ))
             }
             AppCommandRequest::RequestFormattingProposal { buffer_id } => {
-                let issued = self.issue_lsp_formatting_request(buffer_id);
-                if !issued {
-                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
-                        let _ = self.language_tooling.record_proposal_failure(
-                            &input,
-                            LanguageProposalKind::Formatting,
-                            "formatting unavailable until a live capable language server is ready"
-                                .to_string(),
-                        );
-                    }
-                }
+                self.issue_lsp_formatting_request(buffer_id);
                 Ok(AppCommandOutcome::language_tooling(
-                    self.language_tooling.projection(),
+                    self.run_language_proposal(
+                        buffer_id,
+                        LanguageProposalKind::Formatting,
+                        TextCoordinate {
+                            line: 0,
+                            character: 0,
+                            byte_offset: Some(0),
+                            utf16_offset: Some(0),
+                        },
+                        "format".to_string(),
+                    )?,
                 ))
             }
             AppCommandRequest::RequestRenameProposal {
@@ -20981,98 +20993,71 @@ impl AppComposition {
                 position,
                 new_name,
             } => {
-                let issued = self.issue_lsp_rename_request(buffer_id, position, new_name);
-                if !issued {
-                    let failure_message =
-                        self.lsp_rename_unavailable_message(buffer_id).to_string();
-                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
-                        let _ = self.language_tooling.record_proposal_failure(
-                            &input,
-                            LanguageProposalKind::Rename,
-                            failure_message,
-                        );
-                    }
-                }
+                // Ask the language server too. Its answer arrives on a later
+                // drain as its own proposal; the index-backed one below returns
+                // now so the surface is never blank. Neither writes anything —
+                // both stop at Previewed.
+                self.issue_lsp_rename_request(buffer_id, position, new_name.clone());
                 Ok(AppCommandOutcome::language_tooling(
-                    self.language_tooling.projection(),
+                    self.run_language_proposal(
+                        buffer_id,
+                        LanguageProposalKind::Rename,
+                        position,
+                        new_name,
+                    )?,
                 ))
             }
             AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => {
-                let issued = self
-                    .whole_document_utf16_range(buffer_id)
-                    .is_some_and(|range| {
-                        self.request_code_actions_scoped(
-                            buffer_id,
-                            ProtocolTextRange {
-                                start: TextCoordinate {
-                                    line: range.start.line,
-                                    character: range.start.character,
-                                    byte_offset: None,
-                                    utf16_offset: None,
-                                },
-                                end: TextCoordinate {
-                                    line: range.end.line,
-                                    character: range.end.character,
-                                    byte_offset: None,
-                                    utf16_offset: None,
-                                },
+                if let Some(range) = self.whole_document_utf16_range(buffer_id) {
+                    self.request_code_actions_scoped(
+                        buffer_id,
+                        ProtocolTextRange {
+                            start: TextCoordinate {
+                                line: range.start.line,
+                                character: range.start.character,
+                                byte_offset: None,
+                                utf16_offset: None,
                             },
-                            true,
-                        )
-                    });
-                if !issued {
-                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
-                        let _ = self.language_tooling.record_proposal_failure(
-                            &input,
-                            LanguageProposalKind::OrganizeImports,
-                            "organize imports unavailable until a live capable language server is ready"
-                                .to_string(),
-                        );
-                    }
+                            end: TextCoordinate {
+                                line: range.end.line,
+                                character: range.end.character,
+                                byte_offset: None,
+                                utf16_offset: None,
+                            },
+                        },
+                        true,
+                    );
                 }
                 Ok(AppCommandOutcome::language_tooling(
-                    self.language_tooling.projection(),
+                    self.run_language_proposal(
+                        buffer_id,
+                        LanguageProposalKind::OrganizeImports,
+                        TextCoordinate {
+                            line: 0,
+                            character: 0,
+                            byte_offset: Some(0),
+                            utf16_offset: Some(0),
+                        },
+                        "organize-imports".to_string(),
+                    )?,
                 ))
             }
             AppCommandRequest::RequestCodeActionProposal {
                 buffer_id,
-                action_id: _action_id,
-            } => {
-                let issued = self
-                    .whole_document_utf16_range(buffer_id)
-                    .is_some_and(|range| {
-                        self.request_code_actions(
-                            buffer_id,
-                            ProtocolTextRange {
-                                start: TextCoordinate {
-                                    line: range.start.line,
-                                    character: range.start.character,
-                                    byte_offset: None,
-                                    utf16_offset: None,
-                                },
-                                end: TextCoordinate {
-                                    line: range.end.line,
-                                    character: range.end.character,
-                                    byte_offset: None,
-                                    utf16_offset: None,
-                                },
-                            },
-                        )
-                    });
-                if !issued {
-                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
-                        let _ = self.language_tooling.record_proposal_failure(
-                            &input,
-                            LanguageProposalKind::CodeAction,
-                            "code action request unavailable until a live capable language server is ready"
-                                .to_string(),
-                        );
-                    }
-                }
-                Ok(AppCommandOutcome::language_tooling(
-                    self.language_tooling.projection(),
-                ))
-            }
+                action_id,
+            } => Ok(AppCommandOutcome::language_tooling(
+                self.run_language_proposal(
+                    buffer_id,
+                    LanguageProposalKind::CodeAction,
+                    TextCoordinate {
+                        line: 0,
+                        character: 0,
+                        byte_offset: Some(0),
+                        utf16_offset: Some(0),
+                    },
+                    action_id,
+                )?,
+            )),
             AppCommandRequest::RequestCodeActions { buffer_id, range } => {
                 let issued = self.request_code_actions(buffer_id, range);
                 if !issued {

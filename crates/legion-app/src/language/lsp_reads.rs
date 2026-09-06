@@ -1723,6 +1723,7 @@ impl AppComposition {
     /// Startup can report `Fresh` while the cap-one worker is still delivering
     /// `didOpen` for another open buffer.  A command issued during that window
     /// is a truthful pending-sync state, not a missing server capability.
+    #[allow(dead_code)]
     pub(crate) fn lsp_rename_unavailable_message(&self, buffer_id: BufferId) -> &'static str {
         if self.lsp_server_supports_capability("renameProvider")
             && self.lsp_document_sync_pending(buffer_id)
@@ -1997,8 +1998,23 @@ impl AppComposition {
         &mut self,
         health: legion_protocol::LspServerHealthRecord,
     ) -> std::sync::mpsc::SyncSender<crate::language::LspWorkerResult> {
-        self.lsp_session
-            .set_live_with_result_sender_for_test(health)
+        let sender = self
+            .lsp_session
+            .set_live_with_result_sender_for_test(health);
+        self.mark_injected_lsp_documents_ready_for_test();
+        sender
+    }
+
+    /// Treat an injected Live session like a real Fresh handshake: every open
+    /// buffer must have its desired `didOpen` marked sent before reads or
+    /// `didChange` can go out.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub(crate) fn mark_injected_lsp_documents_ready_for_test(&mut self) {
+        self.reset_document_sync_for_new_session();
+        let open_buffers = self.active_documents.open_tabs.clone();
+        for buffer_id in open_buffers {
+            self.notify_lsp_did_open(buffer_id);
+        }
     }
 
     /// Test-only: the label that would be attached to hints and lenses now.

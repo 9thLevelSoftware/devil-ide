@@ -555,11 +555,10 @@ impl LanguageStartupAuthority {
         if !canonical_root.is_dir() {
             return Err(invalid("workspace root must be a directory"));
         }
-        let canonical_root_text = canonical_root
-            .to_str()
-            .ok_or_else(|| invalid("workspace root must be valid UTF-8"))?;
-        let expected_uri = crate::canonical_path_to_uri(canonical_root_text);
-        if root_uri != expected_uri {
+        let incoming_root = crate::uri_to_canonical_path(&root_uri);
+        let incoming_canonical = std::fs::canonicalize(&incoming_root)
+            .map_err(|_| invalid("language server root URI does not match workspace root"))?;
+        if incoming_canonical != canonical_root {
             return Err(invalid(
                 "language server root URI does not match workspace root",
             ));

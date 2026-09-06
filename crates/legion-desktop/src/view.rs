@@ -2140,6 +2140,7 @@ fn render_compact_drawer_overlay(
     let mut close_requested = false;
     let request_initial_focus = std::mem::take(&mut view.compact_drawer_needs_focus);
     let escape_requested = ctx.input(|input| input.key_pressed(egui::Key::Escape))
+        && !snapshot.palette_projection.open
         && !matches!(
             view.utility_surface,
             Some(UtilitySurface::Settings | UtilitySurface::Setup | UtilitySurface::About)

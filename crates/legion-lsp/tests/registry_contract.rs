@@ -450,19 +450,27 @@ fn resolver_rejects_symlinked_package_escape_and_non_utf8_runtime_path() {
             ..
         })
     ));
-    let non_utf8_node = root.join(std::ffi::OsString::from_vec(vec![
-        b'n', b'o', b'd', b'e', 0xff,
-    ]));
-    std::fs::write(&non_utf8_node, b"node").expect("non-utf8 node");
     std::fs::remove_file(root.join("package")).expect("remove package symlink");
     std::fs::create_dir(root.join("package")).expect("real package");
     std::fs::write(root.join("package/langserver.index.js"), b"entry").expect("entrypoint");
-    assert!(matches!(
-        adapter.resolve_downloaded_process(&root, &non_utf8_node, "18.0.0"),
-        Err(LspDownloadedArtifactResolveError::NonUtf8Path {
-            field: "approved_node"
-        })
-    ));
+    let non_utf8_node = root.join(std::ffi::OsString::from_vec(vec![
+        b'n', b'o', b'd', b'e', 0xff,
+    ]));
+    match std::fs::write(&non_utf8_node, b"node") {
+        Ok(()) => {
+            assert!(matches!(
+                adapter.resolve_downloaded_process(&root, &non_utf8_node, "18.0.0"),
+                Err(LspDownloadedArtifactResolveError::NonUtf8Path {
+                    field: "approved_node"
+                })
+            ));
+        }
+        Err(error) => {
+            // macOS rejects non-UTF-8 filenames at the filesystem, which is a
+            // stronger form of the same gate the resolver enforces on Linux.
+            assert!(cfg!(target_os = "macos"), "non-utf8 node: {error:?}");
+        }
+    }
     std::fs::remove_dir_all(root).expect("cleanup root");
     std::fs::remove_dir_all(outside).expect("cleanup outside");
 }

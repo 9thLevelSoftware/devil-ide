@@ -5316,6 +5316,10 @@ impl DesktopEframeApp {
                 .request_repaint_after(std::time::Duration::from_millis(33));
         }
         let snapshot = self.runtime.projection_snapshot();
+        // Keyboard is handled after paint so visual navigation can use this
+        // frame's editor allocation. Overlay/control chords that egui would
+        // otherwise consume during that paint have to be withdrawn first.
+        self.shield_render_from_shell_chords(ui, &snapshot);
         let view_state = self.runtime.projection_view_state();
         let output = self
             .runtime
@@ -5362,6 +5366,57 @@ impl DesktopEframeApp {
 
         if self.runtime.quit_requested() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// Withdraw shell chords from the live egui input before paint.
+    ///
+    /// `handle_keyboard` runs after the workbench is drawn so visual
+    /// navigation can use this frame's editor allocation. The cloned input
+    /// still carries these events for dispatch; this only stops egui and
+    /// overlay widgets from acting on them during the paint that happens
+    /// first.
+    fn shield_render_from_shell_chords(
+        &mut self,
+        ui: &egui::Ui,
+        snapshot: &ShellProjectionSnapshot,
+    ) {
+        let focused = ui.memory(|memory| memory.focused());
+        let text_edit_focused = ui.ctx().text_edit_focused();
+        if focused.is_some() && !text_edit_focused {
+            ui.input_mut(|state| {
+                state.events.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Enter | egui::Key::Space,
+                            modifiers,
+                            ..
+                        } if modifiers.any()
+                    )
+                });
+            });
+        }
+        if snapshot.palette_projection.open {
+            ui.input_mut(|state| {
+                state.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+            });
+        }
+        // Focus left on a rail button after returning to the editor is not a
+        // claim. Surrender it before paint so a leading space types instead
+        // of pressing the leftover control.
+        let typing_at_stale_control = focused.is_some()
+            && !text_edit_focused
+            && !self.focus_arrived_by_tab
+            && self.runtime.center_surface_is_editor()
+            && ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Text(_)))
+            });
+        if typing_at_stale_control && let Some(focused) = focused {
+            ui.memory_mut(|memory| memory.surrender_focus(focused));
         }
     }
 
@@ -5418,8 +5473,12 @@ impl DesktopEframeApp {
                 } if !modifiers.alt && !modifiers.command
             )
         });
+        let problems_claim_arrows = !snapshot.language_tooling_projection.problems.is_empty()
+            && !self.runtime.projection_view_state().completion_popup_open
+            && self.runtime.center_surface_is_editor();
         if has_visual_arrow
             && editor_input_enabled
+            && !problems_claim_arrows
             && let (Some(buffer_id), Some(viewport)) = (
                 snapshot.active_buffer_projection.buffer_id,
                 snapshot.active_buffer_projection.viewport.as_ref(),
@@ -5512,19 +5571,27 @@ impl DesktopEframeApp {
         // after that was swallowed as an activation.
         let traversal_tab = input.key_pressed(egui::Key::Tab)
             && (!input.modifiers.any() || input.modifiers.shift_only());
-        if traversal_tab
-            || input.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::AccessKitActionRequest(request)
-                        if request.action == egui::accesskit::Action::Focus
-                )
-            })
-        {
+        let accesskit_focus = input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::AccessKitActionRequest(request)
+                    if request.action == egui::accesskit::Action::Focus
+            )
+        });
+        if traversal_tab || accesskit_focus {
             self.focus_navigation_pending = true;
         }
         let focused_now = ui.memory(|memory| memory.focused());
-        if focused_now != self.focus_owner {
+        if accesskit_focus && focused_now.is_some() {
+            // The focus request is the navigation. Paint already applied it,
+            // including when the same control was already focused.
+            self.focus_arrived_by_tab = true;
+            self.focus_owner = focused_now;
+            self.focus_navigation_pending = false;
+        } else if focused_now != self.focus_owner && !traversal_tab {
+            // Paint now runs before this handler, so a traversal Tab has
+            // already moved focus in this same frame. Consuming the pending
+            // flag here would make the chord look like it never armed.
             self.focus_arrived_by_tab = focused_now.is_some() && self.focus_navigation_pending;
             self.focus_owner = focused_now;
             self.focus_navigation_pending = false;
