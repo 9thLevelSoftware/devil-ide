@@ -6,7 +6,9 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use legion_lsp::{DiscoveredBinary, LspStdioSession, LspStdioSpawner, LspSupervisorConfig};
+use legion_lsp::{
+    DiscoveredBinary, LspNodeVersion, LspStdioSession, LspStdioSpawner, LspSupervisorConfig,
+};
 use legion_protocol::{
     CapabilityDecisionId, FileFingerprint, LanguageId, LanguageServerId, LspCapabilitySummary,
     LspResultStatus, LspServerBinaryProvenance, LspServerHealthRecord, SnapshotId,
@@ -104,8 +106,13 @@ pub struct LanguageServerLaunchConfig {
     pub binary_provenance: LspServerBinaryProvenance,
     /// Optional hash of the approved artifact.
     pub artifact_hash: Option<FileFingerprint>,
-    /// Optional version observed for the approved binary/runtime.
+    /// Additional verified artifact identities required by the launch, such
+    /// as the compiler paired with an offline TypeScript server bundle.
+    pub artifact_dependencies: Vec<FileFingerprint>,
+    /// Optional version of the approved language server package.
     pub version: Option<String>,
+    /// Observed Node runtime version used to launch a downloaded server.
+    pub node_runtime_version: Option<LspNodeVersion>,
     /// Optional decision authorizing a downloaded artifact.
     pub download_decision_id: Option<CapabilityDecisionId>,
 }
@@ -126,6 +133,8 @@ pub struct RustAnalyzerLaunchConfig {
 pub struct LanguageServerSession {
     session: LspStdioSession,
     health: LspServerHealthRecord,
+    /// Bounded exact command identifiers advertised by executeCommandProvider.
+    execute_command_ids: Vec<String>,
     /// Shared ring buffer populated by the background stderr drain thread
     /// spawned in `startup_session()`.  Callers clone the `Arc` to extract
     /// the ring for projection (PKT-LSP-C T4).
@@ -151,6 +160,19 @@ const GATED_READ_CAPABILITIES: &[&str] = &[
     "codeLensProvider",
     "callHierarchyProvider",
 ];
+
+/// Edit-producing provider capabilities admitted only when initialize
+/// explicitly advertises them. Object-valued options count as supported;
+/// null, false, and absence remain unsupported.
+const GATED_WRITE_CAPABILITIES: &[&str] = &[
+    "renameProvider",
+    "documentFormattingProvider",
+    "codeActionProvider",
+    "executeCommandProvider",
+];
+
+const EXECUTE_COMMAND_ID_LIMIT: usize = 128;
+const EXECUTE_COMMAND_ID_MAX_BYTES: usize = 256;
 
 impl LanguageServerSession {
     /// Launches a server from supplied, already-approved metadata.
@@ -265,6 +287,15 @@ impl LanguageServerSession {
                 "version must be nonempty when supplied".to_string(),
             ));
         }
+        if !matches!(
+            config.binary_provenance,
+            LspServerBinaryProvenance::Downloaded
+        ) && config.node_runtime_version.is_some()
+        {
+            return Err(LanguageSessionError::InvalidConfiguration(
+                "Node runtime version requires downloaded provenance".to_string(),
+            ));
+        }
         match config.binary_provenance {
             LspServerBinaryProvenance::Downloaded => {
                 let Some(hash) = config.artifact_hash.as_ref() else {
@@ -278,8 +309,21 @@ impl LanguageServerSession {
                             .to_string(),
                     ));
                 }
+                if config
+                    .artifact_dependencies
+                    .iter()
+                    .any(|dependency| !is_sha256_fingerprint(dependency))
+                {
+                    return Err(LanguageSessionError::InvalidConfiguration(
+                        "downloaded artifact dependency must be a 64-digit sha256 fingerprint"
+                            .to_string(),
+                    ));
+                }
             }
-            _ if config.artifact_hash.is_some() || config.download_decision_id.is_some() => {
+            _ if config.artifact_hash.is_some()
+                || config.download_decision_id.is_some()
+                || !config.artifact_dependencies.is_empty() =>
+            {
                 return Err(LanguageSessionError::InvalidConfiguration(
                     "artifact hash and download decision require downloaded provenance".to_string(),
                 ));
@@ -309,6 +353,7 @@ impl LanguageServerSession {
         Ok(Self {
             session,
             health,
+            execute_command_ids: Vec::new(),
             stderr_ring: Arc::new(Mutex::new(VecDeque::new())),
         })
     }
@@ -331,7 +376,9 @@ impl LanguageServerSession {
                 language_id: config.language_id,
                 binary_provenance: provenance,
                 artifact_hash: None,
+                artifact_dependencies: Vec::new(),
                 version: None,
+                node_runtime_version: None,
                 download_decision_id: None,
             },
             launcher,
@@ -377,6 +424,7 @@ impl LanguageServerSession {
             .map_err(LanguageSessionError::Handshake)?;
 
         self.health.init_status = response.status;
+        self.execute_command_ids.clear();
 
         // Parse capability summaries from the initialize result body.
         // Only populate when the handshake succeeded; an error result has no capabilities.
@@ -419,6 +467,34 @@ impl LanguageServerSession {
                     schema_version: 1,
                 });
             }
+            for &cap_name in GATED_WRITE_CAPABILITIES {
+                let supported = caps
+                    .get(cap_name)
+                    .map(|v| !v.is_null() && v.as_bool() != Some(false))
+                    .unwrap_or(false);
+                self.health.capabilities.push(LspCapabilitySummary {
+                    capability: cap_name.to_string(),
+                    supported,
+                    dynamic_registration: false,
+                    option_hash: None,
+                    redaction_hints: Vec::new(),
+                    schema_version: 1,
+                });
+            }
+            self.execute_command_ids = parse_execute_command_ids(caps);
+            let resolve_supported = caps
+                .get("codeActionProvider")
+                .and_then(|value| value.get("resolveProvider"))
+                .map(|value| !value.is_null() && value.as_bool() != Some(false))
+                .unwrap_or(false);
+            self.health.capabilities.push(LspCapabilitySummary {
+                capability: "codeActionResolveProvider".to_string(),
+                supported: resolve_supported,
+                dynamic_registration: false,
+                option_hash: None,
+                redaction_hints: Vec::new(),
+                schema_version: 1,
+            });
             // `diagnosticProvider` (LSP 3.17 pull diagnostics) is an object
             // capability, not a bool: present-and-not-false means supported.
             // rust-analyzer >= 1.96-era serves NATIVE diagnostics (type
@@ -654,6 +730,24 @@ impl LanguageServerSession {
             .any(|c| c.capability == "diagnosticProvider" && c.supported)
     }
 
+    /// Returns whether the current initialize response advertised this exact
+    /// execute-command identifier. The list is replaced on every initialize
+    /// and bounded to keep server metadata from becoming an unbounded cache.
+    pub fn supports_execute_command(&self, command_id: &str) -> bool {
+        !command_id.is_empty()
+            && command_id.len() <= EXECUTE_COMMAND_ID_MAX_BYTES
+            && self
+                .execute_command_ids
+                .binary_search_by(|candidate| candidate.as_str().cmp(command_id))
+                .is_ok()
+    }
+
+    /// Returns the bounded exact command identifiers from the current
+    /// initialize response for app/session capability projection.
+    pub(crate) fn execute_command_ids(&self) -> &[String] {
+        &self.execute_command_ids
+    }
+
     /// Issues a `textDocument/diagnostic` pull request (LSP 3.17) for `uri`
     /// and parses the document diagnostic report.
     ///
@@ -666,9 +760,10 @@ impl LanguageServerSession {
     /// live. Transport/timeout failures surface as
     /// [`LanguageSessionError::ReadRequest`]; callers polling in a loop
     /// should treat those as retryable.
-    pub fn pull_diagnostics(
+    pub fn pull_diagnostics_with_context(
         &mut self,
         uri: &str,
+        operation_context: legion_protocol::LspOperationContext,
     ) -> Result<PulledDiagnostics, LanguageSessionError> {
         if self.health.init_status != legion_protocol::LspResultStatus::Fresh {
             return Err(LanguageSessionError::Unavailable);
@@ -681,7 +776,7 @@ impl LanguageServerSession {
             .request(
                 "textDocument/diagnostic".to_string(),
                 params,
-                super::operation_context(),
+                operation_context,
             )
             .map_err(LanguageSessionError::ReadRequest)?;
         Ok(parse_pull_diagnostics_result(&response.result, uri))
@@ -701,16 +796,26 @@ impl LanguageServerSession {
     /// Returns [`LanguageSessionError::Unavailable`] immediately if the session
     /// is not in an initialized/live state (e.g. post-crash backoff). No write
     /// is made to the transport in that case.
-    pub fn request_read(
+    pub fn request_read_with_context(
         &mut self,
         method: &str,
         params: serde_json::Value,
         snapshot_id: SnapshotId,
+        operation_context: Option<legion_protocol::LspOperationContext>,
     ) -> Result<LspReadOutcome, LanguageSessionError> {
         if self.health.init_status != legion_protocol::LspResultStatus::Fresh {
             return Err(LanguageSessionError::Unavailable);
         }
-        let ctx = super::operation_context_for_snapshot(snapshot_id);
+        let Some(ctx) = operation_context else {
+            return Err(LanguageSessionError::InvalidConfiguration(
+                "document LSP requests require an app-admitted operation context".to_string(),
+            ));
+        };
+        if ctx.snapshot_id != snapshot_id {
+            return Err(LanguageSessionError::InvalidConfiguration(
+                "document LSP context snapshot does not match request snapshot".to_string(),
+            ));
+        }
         let response = self
             .session
             .request(method.to_string(), params, ctx)
@@ -841,6 +946,31 @@ impl LanguageServerSession {
         self.health.restart_count = attempt + 1;
         Some(policy.backoff_for_attempt(attempt))
     }
+}
+
+fn parse_execute_command_ids(
+    capabilities: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<String> {
+    let mut command_ids = Vec::new();
+    let Some(commands) = capabilities
+        .get("executeCommandProvider")
+        .and_then(|value| value.get("commands"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return command_ids;
+    };
+    for command in commands.iter().take(EXECUTE_COMMAND_ID_LIMIT) {
+        let Some(command) = command.as_str() else {
+            continue;
+        };
+        if command.is_empty() || command.len() > EXECUTE_COMMAND_ID_MAX_BYTES {
+            continue;
+        }
+        command_ids.push(command.to_string());
+    }
+    command_ids.sort_unstable();
+    command_ids.dedup();
+    command_ids
 }
 
 fn is_sha256_fingerprint(fingerprint: &FileFingerprint) -> bool {
@@ -1206,7 +1336,9 @@ mod configured_launch_tests {
                 value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
             }),
+            artifact_dependencies: Vec::new(),
             version: Some("1.2.3".to_string()),
+            node_runtime_version: None,
             // Local verified artifact import has no network/download decision;
             // the separate lsp.launch decision is carried by posture.
             download_decision_id: None,
@@ -1236,6 +1368,21 @@ mod configured_launch_tests {
         assert!(matches!(
             result,
             Err(LanguageSessionError::InvalidConfiguration(_))
+        ));
+    }
+
+    #[test]
+    fn generic_config_rejects_malformed_artifact_dependency_before_spawn() {
+        let mut invalid = config(LanguageServerId(7), "python");
+        invalid.artifact_dependencies.push(FileFingerprint {
+            algorithm: "sha256".to_string(),
+            value: "not-a-digest".to_string(),
+        });
+        let mut launcher = MustNotSpawn;
+        assert!(matches!(
+            LanguageServerSession::launch_configured(invalid, &mut launcher),
+            Err(LanguageSessionError::InvalidConfiguration(reason))
+                if reason.contains("artifact dependency")
         ));
     }
 
@@ -1450,14 +1597,59 @@ mod configured_launch_tests {
 
         session.initialize("file:///workspace").expect("initialize");
         let outcome = session
-            .request_read(
+            .request_read_with_context(
                 "textDocument/completion",
                 serde_json::json!({"textDocument": {"uri": "file:///workspace/main.py"}}),
                 SnapshotId(11),
+                Some(super::super::operation_context_for_snapshot(SnapshotId(11))),
             )
             .expect("completion request should route through generic session");
         assert_eq!(outcome.issued_snapshot, SnapshotId(11));
         assert_eq!(outcome.result["items"][0]["label"], "mockCompletion");
+    }
+}
+
+#[cfg(test)]
+mod execute_command_capability_tests {
+    use super::parse_execute_command_ids;
+
+    #[test]
+    fn parses_exact_commands_skips_malformed_and_enforces_bound() {
+        let mut commands = vec![
+            serde_json::json!("rust-analyzer.reload"),
+            serde_json::json!("rust-analyzer.organizeImports"),
+            serde_json::json!(null),
+            serde_json::json!(42),
+            serde_json::json!(""),
+            serde_json::json!("x".repeat(257)),
+        ];
+        commands.extend((0..130).map(|index| serde_json::json!(format!("test.command.{index}"))));
+        let capabilities = serde_json::json!({
+            "executeCommandProvider": { "commands": commands }
+        });
+        let ids = parse_execute_command_ids(capabilities.as_object().expect("object"));
+        // The parser bounds the wire array it examines at 128 entries.  The
+        // malformed records occupy four of those slots, so only 124 valid
+        // identifiers are retained from this deliberately adversarial input.
+        assert_eq!(ids.len(), 124);
+        assert!(ids.iter().any(|id| id == "rust-analyzer.reload"));
+        assert!(ids.iter().any(|id| id == "rust-analyzer.organizeImports"));
+        assert!(!ids.iter().any(|id| id.is_empty()));
+        assert!(!ids.iter().any(|id| id.len() > 256));
+        assert!(!ids.iter().any(|id| id == "unknown.command"));
+    }
+
+    #[test]
+    fn absent_or_malformed_provider_has_no_exact_commands() {
+        for capabilities in [
+            serde_json::json!({}),
+            serde_json::json!({ "executeCommandProvider": false }),
+            serde_json::json!({ "executeCommandProvider": { "commands": [null, 7] } }),
+        ] {
+            assert!(
+                parse_execute_command_ids(capabilities.as_object().expect("object")).is_empty()
+            );
+        }
     }
 }
 

@@ -28,6 +28,7 @@ fn line(text: &str) -> DesktopCodeLineViewModel {
             },
         },
         line_start_byte_offset: Some(0),
+        logical_end_byte: Some(text.len() as u64),
         line_start_utf16_offset: None,
     }
 }
@@ -277,6 +278,7 @@ fn sliced_line(state: ViewportLineTruncationState, text: &str) -> DesktopCodeLin
     model.truncation_state = state;
     model.byte_range = legion_protocol::ByteRange::new(100, 100 + text.len() as u64);
     model.line_start_byte_offset = Some(90);
+    model.logical_end_byte = Some(90 + text.len() as u64);
     model
 }
 

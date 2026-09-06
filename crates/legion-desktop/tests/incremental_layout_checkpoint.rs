@@ -8,7 +8,7 @@
 //! decision that needs later glyphs cannot leak into the committed prefix.
 
 use egui::{Context, Galley};
-use legion_desktop::view::{editor_galley_for_geometry, DesktopCodeLineViewModel};
+use legion_desktop::view::{DesktopCodeLineViewModel, editor_galley_for_geometry};
 use legion_protocol::{ByteRange, Utf16Position, Utf16Range, ViewportLineTruncationState};
 
 fn with_ui<T>(mut f: impl FnMut(&egui::Ui) -> T) -> T {
@@ -29,10 +29,17 @@ fn shape(ctx: &Context, text: &str, width: f32) -> std::sync::Arc<Galley> {
         truncation_state: ViewportLineTruncationState::None,
         byte_range: ByteRange::new(0, text.len() as u64),
         utf16_range: Utf16Range {
-            start: Utf16Position { line: 0, character: 0 },
-            end: Utf16Position { line: 0, character: utf16_len },
+            start: Utf16Position {
+                line: 0,
+                character: 0,
+            },
+            end: Utf16Position {
+                line: 0,
+                character: utf16_len,
+            },
         },
         line_start_byte_offset: Some(0),
+        logical_end_byte: Some(text.len() as u64),
         line_start_utf16_offset: Some(0),
     };
     editor_galley_for_geometry(ctx, &line, width)
@@ -96,7 +103,11 @@ fn signatures(galley: &Galley) -> Vec<RowSignature> {
 }
 
 fn row_texts(galley: &Galley) -> Vec<String> {
-    galley.rows.iter().map(|row| row.text().to_owned()).collect()
+    galley
+        .rows
+        .iter()
+        .map(|row| row.text().to_owned())
+        .collect()
 }
 
 fn char_boundary(text: &str, chars: usize) -> usize {
@@ -201,17 +212,9 @@ fn phase_carried_leading_space_inserts_one_empty_row_counterexample() {
     with_ui(|ui| {
         let ctx = ui.ctx().clone();
         let text = "alpha beta gamma delta epsilon zeta eta theta";
-        for (pixels_per_point, width, split) in
-            [(1.0, 92.0, 13), (1.5, 92.0, 13), (1.5, 87.0, 17)]
+        for (pixels_per_point, width, split) in [(1.0, 92.0, 13), (1.5, 92.0, 13), (1.5, 87.0, 17)]
         {
-            let reference = signatures(&shape_job(
-                &ctx,
-                text,
-                width,
-                0.0,
-                true,
-                pixels_per_point,
-            ));
+            let reference = signatures(&shape_job(&ctx, text, width, 0.0, true, pixels_per_point));
             let first = shape_job(
                 &ctx,
                 &text[..char_boundary(text, split)],
@@ -255,14 +258,7 @@ fn phase_carried_prefix_metrics_keeps_kerning_boundary_explicit() {
         let width = 44.0;
         let split = 7;
         let pixels_per_point = 1.5;
-        let reference = signatures(&shape_job(
-            &ctx,
-            text,
-            width,
-            0.0,
-            true,
-            pixels_per_point,
-        ));
+        let reference = signatures(&shape_job(&ctx, text, width, 0.0, true, pixels_per_point));
         let carried = phase_carried_rows(&ctx, text, width, split, pixels_per_point);
 
         // The pen phase is carried, but the public LayoutJob seam still starts

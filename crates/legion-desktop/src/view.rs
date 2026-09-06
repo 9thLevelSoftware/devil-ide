@@ -17,6 +17,11 @@ pub mod ghost_text;
 pub mod rail_icons;
 /// Source-control panel: status rows, remote verbs, and per-hunk staging.
 mod source_control;
+/// Bounded source-to-atlas layout for oversized logical lines.
+mod streamed_layout;
+#[cfg(test)]
+#[path = "view/streamed_multiline_projection_tests.rs"]
+mod streamed_multiline_projection_tests;
 /// The editor tab strip: tabs, close affordance, drag-to-reorder.
 mod tab_strip;
 /// Test explorer tree for the Tests surface.
@@ -117,14 +122,15 @@ use legion_protocol::{
     ContextManifestInclusionState, DelegatedTaskProposalHunkDisposition,
     DelegatedTaskRiskTolerance, DelegatedTaskRuntimeActivationState, DelegatedTaskScope,
     DelegatedTaskScopeTargetKind, DelegatedTaskToolPermissionDecision, FileId,
-    LanguageInlayHintProjection, LanguageLocationProjection, LanguageProblemProjection,
-    LegionToolKind, LineWrappingPolicy, PluginCommandDescriptor, PluginContribution,
-    PluginContributionProjection, PrivacyInspectorRedactionState, ProposalId,
-    ProposalLifecycleState, ProposalRejectionReason, ProposalRiskLabel, ProtocolDiagnosticSeverity,
-    ProtocolTextRange, TextCoordinate, Utf16Range, ViewportLineTruncationState,
-    ViewportProjectionMode, ViewportScroll, ViewportSemanticTokenKind,
-    ViewportSemanticTokenOverlay, VisualNavigationPosition, VisualNavigationRow,
-    VisualNavigationSourceRow, VisualNavigationStop, VisualNavigationX,
+    LanguageCodeActionProjection, LanguageInlayHintProjection, LanguageLocationProjection,
+    LanguageProblemProjection, LanguageToolchainConfigurationStatus, LegionToolKind,
+    LineWrappingPolicy, PluginCommandDescriptor, PluginContribution, PluginContributionProjection,
+    PrivacyInspectorRedactionState, ProposalId, ProposalLifecycleState, ProposalRejectionReason,
+    ProposalRiskLabel, ProtocolDiagnosticSeverity, ProtocolTextRange, TextCoordinate,
+    TypeScriptToolchainProjection, Utf16Range, ViewportLineTruncationState, ViewportProjectionMode,
+    ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay,
+    VisualNavigationPosition, VisualNavigationRow, VisualNavigationSourceRow, VisualNavigationStop,
+    VisualNavigationX, WorkspaceId,
 };
 use legion_ui::{
     ActiveBufferProjection, DebugStepKindProjection, DockLayout, DockMode, DockSide,
@@ -137,6 +143,11 @@ use legion_ui::{
 use crate::{
     bridge::DesktopAction, health::DesktopOperationalHealthSnapshot,
     search::DesktopSearchViewModel, theme,
+};
+
+pub(crate) use streamed_layout::{
+    DesktopLineChunk, DesktopLineSource, DesktopSourceIdentity, StreamedLayoutCachePool,
+    StreamedNavigationRequest, StreamedNavigationRows, StreamedRequestedRow,
 };
 
 const COMMAND_PALETTE_VISIBLE_RESULT_ROWS: usize = 10;
@@ -487,6 +498,8 @@ pub struct DesktopCodeLineViewModel {
     pub utf16_range: Utf16Range,
     /// Snapshot byte origin of the logical line, when exact metrics provide it.
     pub line_start_byte_offset: Option<u64>,
+    /// Absolute snapshot byte end of the complete logical line, when known.
+    pub logical_end_byte: Option<u64>,
     /// Snapshot UTF-16 origin of the logical line, when exact metrics provide it.
     pub line_start_utf16_offset: Option<u64>,
 }
@@ -704,6 +717,15 @@ impl DesktopSettingsViewModel {
         }
     }
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct TypeScriptToolchainDraft {
+    server_archive: String,
+    compiler_archive: String,
+    node_executable: String,
+}
+
+const TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DesktopSetupChecklistItem {
@@ -1327,6 +1349,10 @@ pub struct ProjectionView {
     pending_mode_confirmation_origin: Option<egui::Id>,
     pending_mode_confirmation_needs_focus: bool,
     mode_confirmation_restore_focus: Option<egui::Id>,
+    streamed_layout_cache: StreamedLayoutCachePool,
+    typescript_toolchain_draft: TypeScriptToolchainDraft,
+    typescript_toolchain_projection: Option<TypeScriptToolchainProjection>,
+    typescript_toolchain_workspace: Option<WorkspaceId>,
 }
 
 /// Renderer-owned selection for the workspace activity rail.
@@ -1391,6 +1417,7 @@ enum SettingsSection {
     #[default]
     Appearance,
     Editor,
+    LanguageTools,
     AiProviders,
     Extensions,
     Notifications,
@@ -1399,9 +1426,10 @@ enum SettingsSection {
 }
 
 impl SettingsSection {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Editor,
+        Self::LanguageTools,
         Self::AiProviders,
         Self::Extensions,
         Self::Notifications,
@@ -1413,6 +1441,7 @@ impl SettingsSection {
         match self {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
+            Self::LanguageTools => "Language Tools",
             Self::AiProviders => "AI Providers",
             Self::Extensions => "Extensions",
             Self::Notifications => "Notifications",
@@ -1448,6 +1477,66 @@ impl Default for ProjectionView {
 }
 
 impl ProjectionView {
+    fn sync_typescript_toolchain_draft(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        projection: &TypeScriptToolchainProjection,
+    ) {
+        if self.typescript_toolchain_workspace == workspace_id
+            && self.typescript_toolchain_projection.as_ref() == Some(projection)
+        {
+            return;
+        }
+        self.typescript_toolchain_draft = projection
+            .settings
+            .as_ref()
+            .map(|settings| TypeScriptToolchainDraft {
+                server_archive: bounded_typescript_toolchain_path(
+                    settings.server_archive.0.clone(),
+                ),
+                compiler_archive: bounded_typescript_toolchain_path(
+                    settings.compiler_archive.0.clone(),
+                ),
+                node_executable: bounded_typescript_toolchain_path(
+                    settings.node_executable.0.clone(),
+                ),
+            })
+            .unwrap_or_default();
+        self.typescript_toolchain_projection = Some(projection.clone());
+        self.typescript_toolchain_workspace = workspace_id;
+    }
+
+    pub(crate) fn request_streamed_navigation(
+        &mut self,
+        identity: DesktopSourceIdentity,
+        row: StreamedRequestedRow,
+    ) {
+        self.streamed_layout_cache
+            .request_navigation(StreamedNavigationRequest { identity, row });
+    }
+
+    pub(crate) fn streamed_navigation_requests(&self) -> Vec<StreamedNavigationRequest> {
+        self.streamed_layout_cache.streamed_navigation_requests()
+    }
+
+    pub(crate) fn streamed_navigation_rows(
+        &self,
+        identity: DesktopSourceIdentity,
+    ) -> Option<StreamedNavigationRows> {
+        self.streamed_layout_cache.navigation_rows(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_streamed_navigation_error_for_test(
+        &mut self,
+        identity: DesktopSourceIdentity,
+        row: StreamedRequestedRow,
+        error: &str,
+    ) {
+        self.streamed_layout_cache
+            .inject_navigation_error_for_test(identity, row, error);
+    }
+
     /// Creates a projection view with no product-state ownership.
     pub fn new() -> Self {
         Self {
@@ -1472,6 +1561,10 @@ impl ProjectionView {
             pending_mode_confirmation_origin: None,
             pending_mode_confirmation_needs_focus: false,
             mode_confirmation_restore_focus: None,
+            streamed_layout_cache: StreamedLayoutCachePool::default(),
+            typescript_toolchain_draft: TypeScriptToolchainDraft::default(),
+            typescript_toolchain_projection: None,
+            typescript_toolchain_workspace: None,
         }
     }
 
@@ -1597,7 +1690,22 @@ impl ProjectionView {
         snapshot: &ShellProjectionSnapshot,
         state: &DesktopProjectionViewState,
     ) -> ProjectionViewOutput {
+        self.render_with_state_and_source(ui, snapshot, state, None)
+    }
+
+    /// Render with an optional app-owned bounded source for oversized lines.
+    pub fn render_with_state_and_source(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &ShellProjectionSnapshot,
+        state: &DesktopProjectionViewState,
+        source: Option<&dyn DesktopLineSource>,
+    ) -> ProjectionViewOutput {
         self.normalize_mode_confirmation(snapshot.product_mode);
+        self.sync_typescript_toolchain_draft(
+            snapshot.language_tooling_projection.workspace_id,
+            &snapshot.language_tooling_projection.typescript_toolchain,
+        );
         let mut selected_bottom_panel = state.selected_bottom_panel;
         // Filled in by the standard layout branch below. Compact layouts leave
         // it empty: their panel sizes are fixed, not user-arranged, and
@@ -1845,7 +1953,14 @@ impl ProjectionView {
                 // and a canvas that returned nothing would fail them for a
                 // reason unrelated to the canvas.
                 self.last_editor_rect = Some(match state.center_surface {
-                    CenterSurface::Editor => render_code_canvas(ui, snapshot, &model, &mut actions),
+                    CenterSurface::Editor => render_code_canvas(
+                        ui,
+                        snapshot,
+                        &model,
+                        &mut actions,
+                        source,
+                        &mut self.streamed_layout_cache,
+                    ),
                     CenterSurface::Canvas => canvas_workspace::render_canvas_workspace(
                         ui,
                         snapshot,
@@ -2759,9 +2874,11 @@ fn render_code_canvas(
     snapshot: &ShellProjectionSnapshot,
     model: &DesktopProjectionViewModel,
     actions: &mut Vec<DesktopAction>,
+    source: Option<&dyn DesktopLineSource>,
+    streamed_cache: &mut StreamedLayoutCachePool,
 ) -> egui::Rect {
     render_advanced_center_surface(ui, snapshot, model, actions);
-    render_editor_canvas(ui, snapshot, model, actions)
+    render_editor_canvas(ui, snapshot, model, actions, source, streamed_cache)
 }
 
 fn render_advanced_center_surface(
@@ -3553,6 +3670,8 @@ fn render_editor_canvas(
     snapshot: &ShellProjectionSnapshot,
     model: &DesktopProjectionViewModel,
     actions: &mut Vec<DesktopAction>,
+    source: Option<&dyn DesktopLineSource>,
+    streamed_cache: &mut StreamedLayoutCachePool,
 ) -> egui::Rect {
     render_tab_strip(ui, snapshot, actions);
     if ui.available_height() >= 250.0 {
@@ -3590,7 +3709,7 @@ fn render_editor_canvas(
                 .auto_shrink([false, false])
                 .show(&mut code_ui, |ui| {
                     let mut painter = EguiCodeCanvasPainter;
-                    painter.paint_lines(ui, snapshot, model, actions);
+                    painter.paint_lines(ui, snapshot, model, actions, source, streamed_cache);
                 });
 
             // Minimap: right column.
@@ -3783,6 +3902,8 @@ fn render_code_lines(
     snapshot: &ShellProjectionSnapshot,
     model: &DesktopProjectionViewModel,
     actions: &mut Vec<DesktopAction>,
+    source: Option<&dyn DesktopLineSource>,
+    streamed_cache: &mut StreamedLayoutCachePool,
 ) {
     if snapshot.active_buffer_projection.buffer_id.is_none() {
         ui.label(theme::muted("<no active buffer>"));
@@ -3877,6 +3998,49 @@ fn render_code_lines(
         // The active sticky scope is still projected and is still rendered
         // where it belongs; see `sticky_scopes` in the language-tooling panel.
 
+        let mut source_budget = streamed_layout::MAX_FRAME_SOURCE_BYTES;
+        let mut row_budget = streamed_layout::MAX_FRAME_ROWS;
+        let mut glyph_budget = streamed_layout::MAX_FRAME_GLYPHS;
+        if let Some(source) = source {
+            let active = model
+                .active_buffer_code_lines
+                .iter()
+                .filter(|line| !matches!(line.truncation_state, ViewportLineTruncationState::None))
+                .map(|line| source.identity(line.number.saturating_sub(1) as usize))
+                .collect::<Vec<_>>();
+            streamed_cache.begin_frame(&active);
+            if !streamed_cache.streamed_navigation_requests().is_empty() {
+                let (_, _, wrap_width) = active_code_line_wrap_config(
+                    model.settings.line_wrapping_policy,
+                    model.settings.wrap_column,
+                    viewport.map(|viewport| (viewport.line_wrapping_policy, viewport.wrap_column)),
+                    ui.available_width(),
+                );
+                streamed_cache.service_one_navigation(
+                    ui,
+                    source,
+                    streamed_layout::StreamedLayoutOptions {
+                        format: egui::text::TextFormat {
+                            font_id: egui::FontId::monospace(
+                                model.settings.editor_font_size_pt as f32,
+                            ),
+                            color: theme::tokens().text.secondary,
+                            ..Default::default()
+                        },
+                        pixels_per_point: ui.ctx().pixels_per_point(),
+                        wrap_width,
+                        break_anywhere: false,
+                        visible_rows: 0..streamed_layout::MAX_FRAME_ROWS,
+                        visible_bytes: 0..streamed_layout::MAX_FRAME_GLYPHS as u64,
+                    },
+                    streamed_layout::StreamedFrameBudget {
+                        source_bytes: &mut source_budget,
+                        rows: &mut row_budget,
+                        glyphs: &mut glyph_budget,
+                    },
+                );
+            }
+        }
         for line in &model.active_buffer_code_lines {
             ui.horizontal(|ui| {
                 let git_marker = git_hunk_marker_for_line(
@@ -3930,6 +4094,113 @@ fn render_code_lines(
                             font_size_bucket: code_line_font_size_bucket(),
                         },
                     );
+                }
+                if let Some(source) = source
+                    && !matches!(line.truncation_state, ViewportLineTruncationState::None)
+                {
+                    let format = egui::text::TextFormat {
+                        font_id: egui::FontId::monospace(model.settings.editor_font_size_pt as f32),
+                        color: theme::tokens().text.secondary,
+                        ..Default::default()
+                    };
+                    if let Ok(result) = streamed_cache.paint_visible(
+                        ui,
+                        source,
+                        line.number.saturating_sub(1) as usize,
+                        streamed_layout::StreamedLayoutOptions {
+                            format,
+                            pixels_per_point: ui.ctx().pixels_per_point(),
+                            wrap_width,
+                            break_anywhere: false,
+                            visible_rows: 0..streamed_layout::MAX_FRAME_ROWS,
+                            visible_bytes: line.byte_range.start..line.byte_range.end,
+                        },
+                        streamed_layout::StreamedFrameBudget {
+                            source_bytes: &mut source_budget,
+                            rows: &mut row_budget,
+                            glyphs: &mut glyph_budget,
+                        },
+                    ) {
+                        let height = result
+                            .rows
+                            .iter()
+                            .map(|row| row.rect.height())
+                            .sum::<f32>()
+                            .max(18.0);
+                        let response = ui.allocate_response(
+                            egui::vec2(ui.available_width(), height),
+                            egui::Sense::click_and_drag(),
+                        );
+                        if let Some(pointer) = response.interact_pointer_pos()
+                            && let Some((absolute_byte, affinity)) = result
+                                .rows
+                                .iter()
+                                .filter(|row| {
+                                    let y = pointer.y - response.rect.min.y;
+                                    row.rect.y_range().contains(y)
+                                })
+                                .flat_map(|row| {
+                                    row.stops.iter().filter_map(move |(byte, x)| {
+                                        row.source_byte_range.contains(byte).then_some((
+                                            *byte,
+                                            *x,
+                                            (pointer.x - response.rect.min.x - *x).abs(),
+                                        ))
+                                    })
+                                })
+                                .min_by(|left, right| left.2.total_cmp(&right.2))
+                                .map(|(byte, x, _)| {
+                                    (
+                                        byte,
+                                        if pointer.x - response.rect.min.x >= x {
+                                            CaretAffinity::Downstream
+                                        } else {
+                                            CaretAffinity::Upstream
+                                        },
+                                    )
+                                })
+                            && let Some(buffer_id) = active_buffer_id
+                            && let Some(viewport) = viewport
+                        {
+                            let origin =
+                                line.line_start_byte_offset.unwrap_or(line.byte_range.start);
+                            let coordinate = TextCoordinate {
+                                line: line.number.saturating_sub(1),
+                                character: absolute_byte.saturating_sub(origin) as u32,
+                                byte_offset: Some(absolute_byte),
+                                utf16_offset: None,
+                            };
+                            if response.clicked() {
+                                actions.push(DesktopAction::SetVisualCursor {
+                                    buffer_id: Some(buffer_id),
+                                    expected_snapshot_id: viewport.snapshot_id,
+                                    expected_buffer_version: viewport.buffer_version,
+                                    cursor: coordinate,
+                                    affinity,
+                                });
+                            }
+                            if response.dragged() || response.drag_stopped() {
+                                actions.push(DesktopAction::SetVisualDirectedSelection {
+                                    buffer_id: Some(buffer_id),
+                                    expected_snapshot_id: viewport.snapshot_id,
+                                    expected_buffer_version: viewport.buffer_version,
+                                    anchor: current_cursor,
+                                    head: coordinate,
+                                    head_affinity: affinity,
+                                });
+                            }
+                        }
+                        for row in result.rows {
+                            let mut mesh = row.mesh;
+                            mesh.translate(response.rect.min.to_vec2());
+                            ui.painter().add(egui::Shape::mesh(mesh));
+                        }
+                        if result.needs_repaint {
+                            ui.ctx().request_repaint();
+                        }
+                        let _ = response;
+                        return;
+                    }
                 }
                 let galley =
                     cached_code_line_galley(ui, active_buffer_id, snapshot_id, line, wrap_width);
@@ -4175,6 +4446,18 @@ fn render_code_lines(
         if definitions.len() > 1 {
             render_definition_picker(ui, definitions, actions);
         }
+        if !snapshot.language_tooling_projection.references.is_empty() {
+            render_reference_panel(
+                ui,
+                &snapshot.language_tooling_projection.references,
+                actions,
+            );
+        }
+        render_code_action_panel(
+            ui,
+            &snapshot.language_tooling_projection.code_action_candidates,
+            actions,
+        );
 
         return;
     }
@@ -5629,6 +5912,128 @@ fn render_definition_picker(
         });
 }
 
+/// Show bounded, keyboard-focusable reference locations from the authoritative
+/// language projection. Activation emits the normal path-opening action.
+fn render_reference_panel(
+    ui: &mut egui::Ui,
+    references: &[LanguageLocationProjection],
+    actions: &mut Vec<DesktopAction>,
+) {
+    let tokens = theme::tokens();
+    egui::Area::new("legion_desktop_reference_panel".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -100.0))
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(560.0);
+            egui::Frame::new()
+                .fill(tokens.bg.panel)
+                .stroke(egui::Stroke::new(1.0_f32, tokens.border.default))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.label(theme::body_strong("References"));
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .id_salt("reference_panel_scroll")
+                        .show(ui, |ui| {
+                            for reference in references.iter().take(64) {
+                                let path = reference
+                                    .path
+                                    .as_ref()
+                                    .map(|path| path.0.as_str())
+                                    .unwrap_or("<unavailable path>");
+                                let (line, character) = reference
+                                    .range
+                                    .as_ref()
+                                    .map(|range| (range.start.line, range.start.character))
+                                    .unwrap_or((0, 0));
+                                let label = format!(
+                                    "{}  {}:{}:{}",
+                                    reference.label,
+                                    path,
+                                    line + 1,
+                                    character + 1
+                                );
+                                if ui
+                                    .add(egui::Button::new(theme::body(&label)).wrap())
+                                    .clicked()
+                                    && reference.path.is_some()
+                                    && reference.range.is_some()
+                                {
+                                    actions.push(DesktopAction::NavigateToReference {
+                                        path: path.to_owned(),
+                                        line,
+                                        character,
+                                    });
+                                }
+                            }
+                        });
+                });
+        });
+}
+
+fn render_code_action_panel(
+    ui: &mut egui::Ui,
+    candidates: &[LanguageCodeActionProjection],
+    actions: &mut Vec<DesktopAction>,
+) {
+    let tokens = theme::tokens();
+    egui::Area::new("legion_desktop_code_action_panel".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(560.0);
+            egui::Frame::new()
+                .fill(tokens.bg.panel)
+                .stroke(egui::Stroke::new(1.0_f32, tokens.border.default))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(theme::body_strong("Code actions"));
+                        if ui.button("Request").clicked() {
+                            actions.push(DesktopAction::RequestCodeActions);
+                        }
+                    });
+                    if candidates.is_empty() {
+                        ui.label(theme::muted("No code actions available"));
+                        return;
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .id_salt("code_action_panel_scroll")
+                        .show(ui, |ui| {
+                            for candidate in candidates.iter().take(64) {
+                                let suffix = candidate
+                                    .kind
+                                    .as_deref()
+                                    .map(|kind| format!(" ({kind})"))
+                                    .unwrap_or_default();
+                                let disabled = candidate.disabled_reason.is_some();
+                                let text = if let Some(reason) = &candidate.disabled_reason {
+                                    format!("{}{} — disabled: {}", candidate.title, suffix, reason)
+                                } else {
+                                    format!("{}{}", candidate.title, suffix)
+                                };
+                                if ui
+                                    .add_enabled(
+                                        !disabled,
+                                        egui::Button::new(theme::body(&text)).wrap(),
+                                    )
+                                    .clicked()
+                                {
+                                    actions.push(DesktopAction::SelectCodeAction {
+                                        response_id: candidate.response_id.clone(),
+                                        action_id: candidate.action_id.clone(),
+                                    });
+                                }
+                            }
+                        });
+                });
+        });
+}
+
 fn paint_ime_composition(
     ui: &egui::Ui,
     line: &DesktopCodeLineViewModel,
@@ -6320,6 +6725,34 @@ fn render_setup_panel(
     .inner
 }
 
+fn bound_typescript_toolchain_path(value: &mut String) {
+    if value.chars().count() > TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS {
+        *value = value
+            .chars()
+            .take(TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS)
+            .collect();
+    }
+}
+
+fn bounded_typescript_toolchain_path(mut value: String) -> String {
+    bound_typescript_toolchain_path(&mut value);
+    value
+}
+
+fn active_file_supports_typescript(snapshot: &ShellProjectionSnapshot) -> bool {
+    snapshot
+        .active_buffer_projection
+        .file_path
+        .as_ref()
+        .and_then(|path| path.0.rsplit_once('.').map(|(_, extension)| extension))
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
+            )
+        })
+}
+
 fn render_settings_panel(
     ui: &mut egui::Ui,
     snapshot: &ShellProjectionSnapshot,
@@ -6467,6 +6900,101 @@ fn render_settings_panel(
                     }
                 }
             });
+        }
+        if view.settings_section == SettingsSection::LanguageTools {
+            let toolchain = &snapshot
+                .language_tooling_projection
+                .typescript_toolchain;
+            let status = match toolchain.status {
+                LanguageToolchainConfigurationStatus::Unconfigured => "Unconfigured",
+                LanguageToolchainConfigurationStatus::Draft => "Draft",
+                LanguageToolchainConfigurationStatus::Configured => "Configured",
+            };
+            ui.horizontal(|ui| {
+                ui.label(theme::label("TypeScript / JavaScript"));
+                ui.label(theme::muted(format!("Status: {status}")));
+            });
+            ui.label(theme::muted(
+                "Choose metadata paths; app authority validates them when starting the server.",
+            ));
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Language server archive"));
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut view.typescript_toolchain_draft.server_archive)
+                        .desired_width(320.0)
+                        .hint_text("server archive path"),
+                );
+                if response.changed() {
+                    bound_typescript_toolchain_path(
+                        &mut view.typescript_toolchain_draft.server_archive,
+                    );
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Compiler archive"));
+                let response = ui.add(
+                    egui::TextEdit::singleline(
+                        &mut view.typescript_toolchain_draft.compiler_archive,
+                    )
+                    .desired_width(320.0)
+                    .hint_text("compiler archive path"),
+                );
+                if response.changed() {
+                    bound_typescript_toolchain_path(
+                        &mut view.typescript_toolchain_draft.compiler_archive,
+                    );
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Node executable"));
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut view.typescript_toolchain_draft.node_executable)
+                        .desired_width(320.0)
+                        .hint_text("node executable path"),
+                );
+                if response.changed() {
+                    bound_typescript_toolchain_path(
+                        &mut view.typescript_toolchain_draft.node_executable,
+                    );
+                }
+            });
+            let ready = !view.typescript_toolchain_draft.server_archive.is_empty()
+                && !view.typescript_toolchain_draft.compiler_archive.is_empty()
+                && !view.typescript_toolchain_draft.node_executable.is_empty();
+            ui.horizontal(|ui| {
+                if primary_button_enabled(
+                    ui,
+                    "Configure toolchain",
+                    theme::tokens().accent.blue,
+                    ready,
+                )
+                .clicked()
+                    && ready
+                {
+                    actions.push(DesktopAction::ConfigureTypeScriptToolchain {
+                        server_archive: view.typescript_toolchain_draft.server_archive.clone(),
+                        compiler_archive: view.typescript_toolchain_draft.compiler_archive.clone(),
+                        node_executable: view.typescript_toolchain_draft.node_executable.clone(),
+                    });
+                }
+                if soft_button(ui, "Clear toolchain").clicked() {
+                    actions.push(DesktopAction::ClearTypeScriptToolchain);
+                }
+            });
+            if active_file_supports_typescript(snapshot) {
+                ui.horizontal(|ui| {
+                    if soft_button(ui, "Start language server").clicked() {
+                        actions.push(DesktopAction::StartLspSession);
+                    }
+                    if soft_button(ui, "Restart language server").clicked() {
+                        actions.push(DesktopAction::RestartLspSession);
+                    }
+                });
+            } else {
+                ui.label(theme::muted(
+                    "Start and restart are available when a TypeScript or JavaScript file is active.",
+                ));
+            }
         }
         if view.settings_section == SettingsSection::AiProviders {
             if snapshot.assisted_ai_projection.providers.is_empty() {
@@ -10100,6 +10628,11 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
                     .line_metrics
                     .get(index)
                     .and_then(|metric| metric.line_start_byte_offset),
+                logical_end_byte: viewport.line_metrics.get(index).and_then(|metric| {
+                    metric
+                        .line_start_byte_offset
+                        .and_then(|start| start.checked_add(metric.byte_length))
+                }),
                 line_start_utf16_offset: viewport
                     .line_metrics
                     .get(index)
@@ -10143,6 +10676,7 @@ fn small_buffer_code_lines(text: &str) -> Vec<DesktopCodeLineViewModel> {
                 },
             },
             line_start_byte_offset: Some(byte_start),
+            logical_end_byte: Some(byte_start + byte_len),
             line_start_utf16_offset: Some(utf16_start),
         });
         byte_start += segment.len() as u64;
@@ -10172,6 +10706,7 @@ fn small_buffer_code_lines(text: &str) -> Vec<DesktopCodeLineViewModel> {
                 },
             },
             line_start_byte_offset: Some(byte_start),
+            logical_end_byte: Some(byte_start),
             line_start_utf16_offset: Some(utf16_start),
         });
     }
@@ -12193,6 +12728,313 @@ mod tests {
     use legion_ui::{GitBlameLineProjection, GitHunkProjection, GitHunkStageProjection, Shell};
 
     #[test]
+    fn rendered_reference_button_activates_exact_location_and_invalid_rows_do_not() {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let references = vec![
+            LanguageLocationProjection {
+                location_id: "valid".to_owned(),
+                file_id: None,
+                path: Some(CanonicalPath("src/lib.rs".to_owned())),
+                range: Some(ProtocolTextRange {
+                    start: TextCoordinate {
+                        line: 6,
+                        character: 3,
+                        byte_offset: None,
+                        utf16_offset: None,
+                    },
+                    end: TextCoordinate {
+                        line: 6,
+                        character: 8,
+                        byte_offset: None,
+                        utf16_offset: None,
+                    },
+                }),
+                label: "valid reference".to_owned(),
+                degraded: false,
+                schema_version: 1,
+            },
+            LanguageLocationProjection {
+                location_id: "invalid".to_owned(),
+                file_id: None,
+                path: None,
+                range: None,
+                label: "unavailable reference".to_owned(),
+                degraded: true,
+                schema_version: 1,
+            },
+        ];
+        let mut actions = Vec::new();
+        let first = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let first_output = context.run_ui(first, |outer_ui| {
+            egui::Area::new("reference_test_host".into()).show(outer_ui.ctx(), |ui| {
+                render_reference_panel(ui, &references, &mut actions);
+            });
+        });
+        let node = first_output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("reference accessibility tree")
+            .nodes
+            .iter()
+            .find_map(|(id, node)| {
+                (node.label() == Some("valid reference  src/lib.rs:7:4")
+                    && node.supports_action(egui::accesskit::Action::Click))
+                .then_some(*id)
+            })
+            .expect("valid reference should be an accessible button");
+        let click = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events: vec![egui::Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::Click,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    target_node: node,
+                    data: None,
+                },
+            )],
+            ..egui::RawInput::default()
+        };
+        let _ = context.run_ui(click, |outer_ui| {
+            egui::Area::new("reference_test_host".into()).show(outer_ui.ctx(), |ui| {
+                render_reference_panel(ui, &references, &mut actions);
+            });
+        });
+        assert!(actions.iter().any(|action| {
+            matches!(
+                action,
+                DesktopAction::NavigateToReference { path, line, character }
+                    if path == "src/lib.rs" && *line == 6 && *character == 3
+            )
+        }));
+        assert!(!actions.iter().any(|action| {
+            matches!(action, DesktopAction::NavigateToReference { path, .. } if path == "<unavailable path>")
+        }));
+    }
+
+    #[test]
+    fn code_action_accesskit_selects_exact_second_candidate_and_disables_invalid() {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let candidates = vec![
+            LanguageCodeActionProjection {
+                response_id: "resp-1".to_owned(),
+                action_id: "first".to_owned(),
+                title: "First".to_owned(),
+                kind: Some("quickfix".to_owned()),
+                is_preferred: false,
+                disabled_reason: Some("not applicable".to_owned()),
+                has_edit: true,
+                has_command: false,
+                buffer_id: None,
+                snapshot_id: None,
+                schema_version: 1,
+            },
+            LanguageCodeActionProjection {
+                response_id: "resp-1".to_owned(),
+                action_id: "second".to_owned(),
+                title: "Second".to_owned(),
+                kind: Some("quickfix".to_owned()),
+                is_preferred: true,
+                disabled_reason: None,
+                has_edit: false,
+                has_command: true,
+                buffer_id: None,
+                snapshot_id: None,
+                schema_version: 1,
+            },
+        ];
+        let raw = |events| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            events,
+            ..egui::RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let first = context.run_ui(raw(Vec::new()), |ui| {
+            render_code_action_panel(ui, &candidates, &mut actions);
+        });
+        let update = first
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("code action accessibility tree");
+        let node = update
+            .nodes
+            .iter()
+            .find_map(|(id, node)| {
+                (node.label() == Some("Second (quickfix)")
+                    && node.supports_action(egui::accesskit::Action::Click))
+                .then_some(*id)
+            })
+            .expect("enabled second action should be accessible");
+        let disabled_node = update
+            .nodes
+            .iter()
+            .find_map(|(id, node)| {
+                (node.label() == Some("First (quickfix) — disabled: not applicable"))
+                    .then_some((*id, node))
+            })
+            .expect("disabled action should remain visible to assistive technology");
+        assert!(disabled_node.1.is_disabled());
+        let disabled_click = raw(vec![egui::Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::Click,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: disabled_node.0,
+                data: None,
+            },
+        )]);
+        let _ = context.run_ui(disabled_click, |ui| {
+            render_code_action_panel(ui, &candidates, &mut actions);
+        });
+        assert!(!actions.iter().any(|action| {
+            matches!(action, DesktopAction::SelectCodeAction { action_id, .. } if action_id == "first")
+        }));
+        let click = raw(vec![egui::Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::Click,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: node,
+                data: None,
+            },
+        )]);
+        let _ = context.run_ui(click, |ui| {
+            render_code_action_panel(ui, &candidates, &mut actions);
+        });
+        assert!(actions.iter().any(|action| {
+            matches!(
+                action,
+                DesktopAction::SelectCodeAction { response_id, action_id }
+                    if response_id == "resp-1" && action_id == "second"
+            )
+        }));
+        assert!(!actions.iter().any(|action| {
+            matches!(action, DesktopAction::SelectCodeAction { action_id, .. } if action_id == "first")
+        }));
+    }
+
+    #[test]
+    fn typescript_toolchain_draft_is_bounded_and_projection_restores_it() {
+        let mut long_path = "x".repeat(TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS + 20);
+        bound_typescript_toolchain_path(&mut long_path);
+        assert_eq!(
+            long_path.chars().count(),
+            TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS
+        );
+
+        let projection = TypeScriptToolchainProjection {
+            settings: Some(legion_protocol::TypeScriptToolchainSettings {
+                server_archive: CanonicalPath("server.tgz".to_string()),
+                compiler_archive: CanonicalPath("compiler.tgz".to_string()),
+                node_executable: CanonicalPath("node".to_string()),
+            }),
+            status: LanguageToolchainConfigurationStatus::Draft,
+        };
+        let mut view = ProjectionView::new();
+        view.sync_typescript_toolchain_draft(None, &projection);
+        assert_eq!(view.typescript_toolchain_draft.server_archive, "server.tgz");
+        assert_eq!(
+            view.typescript_toolchain_draft.compiler_archive,
+            "compiler.tgz"
+        );
+        assert_eq!(view.typescript_toolchain_draft.node_executable, "node");
+        view.typescript_toolchain_draft.server_archive = "typed-draft".to_string();
+        view.sync_typescript_toolchain_draft(None, &projection);
+        assert_eq!(
+            view.typescript_toolchain_draft.server_archive,
+            "typed-draft"
+        );
+
+        let mut snapshot = legion_ui::Shell::empty("typescript").projection_snapshot();
+        snapshot.active_buffer_projection.file_path =
+            Some(CanonicalPath("src/main.ts".to_string()));
+        assert!(active_file_supports_typescript(&snapshot));
+        snapshot.active_buffer_projection.file_path =
+            Some(CanonicalPath("src/main.rs".to_string()));
+        assert!(!active_file_supports_typescript(&snapshot));
+    }
+
+    #[test]
+    fn rendered_typescript_configure_button_emits_action_on_accesskit_click() {
+        let context = egui::Context::default();
+        context.enable_accesskit();
+        let mut snapshot = legion_ui::Shell::empty("typescript").projection_snapshot();
+        snapshot.active_buffer_projection.file_path =
+            Some(CanonicalPath("src/main.ts".to_string()));
+        snapshot
+            .language_tooling_projection
+            .typescript_toolchain
+            .settings = Some(legion_protocol::TypeScriptToolchainSettings {
+            server_archive: CanonicalPath("server.tgz".to_string()),
+            compiler_archive: CanonicalPath("compiler.tgz".to_string()),
+            node_executable: CanonicalPath("node".to_string()),
+        });
+        let mut view = ProjectionView::new();
+        view.utility_surface = Some(UtilitySurface::Settings);
+        view.settings_section = SettingsSection::LanguageTools;
+        let raw = |events| egui::RawInput {
+            focused: true,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_440.0, 900.0),
+            )),
+            events,
+            ..egui::RawInput::default()
+        };
+        let mut first_actions = None;
+        let first = context.run_ui(raw(Vec::new()), |ui| {
+            first_actions = Some(view.render(ui, &snapshot).actions);
+        });
+        assert!(first_actions.expect("first render").is_empty());
+        let node = first
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .expect("accessibility tree")
+            .nodes
+            .iter()
+            .find_map(|(id, node)| {
+                (node.label() == Some("Configure toolchain")
+                    && node.supports_action(egui::accesskit::Action::Click))
+                .then_some(*id)
+            })
+            .expect("configure button should be accessible");
+        let click = vec![egui::Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::Click,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: node,
+                data: None,
+            },
+        )];
+        let mut clicked_actions = None;
+        let _ = context.run_ui(raw(click), |ui| {
+            clicked_actions = Some(view.render(ui, &snapshot).actions);
+        });
+        assert_eq!(
+            clicked_actions.expect("clicked render"),
+            vec![DesktopAction::ConfigureTypeScriptToolchain {
+                server_archive: "server.tgz".to_string(),
+                compiler_archive: "compiler.tgz".to_string(),
+                node_executable: "node".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn provider_permission_uses_plain_ai_copy() {
         assert_eq!(
             workflow_permission_action_label(PermissionBudgetActionClass::InvokeProvider),
@@ -12320,6 +13162,7 @@ mod tests {
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(12),
             line_start_utf16_offset: None,
         };
 
@@ -12337,11 +13180,14 @@ mod tests {
         assert_eq!(rows[0].byte_range, ByteRange::new(0, 2));
         assert_eq!(rows[0].line_start_utf16_offset, Some(0));
         assert_eq!(rows[1].text, "🙂");
-        assert_eq!(rows[1].byte_range, ByteRange::new(3, 7));
-        assert_eq!(rows[1].line_start_byte_offset, Some(3));
-        assert_eq!(rows[1].line_start_utf16_offset, Some(2));
+        // The helper preserves raw source offsets: `é` is two UTF-8 bytes and
+        // CRLF is two more bytes, while UTF-16 counts the scalar plus CRLF.
+        assert_eq!(rows[1].byte_range, ByteRange::new(4, 8));
+        assert_eq!(rows[1].line_start_byte_offset, Some(4));
+        assert_eq!(rows[1].line_start_utf16_offset, Some(3));
         assert!(rows[2].text.is_empty());
-        assert_eq!(rows[2].line_start_byte_offset, Some(8));
+        assert_eq!(rows[2].line_start_byte_offset, Some(9));
+        assert_eq!(rows[2].line_start_utf16_offset, Some(6));
     }
 
     #[test]
@@ -12364,6 +13210,7 @@ mod tests {
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(text.len() as u64),
             line_start_utf16_offset: Some(0),
         };
         let settings_width =
@@ -12432,6 +13279,7 @@ mod tests {
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(12),
             line_start_utf16_offset: None,
         };
         let keyword_hash = code_line_content_fingerprint(&keyword);
@@ -12491,6 +13339,7 @@ mod tests {
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(14),
             line_start_utf16_offset: None,
         };
         let snapshot_id = Some(legion_protocol::SnapshotId(11));

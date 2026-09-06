@@ -37,6 +37,10 @@ use uuid::Uuid;
 /// Result type used by the LSP runtime crate.
 pub type LspRuntimeResult<T> = Result<T, LspRuntimeError>;
 
+/// Maximum serialized parameter bytes accepted for an inbound
+/// `workspace/applyEdit` request.
+pub const MAX_APPLY_EDIT_PARAMS_BYTES: usize = 256 * 1024;
+
 /// LSP runtime errors.
 #[derive(Debug, Error)]
 pub enum LspRuntimeError {
@@ -636,7 +640,7 @@ impl LanguageServerAdapterPlan {
 /// Serialize a canonical Windows path in the form accepted by Node's module
 /// loader. Rust may expose canonical paths with the `\\?\` prefix; retain
 /// drive and UNC identity while rejecting arbitrary device namespaces.
-fn node_compatible_path(
+pub fn node_compatible_path(
     path: &Path,
     field: &'static str,
 ) -> Result<String, LspDownloadedArtifactResolveError> {
@@ -1302,6 +1306,34 @@ pub struct LspCorrelatedResponse {
     pub result: Value,
     /// Optional JSON-RPC error payload.
     pub error: Option<Value>,
+}
+
+/// Bounded server-originated `workspace/applyEdit` request passed to an
+/// explicitly installed application callback.
+#[derive(Debug, Clone)]
+pub struct LspApplyWorkspaceEditRequest {
+    /// Original JSON-RPC request identifier, preserved for the response.
+    pub json_rpc_id: u64,
+    /// Bounded raw request parameters for app-owned proposal translation.
+    pub params: Value,
+    /// Active outgoing-request context, when the inbound request arrived while
+    /// `read_response_for` was waiting for a response.
+    pub context: Option<LspOperationContext>,
+    /// Deadline inherited from the active worker request, if any. The app
+    /// must use this same deadline for proposal authorization.
+    pub deadline: Option<std::time::Instant>,
+}
+
+/// Transport-only result for an inbound `workspace/applyEdit` request.
+///
+/// The callback reports whether an app authority accepted the request. The
+/// transport never applies the workspace edit itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspApplyWorkspaceEditResponse {
+    /// Whether the app authority accepted the edit for proposal processing.
+    pub applied: bool,
+    /// Bounded failure reason when `applied` is false.
+    pub failure_reason: Option<String>,
 }
 
 /// Cancellation metadata produced when a pending request is cancelled.
@@ -3689,6 +3721,10 @@ pub struct LspStdioSession {
     /// [`Self::read_response_for`] so an out-of-order response is never
     /// dropped and its request left stranded.
     response_stash: HashMap<u64, LspCorrelatedResponse>,
+    /// Optional app-owned bridge for server-originated workspace edits.
+    apply_edit_handler: Option<
+        Box<dyn FnMut(LspApplyWorkspaceEditRequest) -> LspApplyWorkspaceEditResponse + Send>,
+    >,
 }
 
 impl LspStdioSession {
@@ -3732,7 +3768,25 @@ impl LspStdioSession {
             diagnostic_notifications: Vec::new(),
             raw_diagnostic_params: HashMap::new(),
             response_stash: HashMap::new(),
+            apply_edit_handler: None,
         })
+    }
+
+    /// Installs the explicit app-owned handler for inbound `workspace/applyEdit`.
+    ///
+    /// The callback receives bounded metadata and parameters only; it is
+    /// responsible for routing any edit through proposal authority. Without a
+    /// handler, the transport returns an explicit negative result.
+    pub fn set_apply_edit_handler<F>(&mut self, handler: F)
+    where
+        F: FnMut(LspApplyWorkspaceEditRequest) -> LspApplyWorkspaceEditResponse + Send + 'static,
+    {
+        self.apply_edit_handler = Some(Box::new(handler));
+    }
+
+    /// Removes the inbound `workspace/applyEdit` handler.
+    pub fn clear_apply_edit_handler(&mut self) {
+        self.apply_edit_handler = None;
     }
 
     /// Returns the lifecycle state observed when the session was started.
@@ -3813,6 +3867,7 @@ impl LspStdioSession {
             pending.json_rpc_id,
             pending.request_id,
             pending.timeout_ms,
+            Some(&pending.context),
         )
     }
 
@@ -3911,7 +3966,7 @@ impl LspStdioSession {
             // per-frame drain is the only consumer running between explicit
             // requests, so an unanswered registration would otherwise sit
             // until the next blocking call (or forever).
-            if let Ok(true) = self.answer_server_request(&envelope) {
+            if let Ok(true) = self.answer_server_request(&envelope, None, None) {
                 continue;
             }
             if envelope.method.as_deref() == Some("textDocument/publishDiagnostics")
@@ -3941,10 +3996,71 @@ impl LspStdioSession {
     /// the associated events. Any other server request receives the
     /// protocol-correct JSON-RPC MethodNotFound (-32601) error, signalling
     /// "unsupported" so the server can degrade instead of waiting.
-    fn answer_server_request(&mut self, envelope: &JsonRpcEnvelope) -> LspRuntimeResult<bool> {
+    fn answer_server_request(
+        &mut self,
+        envelope: &JsonRpcEnvelope,
+        context: Option<&LspOperationContext>,
+        deadline: Option<std::time::Instant>,
+    ) -> LspRuntimeResult<bool> {
         let (Some(id), Some(method)) = (envelope.id, envelope.method.as_deref()) else {
             return Ok(false);
         };
+        if method == "workspace/applyEdit" {
+            let response = match envelope.params.as_ref() {
+                Some(params) => {
+                    match Self::bounded_json_size(params, MAX_APPLY_EDIT_PARAMS_BYTES) {
+                        Ok(_) => {
+                            if !Self::apply_edit_params_have_edit(params) {
+                                LspApplyWorkspaceEditResponse {
+                                applied: false,
+                                failure_reason: Some(
+                                    "workspace/applyEdit parameters must contain an object edit"
+                                        .to_string(),
+                                ),
+                            }
+                            } else if context.is_none() {
+                                LspApplyWorkspaceEditResponse {
+                                    applied: false,
+                                    failure_reason: Some(
+                                        "workspace/applyEdit has no active request context"
+                                            .to_string(),
+                                    ),
+                                }
+                            } else if let Some(handler) = self.apply_edit_handler.as_mut() {
+                                handler(LspApplyWorkspaceEditRequest {
+                                    json_rpc_id: id,
+                                    params: params.clone(),
+                                    context: context.cloned(),
+                                    deadline,
+                                })
+                            } else {
+                                LspApplyWorkspaceEditResponse {
+                                    applied: false,
+                                    failure_reason: Some(
+                                        "workspace/applyEdit handler is not installed".to_string(),
+                                    ),
+                                }
+                            }
+                        }
+                        Err(reason) => LspApplyWorkspaceEditResponse {
+                            applied: false,
+                            failure_reason: Some(reason.to_string()),
+                        },
+                    }
+                }
+                None => LspApplyWorkspaceEditResponse {
+                    applied: false,
+                    failure_reason: Some("workspace/applyEdit parameters are missing".to_string()),
+                },
+            };
+            let result = json!({
+                "applied": response.applied,
+                "failureReason": response.failure_reason,
+            });
+            self.process
+                .write_envelope(&JsonRpcEnvelope::response(id, result))?;
+            return Ok(true);
+        }
         let response = match method {
             "client/registerCapability" | "client/unregisterCapability" => JsonRpcEnvelope {
                 jsonrpc: "2.0".to_string(),
@@ -3968,6 +4084,53 @@ impl LspStdioSession {
         };
         self.process.write_envelope(&response)?;
         Ok(true)
+    }
+
+    fn apply_edit_params_have_edit(params: &Value) -> bool {
+        params
+            .as_object()
+            .and_then(|params| params.get("edit"))
+            .is_some_and(Value::is_object)
+    }
+
+    fn bounded_json_size(value: &Value, limit: usize) -> Result<usize, &'static str> {
+        struct LimitedWriter {
+            used: usize,
+            limit: usize,
+            exceeded: bool,
+        }
+
+        impl Write for LimitedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let Some(next) = self.used.checked_add(bytes.len()) else {
+                    self.exceeded = true;
+                    return Err(std::io::Error::other("JSON payload size overflow"));
+                };
+                if next > self.limit {
+                    self.exceeded = true;
+                    return Err(std::io::Error::other("JSON payload exceeds bound"));
+                }
+                self.used = next;
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = LimitedWriter {
+            used: 0,
+            limit,
+            exceeded: false,
+        };
+        match serde_json::to_writer(&mut writer, value) {
+            Ok(()) => Ok(writer.used),
+            Err(_) if writer.exceeded => {
+                Err("workspace/applyEdit parameters exceed bounded transport limit")
+            }
+            Err(_) => Err("workspace/applyEdit parameters are not serializable"),
+        }
     }
 
     /// Routes a notification-shaped frame into the durable buffers and, when
@@ -4043,7 +4206,7 @@ impl LspStdioSession {
                 // out-of-band responses: callers must not pump with an
                 // outstanding request, so those are skipped rather than
                 // stashed.
-                self.answer_server_request(&envelope)?;
+                self.answer_server_request(&envelope, None, None)?;
                 continue;
             }
             self.record_notification(&envelope, Some(&mut acc));
@@ -4063,6 +4226,7 @@ impl LspStdioSession {
         target_json_rpc_id: u64,
         expected_request_id: LspRequestId,
         timeout_ms: u64,
+        context: Option<&LspOperationContext>,
     ) -> LspRuntimeResult<LspCorrelatedResponse> {
         let started = Instant::now();
         // A non-zero budget yields a hard deadline. The frame reader waits on
@@ -4119,7 +4283,7 @@ impl LspStdioSession {
             // A frame with BOTH id and method is a server→client request —
             // answer it and keep waiting for the target response.
             if envelope.method.is_some() {
-                self.answer_server_request(&envelope)?;
+                self.answer_server_request(&envelope, context, deadline)?;
                 continue;
             }
             if id != target_json_rpc_id {

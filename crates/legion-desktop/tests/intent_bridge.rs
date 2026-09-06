@@ -10,10 +10,9 @@ use legion_protocol::{
     AssistedAiProviderInvocationState, BufferId, BufferVersion, CanonicalPath,
     DebugConfigurationId, DebugSessionId, FileFingerprint, FileId, ProposalPrivacyLabel,
     ProposalRiskLabel, ProtocolTextRange, SnapshotId, TextCoordinate, TimestampMillis,
-    ViewportScroll, WorkspaceId,
-    VisualNavigationCaret, VisualNavigationDirection, VisualNavigationLayoutId,
+    ViewportScroll, VisualNavigationCaret, VisualNavigationDirection, VisualNavigationLayoutId,
     VisualNavigationPosition, VisualNavigationRequest, VisualNavigationRow,
-    VisualNavigationSourceRow, VisualNavigationStop, VisualNavigationX,
+    VisualNavigationSourceRow, VisualNavigationStop, VisualNavigationX, WorkspaceId,
 };
 use legion_ui::ui::{DailyEditingProjection, EditorTabProjection, EditorTabsProjection};
 use legion_ui::{
@@ -386,7 +385,10 @@ fn intent_bridge_routes_daily_editing_actions() {
         expected_snapshot_id: SnapshotId(5),
         expected_buffer_version: BufferVersion(12),
         expected_carets: vec![VisualNavigationCaret {
-            head: VisualNavigationPosition { line: 0, byte_column: 1 },
+            head: VisualNavigationPosition {
+                line: 0,
+                byte_column: 1,
+            },
             anchor: None,
             affinity: legion_protocol::CaretAffinity::Upstream,
             preferred_x: Some(VisualNavigationX { value: 7.0 }),
@@ -399,10 +401,19 @@ fn intent_bridge_routes_daily_editing_actions() {
                 logical_line: 0,
                 row_index: Some(0),
                 row_count: Some(2),
-                start: VisualNavigationPosition { line: 0, byte_column: 0 },
-                end: VisualNavigationPosition { line: 0, byte_column: 2 },
+                start: VisualNavigationPosition {
+                    line: 0,
+                    byte_column: 0,
+                },
+                end: VisualNavigationPosition {
+                    line: 0,
+                    byte_column: 2,
+                },
                 stops: vec![VisualNavigationStop {
-                    position: VisualNavigationPosition { line: 0, byte_column: 1 },
+                    position: VisualNavigationPosition {
+                        line: 0,
+                        byte_column: 1,
+                    },
                     x: VisualNavigationX { value: 7.0 },
                     affinity: legion_protocol::CaretAffinity::Upstream,
                 }],

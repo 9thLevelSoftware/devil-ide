@@ -270,6 +270,7 @@ fn full_frame_primary_affinity_round_trip_survives_secondary_caret_on_later_row(
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(WRAPPED_LINE.len() as u64),
             line_start_utf16_offset: Some(0),
         },
         &primary_galley,

@@ -7,6 +7,7 @@ use std::{
     ffi::OsString,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
@@ -14,7 +15,7 @@ use anyhow::{Result, anyhow};
 use legion_app::{
     AppAiRunOutcome, AppCloseTabOutcome, AppCommandOutcome, AppComposition, AppProductMode,
     AppSaveAllItemOutcome, AppSaveAllItemStatus, AppSaveAllOutcome, AppSaveAllStatus,
-    AppSessionRestoreOutcome, DurableCheckpointSummary, LspDebounceKind,
+    AppSessionRestoreOutcome, DurableCheckpointSummary, LspDebounceKind, OwnedSnapshotLease,
     proposal::{ProposalHunkDispositionState, filtered_batch_proposal_for_accepted_targets},
 };
 use legion_protocol::{
@@ -26,9 +27,10 @@ use legion_protocol::{
     PluginHostCallResponse, PluginId, PluginManifest, PrincipalId, ProposalId,
     ProposalLifecycleState, ProposalLifecycleTransition, ProposalResponse, ProtocolTextRange,
     RemoteTransportEnvelope, RemoteWorkspaceSessionDescriptor, RemoteWorkspaceSessionId,
-    SessionDockLayout, SessionDockSideLayout, SessionPanelState, TextCoordinate, TimestampMillis,
-    ViewportScroll, VisualNavigationDirection, VisualNavigationLayoutId, VisualNavigationPosition,
-    VisualNavigationRequest, VisualNavigationWindow, WorkspaceSessionRecord, WorkspaceTrustState,
+    SessionDockLayout, SessionDockSideLayout, SessionPanelState, SnapshotLeaseDescriptor,
+    TextCoordinate, TimestampMillis, ViewportScroll, VisualNavigationDirection,
+    VisualNavigationLayoutId, VisualNavigationPosition, VisualNavigationRequest,
+    VisualNavigationWindow, WorkspaceSessionRecord, WorkspaceTrustState,
 };
 use legion_remote::RemoteOperationOutcome;
 use legion_storage::{
@@ -40,12 +42,13 @@ use legion_ui::{
     GitRefreshState, PaletteMode, PanelId, SearchScopeProjection, SearchStatusKindProjection,
     SettingsProjection, Shell, ShellProjectionSnapshot, StatusMessageProjection, StatusSeverity,
 };
+use uuid::Uuid;
 
 use crate::{
     beta::{self, BetaWorkflowConfig},
     bridge::{
         DesktopAction, DesktopAppRequest, DesktopBridgeError, DesktopBridgeOutput,
-        DesktopCommandBridge,
+        DesktopCommandBridge, code_action_range,
     },
     diagnostics::DesktopDiagnosticsExport,
     health::DesktopOperationalHealthSnapshot,
@@ -63,8 +66,10 @@ use crate::{
     theme,
     view::dock_geometry::{self, DockFractions},
     view::{
-        BottomPanelTab, DesktopProjectionViewState, ImeCompositionProjection, ProjectionView,
-        VisualNavigationRowRequest, ime_composition_state, ime_composition_state_id,
+        BottomPanelTab, DesktopLineChunk, DesktopLineSource, DesktopProjectionViewState,
+        DesktopSourceIdentity, ImeCompositionProjection, ProjectionView, ProjectionViewOutput,
+        StreamedNavigationRows, StreamedRequestedRow, VisualNavigationRowRequest,
+        VisualNavigationSelectedRow, ime_composition_state, ime_composition_state_id,
         proposal_review::DesktopCheckpointTimelineRow, visual_navigation_paint_geometry,
         visual_navigation_selected_row_for_line,
     },
@@ -72,6 +77,114 @@ use crate::{
 };
 
 const WINDOW_TITLE: &str = PRODUCT_NAME;
+
+#[derive(Clone)]
+struct DesktopUiLineSource {
+    lease: OwnedSnapshotLease,
+    ranges: BTreeMap<usize, (u64, u64)>,
+}
+
+impl DesktopLineSource for DesktopUiLineSource {
+    fn identity(&self, line: usize) -> DesktopSourceIdentity {
+        let descriptor = self.lease.descriptor();
+        let Some((line_start_byte, logical_end_byte)) = self.ranges.get(&line).copied() else {
+            return DesktopSourceIdentity {
+                buffer_id: descriptor.buffer_id,
+                snapshot_id: descriptor.snapshot_id,
+                buffer_version: descriptor.buffer_version,
+                line,
+                line_start_byte: 0,
+                logical_end_byte: 0,
+                source_key: 0,
+            };
+        };
+        canonical_source_identity(descriptor, line, line_start_byte, logical_end_byte)
+    }
+
+    fn read_chunk(
+        &self,
+        line: usize,
+        start_byte: u64,
+        max_bytes: usize,
+    ) -> Result<DesktopLineChunk, String> {
+        let start_byte = usize::try_from(start_byte)
+            .map_err(|_| "snapshot byte offset exceeds platform usize".to_string())?;
+        let chunk = self
+            .lease
+            .read_line_chunk(line, start_byte, max_bytes)
+            .map_err(|error| error.to_string())?;
+        Ok(DesktopLineChunk {
+            start_byte: chunk.line.start_byte as u64,
+            end_byte: chunk.line.end_byte as u64,
+            is_final: chunk.line.is_final,
+            text: chunk.line.text,
+        })
+    }
+
+    fn owned_source(&self) -> Option<Arc<dyn DesktopLineSource + Send + Sync>> {
+        Some(Arc::new(self.clone()))
+    }
+
+    fn read_lease_id(&self) -> Option<Uuid> {
+        Some(self.lease.descriptor().lease_id)
+    }
+}
+
+fn canonical_source_identity(
+    lease: &SnapshotLeaseDescriptor,
+    line: usize,
+    line_start_byte: u64,
+    logical_end_byte: u64,
+) -> DesktopSourceIdentity {
+    canonical_source_identity_parts(
+        lease.buffer_id,
+        lease.snapshot_id,
+        lease.buffer_version,
+        line,
+        line_start_byte,
+        logical_end_byte,
+    )
+}
+
+fn canonical_source_identity_parts(
+    buffer_id: BufferId,
+    snapshot_id: legion_protocol::SnapshotId,
+    buffer_version: legion_protocol::BufferVersion,
+    line: usize,
+    line_start_byte: u64,
+    logical_end_byte: u64,
+) -> DesktopSourceIdentity {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    snapshot_id.hash(&mut hasher);
+    buffer_version.hash(&mut hasher);
+    line.hash(&mut hasher);
+    DesktopSourceIdentity {
+        buffer_id,
+        snapshot_id,
+        buffer_version,
+        line,
+        line_start_byte,
+        logical_end_byte,
+        source_key: u128::from(hasher.finish()),
+    }
+}
+
+impl DesktopUiLineSource {
+    fn from_snapshot(lease: OwnedSnapshotLease, snapshot: &ShellProjectionSnapshot) -> Self {
+        let mut ranges = BTreeMap::new();
+        if let Some(viewport) = &snapshot.active_buffer_projection.viewport {
+            for (index, metric) in viewport.line_metrics.iter().enumerate() {
+                if let Some(start) = metric.line_start_byte_offset
+                    && let Some(end) = start.checked_add(metric.byte_length)
+                    && let Some(slice) = viewport.line_slices.get(index)
+                {
+                    ranges.insert(slice.line_number as usize, (start, end));
+                }
+            }
+        }
+        Self { lease, ranges }
+    }
+}
 
 fn is_new_definition_response(last_operation_id: Option<&str>, operation_id: Option<&str>) -> bool {
     operation_id.is_some_and(|current| last_operation_id != Some(current))
@@ -103,7 +216,103 @@ fn visual_navigation_line_model(
             },
         },
         line_start_byte_offset: Some(window.line_start_byte),
+        logical_end_byte: Some(window.logical_end_byte),
         line_start_utf16_offset: None,
+    })
+}
+
+fn streamed_navigation_selected_row(
+    rows: &StreamedNavigationRows,
+    request: VisualNavigationRowRequest,
+) -> Option<VisualNavigationSelectedRow> {
+    let wanted_row = match request {
+        VisualNavigationRowRequest::Source { .. } => None,
+        VisualNavigationRowRequest::Target { row_index, .. } => Some(row_index),
+    };
+    for row in &rows.rows {
+        if wanted_row.is_some_and(|wanted| row.row_index != Some(wanted)) {
+            continue;
+        }
+        let mut stops = row.stops.clone();
+        for stop in &mut stops {
+            if stop.position.byte_column == row.start.byte_column
+                && row.row_index.is_some_and(|index| index > 0)
+            {
+                stop.affinity = legion_protocol::CaretAffinity::Downstream;
+            }
+        }
+        let Some(selected) = (match request {
+            VisualNavigationRowRequest::Source {
+                byte_column,
+                affinity,
+            } => stops
+                .iter()
+                .find(|stop| stop.position.byte_column == byte_column && stop.affinity == affinity)
+                .cloned(),
+            VisualNavigationRowRequest::Target { preferred_x, .. }
+                if preferred_x.is_finite() && preferred_x >= 0.0 =>
+            {
+                stops.iter().cloned().min_by(|left, right| {
+                    let left_distance = (left.x.value - preferred_x).abs();
+                    let right_distance = (right.x.value - preferred_x).abs();
+                    left_distance
+                        .partial_cmp(&right_distance)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| left.position.byte_column.cmp(&right.position.byte_column))
+                })
+            }
+            VisualNavigationRowRequest::Target { .. } => None,
+        }) else {
+            continue;
+        };
+        let source_x =
+            matches!(request, VisualNavigationRowRequest::Source { .. }).then_some(selected.x);
+        let target_stop = matches!(request, VisualNavigationRowRequest::Target { .. })
+            .then_some(selected.clone());
+        return Some(VisualNavigationSelectedRow {
+            row: legion_protocol::VisualNavigationRow {
+                stops,
+                ..row.clone()
+            },
+            source_x,
+            target_stop,
+        });
+    }
+    None
+}
+
+fn streamed_identity_for_line(
+    viewport: &legion_protocol::ViewportProjection,
+    buffer_id: BufferId,
+    snapshot_id: legion_protocol::SnapshotId,
+    buffer_version: legion_protocol::BufferVersion,
+    line: usize,
+) -> Option<DesktopSourceIdentity> {
+    let (line_start_byte, logical_end_byte) =
+        viewport
+            .line_slices
+            .iter()
+            .enumerate()
+            .find_map(|(index, slice)| {
+                (slice.line_number as usize == line).then(|| {
+                    viewport.line_metrics.get(index).and_then(|metric| {
+                        let start = metric.line_start_byte_offset?;
+                        Some((start, start.checked_add(metric.byte_length)?))
+                    })
+                })
+            })??;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    snapshot_id.hash(&mut hasher);
+    buffer_version.hash(&mut hasher);
+    line.hash(&mut hasher);
+    Some(DesktopSourceIdentity {
+        buffer_id,
+        snapshot_id,
+        buffer_version,
+        line,
+        line_start_byte,
+        logical_end_byte,
+        source_key: u128::from(hasher.finish()),
     })
 }
 
@@ -828,11 +1037,96 @@ pub struct DesktopRuntime {
     /// delegated-task review hunks.  Lives in the desktop runtime because it is
     /// ephemeral UI state — proposals may be re-reviewed across sessions.
     hunk_dispositions: ProposalHunkDispositionState,
+    /// Persistent app-owned immutable source lease for streamed layout reads.
+    owned_ui_source: Option<OwnedSnapshotLease>,
+    pending_visual_navigation: Option<(
+        VisualNavigationDirection,
+        bool,
+        legion_protocol::SnapshotId,
+        legion_protocol::BufferVersion,
+    )>,
     // NOTE: completion_debounce, last_completion_count, hover_debounce, last_hover_id
     // have moved to AppComposition (I1 boundary fix: timing state is app authority).
 }
 
 impl DesktopRuntime {
+    fn render_projection_with_source(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &ShellProjectionSnapshot,
+        view_state: &DesktopProjectionViewState,
+    ) -> ProjectionViewOutput {
+        let Some(buffer_id) = snapshot.active_buffer_projection.buffer_id else {
+            self.release_owned_ui_source();
+            return self.view.render_with_state(ui, snapshot, view_state);
+        };
+        let Some(viewport) = snapshot.active_buffer_projection.viewport.as_ref() else {
+            self.release_owned_ui_source();
+            return self.view.render_with_state(ui, snapshot, view_state);
+        };
+        let requested = (buffer_id, viewport.snapshot_id, viewport.buffer_version);
+        let owned = self
+            .owned_ui_source
+            .as_ref()
+            .filter(|lease| {
+                let descriptor = lease.descriptor();
+                (
+                    descriptor.buffer_id,
+                    descriptor.snapshot_id,
+                    descriptor.buffer_version,
+                ) == requested
+            })
+            .and_then(|lease| self.app.owned_ui_snapshot(lease.descriptor()).ok());
+        let owned = match owned {
+            Some(lease) => {
+                self.owned_ui_source = Some(lease.clone());
+                lease
+            }
+            None => {
+                self.release_owned_ui_source();
+                let Ok(descriptor) = self.app.lease_ui_snapshot(buffer_id) else {
+                    return self.view.render_with_state(ui, snapshot, view_state);
+                };
+                if (
+                    descriptor.buffer_id,
+                    descriptor.snapshot_id,
+                    descriptor.buffer_version,
+                ) != requested
+                {
+                    let _ = self.app.release_ui_snapshot(descriptor.lease_id);
+                    return self.view.render_with_state(ui, snapshot, view_state);
+                }
+                let Ok(lease) = self.app.owned_ui_snapshot(&descriptor) else {
+                    let _ = self.app.release_ui_snapshot(descriptor.lease_id);
+                    return self.view.render_with_state(ui, snapshot, view_state);
+                };
+                self.owned_ui_source = Some(lease.clone());
+                lease
+            }
+        };
+        let mut source = DesktopUiLineSource::from_snapshot(owned, snapshot);
+        for request in self.view.streamed_navigation_requests() {
+            let identity = request.identity;
+            if identity.buffer_id == buffer_id
+                && identity.snapshot_id == source.lease.descriptor().snapshot_id
+                && identity.buffer_version == source.lease.descriptor().buffer_version
+            {
+                source.ranges.insert(
+                    identity.line,
+                    (identity.line_start_byte, identity.logical_end_byte),
+                );
+            }
+        }
+        self.view
+            .render_with_state_and_source(ui, snapshot, view_state, Some(&source))
+    }
+
+    fn release_owned_ui_source(&mut self) {
+        if let Some(lease) = self.owned_ui_source.take() {
+            let _ = self.app.release_ui_snapshot(lease.descriptor().lease_id);
+        }
+    }
+
     /// Open the configured workspace and optional initial file.
     pub fn open(config: DesktopLaunchConfig) -> Result<Self> {
         let session_record = match &config.session_state {
@@ -989,6 +1283,8 @@ impl DesktopRuntime {
             problems_selected_key: None,
             review_hunk_selected_index: 0,
             hunk_dispositions: ProposalHunkDispositionState::new(),
+            owned_ui_source: None,
+            pending_visual_navigation: None,
         };
         runtime.persist_diagnostics_if_configured();
         Ok(runtime)
@@ -1394,6 +1690,59 @@ impl DesktopRuntime {
                 self.persist_diagnostics_if_configured();
                 Ok(outcome)
             }
+            DesktopAction::NavigateToReference {
+                path,
+                line,
+                character,
+            } => {
+                if path.trim().is_empty() {
+                    self.last_outcome = DesktopWorkflowOutcome::Noop;
+                    return Ok(DesktopWorkflowOutcome::Noop);
+                }
+                let outcome = self.dispatch_intent(CommandDispatchIntent::OpenPathAtPosition {
+                    path,
+                    position: TextCoordinate {
+                        line,
+                        character,
+                        byte_offset: None,
+                        utf16_offset: None,
+                    },
+                })?;
+                self.refresh_projection()?;
+                self.last_outcome = outcome.clone();
+                Ok(outcome)
+            }
+            DesktopAction::RequestCodeActions => {
+                let snapshot = self.app.shell_projection_snapshot(WINDOW_TITLE)?;
+                let Some(buffer_id) = snapshot.language_tooling_projection.buffer_id else {
+                    return Ok(DesktopWorkflowOutcome::Noop);
+                };
+                let Some(viewport) = snapshot.active_buffer_projection.viewport else {
+                    return Ok(DesktopWorkflowOutcome::Noop);
+                };
+                let Some(range) = code_action_range(&viewport) else {
+                    return Ok(DesktopWorkflowOutcome::Noop);
+                };
+                let outcome = self.dispatch_intent(CommandDispatchIntent::RequestCodeActions {
+                    buffer_id,
+                    range,
+                })?;
+                self.refresh_projection()?;
+                self.last_outcome = outcome.clone();
+                Ok(outcome)
+            }
+            DesktopAction::SelectCodeAction {
+                response_id,
+                action_id,
+            } => {
+                let outcome = self.dispatch_intent(CommandDispatchIntent::SelectCodeAction {
+                    response_id,
+                    action_id,
+                })?;
+                self.refresh_projection()?;
+                self.last_outcome = outcome.clone();
+                Ok(outcome)
+            }
             // Product AI route preference (local-first Auto / Ollama / Anthropic / fixture).
             DesktopAction::SetPreferredAiProvider { provider_id } => {
                 self.app.set_preferred_ai_provider_label(&provider_id);
@@ -1689,7 +2038,7 @@ impl DesktopRuntime {
     /// are deliberately rejected until the renderer has a wrap-phase checkpoint
     /// seam; accepting their row/X facts would silently change movement geometry.
     fn visual_navigation_action(
-        &self,
+        &mut self,
         ui: &egui::Ui,
         direction: VisualNavigationDirection,
         extend: bool,
@@ -1711,39 +2060,94 @@ impl DesktopRuntime {
         };
         let paint_geometry = visual_navigation_paint_geometry(ui, buffer_id)?;
         let wrap_width = paint_geometry.wrap_width;
+        let logical_line_count = usize::try_from(projection.logical_line_count).ok()?;
         let mut source_rows = Vec::with_capacity(projection.carets.len());
         let mut target_rows = Vec::with_capacity(projection.carets.len());
         for caret in &projection.carets {
-            let source_window =
-                match self
-                    .app
-                    .visual_navigation_window(buffer_id, caret.head, WINDOW_BYTES)
-                {
-                    Ok(window) => window,
-                    Err(_) => {
-                        return None;
-                    }
-                };
-            if source_window.snapshot_id != projection.snapshot_id
-                || source_window.buffer_version != projection.buffer_version
-                || !source_window.complete_logical_start
-                || !source_window.complete_logical_end
+            let streamed_identity = streamed_identity_for_line(
+                &viewport,
+                buffer_id,
+                projection.snapshot_id,
+                projection.buffer_version,
+                caret.head.line as usize,
+            )
+            .filter(|identity| {
+                identity
+                    .logical_end_byte
+                    .saturating_sub(identity.line_start_byte)
+                    > (96 * 1024) as u64
+            });
+            let streamed_rows =
+                streamed_identity.and_then(|identity| self.view.streamed_navigation_rows(identity));
+            if streamed_rows
+                .as_ref()
+                .is_some_and(|rows| rows.terminal_error.is_some())
             {
+                // The renderer has already consumed this failed request. Keep
+                // the caret unchanged and allow later ordered editor events.
+                self.pending_visual_navigation = None;
                 return None;
             }
-            let source_line = visual_navigation_line_model(&source_window)?;
-            let boundaries = visual_navigation_columns(&source_window)?;
-            let source = visual_navigation_selected_row_for_line(
-                ui,
-                &source_line,
-                wrap_width,
-                &boundaries,
-                VisualNavigationRowRequest::Source {
-                    byte_column: caret.head.byte_column,
-                    affinity: caret.affinity,
-                },
-            )
-            .ok()?;
+            let streamed_source = streamed_rows.and_then(|rows| {
+                (rows.snapshot_id == projection.snapshot_id
+                    && rows.buffer_version == projection.buffer_version
+                    && rows.line == caret.head.line as usize)
+                    .then(|| {
+                        streamed_navigation_selected_row(
+                            &rows,
+                            VisualNavigationRowRequest::Source {
+                                byte_column: caret.head.byte_column,
+                                affinity: caret.affinity,
+                            },
+                        )
+                    })
+                    .flatten()
+            });
+            if streamed_identity.is_some() && streamed_source.is_none() {
+                if let Some(identity) = streamed_identity {
+                    self.view.request_streamed_navigation(
+                        identity,
+                        StreamedRequestedRow::Byte(caret.head.byte_column),
+                    );
+                }
+                self.pending_visual_navigation = Some((
+                    direction,
+                    extend,
+                    projection.snapshot_id,
+                    projection.buffer_version,
+                ));
+                ui.ctx().request_repaint();
+                return None;
+            }
+            let (source, source_line_number) = if let Some(source) = streamed_source {
+                (source, caret.head.line as usize)
+            } else {
+                let source_window = self
+                    .app
+                    .visual_navigation_window(buffer_id, caret.head, WINDOW_BYTES)
+                    .ok()?;
+                if source_window.snapshot_id != projection.snapshot_id
+                    || source_window.buffer_version != projection.buffer_version
+                    || !source_window.complete_logical_start
+                    || !source_window.complete_logical_end
+                {
+                    return None;
+                }
+                let source_line = visual_navigation_line_model(&source_window)?;
+                let boundaries = visual_navigation_columns(&source_window)?;
+                let source = visual_navigation_selected_row_for_line(
+                    ui,
+                    &source_line,
+                    wrap_width,
+                    &boundaries,
+                    VisualNavigationRowRequest::Source {
+                        byte_column: caret.head.byte_column,
+                        affinity: caret.affinity,
+                    },
+                )
+                .ok()?;
+                (source, source_window.line as usize)
+            };
             let source_row = source.row.clone();
             let source_x = source.source_x?;
             let target_row_index = match direction {
@@ -1755,10 +2159,10 @@ impl DesktopRuntime {
             };
             let source_at_document_edge = match direction {
                 VisualNavigationDirection::Up => {
-                    source_window.line == 0 && source_row.row_index == Some(0)
+                    source_line_number == 0 && source_row.row_index == Some(0)
                 }
                 VisualNavigationDirection::Down => {
-                    source_window.line.saturating_add(1) >= projection.logical_line_count
+                    source_line_number.saturating_add(1) >= logical_line_count
                         && source_row.row_index.is_some()
                         && source_row.row_index
                             == source_row.row_count.map(|count| count.saturating_sub(1))
@@ -1776,47 +2180,164 @@ impl DesktopRuntime {
                 source.row.clone()
             } else {
                 let target_line = if target_row_index.is_some() {
-                    source_window.line
+                    source_line_number
                 } else {
                     match direction {
-                        VisualNavigationDirection::Up => source_window.line.checked_sub(1)?,
-                        VisualNavigationDirection::Down => source_window.line.checked_add(1)?,
+                        VisualNavigationDirection::Up => source_line_number.checked_sub(1)?,
+                        VisualNavigationDirection::Down => source_line_number.checked_add(1)?,
                     }
                 };
-                let target_window = self
-                    .app
-                    .visual_navigation_window(
+                let target_identity = streamed_identity_for_line(
+                    &viewport,
+                    buffer_id,
+                    projection.snapshot_id,
+                    projection.buffer_version,
+                    target_line,
+                )
+                .filter(|identity| {
+                    identity
+                        .logical_end_byte
+                        .saturating_sub(identity.line_start_byte)
+                        > (96 * 1024) as u64
+                });
+                let streamed_target = target_identity
+                    .and_then(|identity| self.view.streamed_navigation_rows(identity))
+                    .filter(|rows| {
+                        rows.snapshot_id == projection.snapshot_id
+                            && rows.buffer_version == projection.buffer_version
+                            && rows.line == target_line
+                    });
+                // Short logical lines use the established bounded app-window
+                // geometry below. Only a large line with a known streamed
+                // identity needs a renderer-cache request; requesting every
+                // short target would leave ordinary ArrowDown queued forever
+                // because no streamed rows are produced for it.
+                if target_identity.is_some() && streamed_target.is_none() {
+                    let target_window = self
+                        .app
+                        .visual_navigation_window(
+                            buffer_id,
+                            VisualNavigationPosition {
+                                line: u32::try_from(target_line).ok()?,
+                                byte_column: 0,
+                            },
+                            WINDOW_BYTES,
+                        )
+                        .ok()?;
+                    if target_window.snapshot_id != projection.snapshot_id
+                        || target_window.buffer_version != projection.buffer_version
+                    {
+                        return None;
+                    }
+                    let identity = canonical_source_identity_parts(
                         buffer_id,
-                        VisualNavigationPosition {
-                            line: target_line,
-                            byte_column: 0,
-                        },
-                        WINDOW_BYTES,
-                    )
-                    .ok()?;
-                if target_window.snapshot_id != projection.snapshot_id
-                    || target_window.buffer_version != projection.buffer_version
-                    || !target_window.complete_logical_start
-                    || !target_window.complete_logical_end
-                {
+                        target_window.snapshot_id,
+                        target_window.buffer_version,
+                        target_line,
+                        target_window.line_start_byte,
+                        target_window.logical_end_byte,
+                    );
+                    let requested_row = target_row_index
+                        .and_then(|index| {
+                            usize::try_from(index).ok().map(StreamedRequestedRow::Index)
+                        })
+                        .unwrap_or_else(|| {
+                            if direction == VisualNavigationDirection::Down {
+                                StreamedRequestedRow::First
+                            } else {
+                                StreamedRequestedRow::Last
+                            }
+                        });
+                    self.view
+                        .request_streamed_navigation(identity, requested_row);
+                    self.pending_visual_navigation = Some((
+                        direction,
+                        extend,
+                        projection.snapshot_id,
+                        projection.buffer_version,
+                    ));
+                    ui.ctx().request_repaint();
                     return None;
                 }
-                let target_line_model = visual_navigation_line_model(&target_window)?;
-                let target_boundaries = visual_navigation_columns(&target_window)?;
-                let select = |row_index: u32, preferred_x: f32| {
-                    visual_navigation_selected_row_for_line(
-                        ui,
-                        &target_line_model,
-                        wrap_width,
-                        &target_boundaries,
-                        VisualNavigationRowRequest::Target {
-                            row_index,
-                            preferred_x,
-                        },
-                    )
-                    .ok()
-                };
-                let merge =
+                if let Some(streamed_target) = streamed_target {
+                    let select = |row_index: u32, preferred_x: f32| {
+                        streamed_navigation_selected_row(
+                            &streamed_target,
+                            VisualNavigationRowRequest::Target {
+                                row_index,
+                                preferred_x,
+                            },
+                        )
+                    };
+                    let merge =
+                        |left: crate::view::VisualNavigationSelectedRow,
+                         right: Option<crate::view::VisualNavigationSelectedRow>| {
+                            let mut row = left.row;
+                            if let Some(right) = right {
+                                for stop in right.row.stops {
+                                    if !row
+                                        .stops
+                                        .iter()
+                                        .any(|existing| existing.position == stop.position)
+                                    {
+                                        row.stops.push(stop);
+                                    }
+                                }
+                            }
+                            row
+                        };
+                    let row_index = if let Some(row_index) = target_row_index {
+                        row_index
+                    } else if direction == VisualNavigationDirection::Down {
+                        0
+                    } else {
+                        streamed_target
+                            .rows
+                            .iter()
+                            .filter_map(|row| row.row_index)
+                            .max()?
+                    };
+                    let left = select(row_index, desired_x)?;
+                    let right = caret
+                        .preferred_x
+                        .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
+                        .and_then(|x| select(row_index, x.value));
+                    merge(left, right)
+                } else {
+                    let target_window = self
+                        .app
+                        .visual_navigation_window(
+                            buffer_id,
+                            VisualNavigationPosition {
+                                line: u32::try_from(target_line).ok()?,
+                                byte_column: 0,
+                            },
+                            WINDOW_BYTES,
+                        )
+                        .ok()?;
+                    if target_window.snapshot_id != projection.snapshot_id
+                        || target_window.buffer_version != projection.buffer_version
+                        || !target_window.complete_logical_start
+                        || !target_window.complete_logical_end
+                    {
+                        return None;
+                    }
+                    let target_line_model = visual_navigation_line_model(&target_window)?;
+                    let target_boundaries = visual_navigation_columns(&target_window)?;
+                    let select = |row_index: u32, preferred_x: f32| {
+                        visual_navigation_selected_row_for_line(
+                            ui,
+                            &target_line_model,
+                            wrap_width,
+                            &target_boundaries,
+                            VisualNavigationRowRequest::Target {
+                                row_index,
+                                preferred_x,
+                            },
+                        )
+                        .ok()
+                    };
+                    let merge =
                     |left: crate::view::VisualNavigationSelectedRow,
                      right: Option<crate::view::VisualNavigationSelectedRow>| {
                         let mut row = left.row;
@@ -1833,39 +2354,40 @@ impl DesktopRuntime {
                         }
                         row
                     };
-                if let Some(row_index) = target_row_index {
-                    let left = select(row_index, desired_x)?;
-                    let right = caret
-                        .preferred_x
-                        .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
-                        .and_then(|x| select(row_index, x.value));
-                    merge(left, right)
-                } else {
-                    let row_index = if direction == VisualNavigationDirection::Down {
-                        0
+                    if let Some(row_index) = target_row_index {
+                        let left = select(row_index, desired_x)?;
+                        let right = caret
+                            .preferred_x
+                            .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
+                            .and_then(|x| select(row_index, x.value));
+                        merge(left, right)
                     } else {
-                        let target_focus = target_window
-                            .logical_end_byte
-                            .saturating_sub(target_window.line_start_byte);
-                        let last = visual_navigation_selected_row_for_line(
-                            ui,
-                            &target_line_model,
-                            wrap_width,
-                            &target_boundaries,
-                            VisualNavigationRowRequest::Source {
-                                byte_column: target_focus,
-                                affinity: legion_protocol::CaretAffinity::Upstream,
-                            },
-                        )
-                        .ok()?;
-                        last.row.row_index?
-                    };
-                    let left = select(row_index, desired_x)?;
-                    let right = caret
-                        .preferred_x
-                        .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
-                        .and_then(|x| select(row_index, x.value));
-                    merge(left, right)
+                        let row_index = if direction == VisualNavigationDirection::Down {
+                            0
+                        } else {
+                            let target_focus = target_window
+                                .logical_end_byte
+                                .saturating_sub(target_window.line_start_byte);
+                            let last = visual_navigation_selected_row_for_line(
+                                ui,
+                                &target_line_model,
+                                wrap_width,
+                                &target_boundaries,
+                                VisualNavigationRowRequest::Source {
+                                    byte_column: target_focus,
+                                    affinity: legion_protocol::CaretAffinity::Upstream,
+                                },
+                            )
+                            .ok()?;
+                            last.row.row_index?
+                        };
+                        let left = select(row_index, desired_x)?;
+                        let right = caret
+                            .preferred_x
+                            .filter(|x| (x.value - desired_x).abs() > f32::EPSILON)
+                            .and_then(|x| select(row_index, x.value));
+                        merge(left, right)
+                    }
                 }
             };
             source_rows.push(source);
@@ -1899,12 +2421,35 @@ impl DesktopRuntime {
         buffer_id: BufferId,
         viewport: &legion_protocol::ViewportProjection,
     ) -> bool {
-        visual_navigation_paint_geometry(ui, buffer_id).is_some_and(|geometry| {
+        let paint_ready = visual_navigation_paint_geometry(ui, buffer_id).is_some_and(|geometry| {
             geometry.line_wrapping_policy == viewport.line_wrapping_policy
                 && (viewport.line_wrapping_policy
                     != legion_protocol::LineWrappingPolicy::FixedColumn
                     || geometry.wrap_column == viewport.wrap_column)
-        })
+        });
+        let streamed_ready = viewport
+            .line_slices
+            .iter()
+            .enumerate()
+            .all(|(index, slice)| {
+                let Some(metric) = viewport.line_metrics.get(index) else {
+                    return true;
+                };
+                if metric.byte_length <= (96 * 1024) as u64 {
+                    return true;
+                }
+                let Some(identity) = streamed_identity_for_line(
+                    viewport,
+                    buffer_id,
+                    viewport.snapshot_id,
+                    viewport.buffer_version,
+                    slice.line_number as usize,
+                ) else {
+                    return false;
+                };
+                self.view.streamed_navigation_rows(identity).is_some()
+            });
+        paint_ready && streamed_ready
     }
 
     /// Test-only access to the app-owned debounce queue. The caller supplies a
@@ -2302,7 +2847,7 @@ impl DesktopRuntime {
         let view_state = self.projection_view_state();
         let mut rendered_output = None;
         let full_output = context.run_ui(egui::RawInput::default(), |ui| {
-            rendered_output = Some(self.view.render_with_state(ui, &snapshot, &view_state));
+            rendered_output = Some(self.render_projection_with_source(ui, &snapshot, &view_state));
         });
         std::hint::black_box(full_output);
         let output = rendered_output
@@ -4453,6 +4998,8 @@ pub fn desktop_native_options(title: &str) -> eframe::NativeOptions {
 #[derive(Debug)]
 struct DeferredEditorEvents {
     buffer_id: Option<BufferId>,
+    snapshot_id: Option<legion_protocol::SnapshotId>,
+    buffer_version: Option<legion_protocol::BufferVersion>,
     focus_owner: Option<egui::Id>,
     events: Vec<egui::Event>,
 }
@@ -4677,7 +5224,12 @@ impl DesktopEframeApp {
         if let Some(deferred) = self.deferred_editor_events.take() {
             let current_snapshot = self.runtime.projection_snapshot();
             let current_buffer = current_snapshot.active_buffer_projection.buffer_id;
+            let current_viewport = current_snapshot.active_buffer_projection.viewport.as_ref();
             let replay_for_editor = current_buffer == deferred.buffer_id
+                && current_viewport.is_some_and(|viewport| {
+                    Some(viewport.snapshot_id) == deferred.snapshot_id
+                        && Some(viewport.buffer_version) == deferred.buffer_version
+                })
                 && self.runtime.editor_input_enabled(&current_snapshot)
                 && !ui.ctx().text_edit_focused()
                 && ui.memory(|memory| memory.focused()) == deferred.focus_owner;
@@ -4767,8 +5319,7 @@ impl DesktopEframeApp {
         let view_state = self.runtime.projection_view_state();
         let output = self
             .runtime
-            .view
-            .render_with_state(ui, &snapshot, &view_state);
+            .render_projection_with_source(ui, &snapshot, &view_state);
         // Close the previous input sample at the end of the actual paint,
         // before post-paint keyboard mutations are dispatched.
         self.frame_timing.record_paint_now();
@@ -4822,6 +5373,21 @@ impl DesktopEframeApp {
     ) {
         let mut actions = Vec::new();
         let mut snapshot = self.runtime.projection_snapshot();
+        if let Some((direction, extend, expected_snapshot_id, expected_buffer_version)) =
+            self.runtime.pending_visual_navigation.take()
+            && snapshot
+                .active_buffer_projection
+                .viewport
+                .as_ref()
+                .is_some_and(|viewport| {
+                    viewport.snapshot_id == expected_snapshot_id
+                        && viewport.buffer_version == expected_buffer_version
+                })
+            && let Some(action) = self.runtime.visual_navigation_action(ui, direction, extend)
+        {
+            self.dispatch_desktop_action(ui, action);
+            snapshot = self.runtime.projection_snapshot();
+        }
         // Interactive TextEdit widgets (BYOK, terminal input) keep focus across
         // frames. While one of them owns keyboard focus, do not also dispatch
         // typed characters / Backspace into the code canvas (key leakage).
@@ -4874,14 +5440,21 @@ impl DesktopEframeApp {
                 })
                 .collect();
             let focus_owner = ui.memory(|memory| memory.focused());
+            let viewport = snapshot.active_buffer_projection.viewport.as_ref();
+            let snapshot_id = viewport.map(|viewport| viewport.snapshot_id);
+            let buffer_version = viewport.map(|viewport| viewport.buffer_version);
             if let Some(existing) = self.deferred_editor_events.as_mut()
                 && existing.buffer_id == buffer_id
+                && existing.snapshot_id == snapshot_id
+                && existing.buffer_version == buffer_version
                 && existing.focus_owner == focus_owner
             {
                 existing.events.extend(events);
             } else {
                 self.deferred_editor_events = Some(DeferredEditorEvents {
                     buffer_id,
+                    snapshot_id,
+                    buffer_version,
                     focus_owner,
                     events,
                 });
@@ -5476,6 +6049,62 @@ impl DesktopEframeApp {
                                 }
                             }
                             if visual_dispatched || visual_attempted {
+                                if visual_attempted
+                                    && !visual_dispatched
+                                    && self.runtime.pending_visual_navigation.is_some()
+                                {
+                                    // Keep the navigation event, and everything after it in
+                                    // this input batch, ordered behind the already-dispatched
+                                    // prefix.  The bounded visual source may need one or more
+                                    // repaint passes before it can answer; consuming the arrow
+                                    // here would turn `text, arrow, text` into two edits at the
+                                    // old caret and permanently lose the navigation.
+                                    self.runtime.pending_visual_navigation = None;
+                                    let events = input.events[event_index..]
+                                        .iter()
+                                        .filter(|event| {
+                                            matches!(
+                                                event,
+                                                egui::Event::Text(_)
+                                                    | egui::Event::Key { .. }
+                                                    | egui::Event::Ime(_)
+                                            )
+                                        })
+                                        .cloned()
+                                        .collect::<Vec<_>>();
+                                    if !events.is_empty() {
+                                        let buffer_id = snapshot.active_buffer_projection.buffer_id;
+                                        let viewport =
+                                            snapshot.active_buffer_projection.viewport.as_ref();
+                                        let snapshot_id =
+                                            viewport.map(|viewport| viewport.snapshot_id);
+                                        let buffer_version =
+                                            viewport.map(|viewport| viewport.buffer_version);
+                                        let focus_owner = ui.memory(|memory| memory.focused());
+                                        if let Some(existing) = self.deferred_editor_events.as_mut()
+                                            && existing.buffer_id == buffer_id
+                                            && existing.snapshot_id == snapshot_id
+                                            && existing.buffer_version == buffer_version
+                                            && existing.focus_owner == focus_owner
+                                        {
+                                            existing.events.extend(events);
+                                        } else {
+                                            self.deferred_editor_events =
+                                                Some(DeferredEditorEvents {
+                                                    buffer_id,
+                                                    snapshot_id,
+                                                    buffer_version,
+                                                    focus_owner,
+                                                    events,
+                                                });
+                                        }
+                                        if self.deferred_input_at.is_none() {
+                                            self.deferred_input_at = input_timestamp;
+                                        }
+                                        ui.ctx().request_repaint();
+                                    }
+                                    break;
+                                }
                                 // Recognized visual arrows are consumed by this
                                 // route, including fail-closed incomplete windows.
                             } else if let Some(action) = boundary_action_for_event(event, &snapshot)
@@ -6986,6 +7615,134 @@ mod tests {
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    #[test]
+    fn owned_desktop_source_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<DesktopUiLineSource>();
+    }
+
+    fn render_owned_source_frame(runtime: &mut DesktopRuntime, context: &egui::Context) {
+        let _ = context.run_ui(
+            egui::RawInput {
+                focused: true,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1_200.0, 900.0),
+                )),
+                ..egui::RawInput::default()
+            },
+            |ui| {
+                let snapshot = runtime.projection_snapshot();
+                let view_state = runtime.projection_view_state();
+                let _ = runtime.render_projection_with_source(ui, &snapshot, &view_state);
+            },
+        );
+    }
+
+    #[test]
+    fn owned_source_reuses_exact_lease_across_same_snapshot_frames() {
+        let workspace = TempWorkspace::new();
+        let file = workspace.path().join("lease-reuse.rs");
+        fs::write(&file, "fn main() {}\n").expect("fixture should be written");
+        let mut runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(file.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open fixture");
+        let context = egui::Context::default();
+
+        render_owned_source_frame(&mut runtime, &context);
+        let first_id = runtime
+            .owned_ui_source
+            .as_ref()
+            .expect("first frame should acquire source lease")
+            .descriptor()
+            .lease_id;
+        let source_snapshot = runtime.projection_snapshot();
+        let source = DesktopUiLineSource::from_snapshot(
+            runtime
+                .owned_ui_source
+                .as_ref()
+                .expect("source lease should remain owned")
+                .clone(),
+            &source_snapshot,
+        );
+        let worker_source = source
+            .owned_source()
+            .expect("owned source hook should expose a worker-safe clone");
+        let source_identity = worker_source.identity(0);
+        assert_eq!(
+            source_identity.buffer_id,
+            source_snapshot
+                .active_buffer_projection
+                .buffer_id
+                .expect("active buffer should be projected")
+        );
+        assert_eq!(
+            source_identity.snapshot_id,
+            source_snapshot
+                .active_buffer_projection
+                .viewport
+                .as_ref()
+                .expect("viewport should be projected")
+                .snapshot_id
+        );
+        let source_chunk = worker_source
+            .read_chunk(0, 0, 64)
+            .expect("worker source should read bounded chunks");
+        assert!(source_chunk.text.len() <= 64);
+        render_owned_source_frame(&mut runtime, &context);
+        let second_id = runtime
+            .owned_ui_source
+            .as_ref()
+            .expect("second frame should retain source lease")
+            .descriptor()
+            .lease_id;
+
+        assert_eq!(first_id, second_id);
+    }
+
+    #[test]
+    fn owned_source_releases_old_lease_when_editor_snapshot_changes() {
+        let workspace = TempWorkspace::new();
+        let file = workspace.path().join("lease-refresh.rs");
+        fs::write(&file, "fn main() {}\n").expect("fixture should be written");
+        let mut runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(file.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open fixture");
+        let context = egui::Context::default();
+
+        render_owned_source_frame(&mut runtime, &context);
+        let old = runtime
+            .owned_ui_source
+            .as_ref()
+            .expect("first frame should acquire source lease")
+            .clone();
+        let old_id = old.descriptor().lease_id;
+        let old_source_snapshot = runtime.projection_snapshot();
+        let old_source = DesktopUiLineSource::from_snapshot(old.clone(), &old_source_snapshot)
+            .owned_source()
+            .expect("owned source hook should retain a worker-safe trait object");
+        runtime
+            .handle_action(DesktopAction::ReplaceDirectedCarets {
+                text: "changed".to_string(),
+            })
+            .expect("real editor action should advance snapshot");
+        render_owned_source_frame(&mut runtime, &context);
+
+        let new_id = runtime
+            .owned_ui_source
+            .as_ref()
+            .expect("changed snapshot should acquire a new source lease")
+            .descriptor()
+            .lease_id;
+        assert_ne!(old_id, new_id);
+        assert!(old.read_line_chunk(0, 0, 64).is_err());
+        assert!(old_source.read_chunk(0, 0, 64).is_err());
+    }
+
     fn palette_test_input(events: Vec<egui::Event>) -> egui::RawInput {
         egui::RawInput {
             focused: true,
@@ -7100,6 +7857,230 @@ mod tests {
             .viewport
             .expect("fixture viewport should remain projected");
         assert_eq!((viewport.cursor.line, viewport.cursor.character), (1, 2));
+    }
+
+    #[test]
+    fn reference_navigation_opens_target_and_preserves_utf16_coordinate() {
+        let workspace = TempWorkspace::new();
+        let source = workspace.path().join("source.rs");
+        let target = workspace.path().join("target.rs");
+        fs::write(&source, "fn main() {}\nsource\n").expect("source fixture should be written");
+        fs::write(&target, "header\n😀ref target\n").expect("target fixture should be written");
+        let target_canonical = fs::canonicalize(&target).expect("target path should canonicalize");
+        let mut runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(source.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open source fixture");
+        runtime
+            .handle_action(DesktopAction::NavigateToReference {
+                path: target.to_string_lossy().into_owned(),
+                line: 1,
+                character: 2,
+            })
+            .expect("reference navigation should dispatch through app authority");
+        let snapshot = runtime.projection_snapshot();
+        let viewport = snapshot
+            .active_buffer_projection
+            .viewport
+            .expect("target viewport should be projected");
+        assert_eq!(
+            snapshot.active_buffer_projection.file_path,
+            Some(CanonicalPath(
+                target_canonical.to_string_lossy().into_owned()
+            ))
+        );
+        assert_eq!(viewport.cursor.line, 1);
+        assert_eq!(viewport.cursor.character, 4);
+        assert_eq!(viewport.cursor.utf16_offset, Some(9));
+    }
+
+    #[test]
+    fn invalid_reference_coordinate_keeps_existing_buffer_and_caret() {
+        let workspace = TempWorkspace::new();
+        let source = workspace.path().join("source.rs");
+        fs::write(&source, "😀source\n").expect("source fixture should be written");
+        let mut runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(source.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open source fixture");
+        let before = runtime.projection_snapshot();
+        let before_viewport = before
+            .active_buffer_projection
+            .viewport
+            .expect("source viewport should be projected");
+        let outcome = runtime
+            .handle_action(DesktopAction::NavigateToReference {
+                path: String::new(),
+                line: u32::MAX,
+                character: u32::MAX,
+            })
+            .expect("invalid reference should be handled without panic");
+        assert!(matches!(outcome, DesktopWorkflowOutcome::Noop));
+        let after = runtime.projection_snapshot();
+        let after_viewport = after
+            .active_buffer_projection
+            .viewport
+            .expect("source viewport should remain projected");
+        assert_eq!(
+            after.active_buffer_projection.file_path,
+            before.active_buffer_projection.file_path
+        );
+        assert_eq!(after_viewport.cursor, before_viewport.cursor);
+
+        let source_canonical = fs::canonicalize(&source).expect("source path should canonicalize");
+        let invalid_surrogate = runtime.handle_action(DesktopAction::NavigateToReference {
+            path: source_canonical.to_string_lossy().into_owned(),
+            line: 0,
+            character: 1,
+        });
+        assert!(!matches!(
+            invalid_surrogate,
+            Ok(DesktopWorkflowOutcome::Opened)
+        ));
+
+        let source_canonical = fs::canonicalize(&source).expect("source path should canonicalize");
+        let _ = runtime.handle_action(DesktopAction::NavigateToReference {
+            path: source_canonical.to_string_lossy().into_owned(),
+            line: u32::MAX,
+            character: u32::MAX,
+        });
+        let after_invalid = runtime.projection_snapshot();
+        let invalid_viewport = after_invalid
+            .active_buffer_projection
+            .viewport
+            .expect("viewport should remain projected after invalid coordinate");
+        assert_eq!(
+            after_invalid.active_buffer_projection.file_path,
+            before.active_buffer_projection.file_path
+        );
+        assert_eq!(invalid_viewport.cursor, before_viewport.cursor);
+    }
+
+    #[test]
+    fn terminal_navigation_failure_consumes_arrow_and_preserves_following_text() {
+        let workspace = TempWorkspace::new();
+        let file = workspace.path().join("terminal-nav.txt");
+        fs::write(&file, format!("{}\nsecond", "x".repeat(100 * 1024)))
+            .expect("fixture should be written");
+        let runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(file.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open fixture");
+        let mut app = DesktopEframeApp::new(runtime);
+        let _ = app.run_headless_full_frame(palette_test_input(Vec::new()).clone());
+        let snapshot = app.runtime_snapshot();
+        let projection = snapshot.active_buffer_projection;
+        let viewport = projection.viewport.expect("viewport should exist");
+        let identity = streamed_identity_for_line(
+            &viewport,
+            viewport.buffer_id,
+            viewport.snapshot_id,
+            viewport.buffer_version,
+            viewport.cursor.line as usize,
+        )
+        .expect("large active line should have streamed identity");
+        app.runtime_mut_for_test()
+            .view
+            .inject_streamed_navigation_error_for_test(
+                identity,
+                StreamedRequestedRow::Byte(viewport.cursor.character as u64),
+                "injected terminal navigation failure",
+            );
+        let _ = app.run_headless_full_frame(palette_test_input(vec![
+            egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: Some(egui::Key::ArrowDown),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Text("Z".to_owned()),
+        ]));
+        let after_snapshot = app.runtime_snapshot();
+        let after_viewport = after_snapshot
+            .active_buffer_projection
+            .viewport
+            .expect("viewport should remain available");
+        let text = app
+            .runtime
+            .app
+            .buffer_text_for_input(after_viewport.buffer_id)
+            .expect("authoritative text should remain readable");
+        let expected = format!("Z{}\nsecond", "x".repeat(100 * 1024));
+        assert_eq!(text, expected);
+        assert_eq!(after_viewport.cursor.line, 0);
+        assert_eq!(after_viewport.cursor.character, 1);
+        assert!(app.runtime.pending_visual_navigation.is_none());
+        assert!(app.deferred_editor_events.is_none());
+    }
+
+    #[test]
+    fn deferred_visual_input_is_dropped_after_snapshot_version_changes() {
+        let workspace = TempWorkspace::new();
+        let file = workspace.path().join("stale-deferred.txt");
+        fs::write(&file, "abc\ndef").expect("fixture should be written");
+        let runtime = DesktopRuntime::open(DesktopLaunchConfig::new(
+            workspace.path().to_path_buf(),
+            Some(file.to_string_lossy().into_owned()),
+        ))
+        .expect("runtime should open fixture");
+        let mut app = DesktopEframeApp::new(runtime);
+        let _ = app.run_headless_full_frame(egui::RawInput {
+            focused: true,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_200.0, 900.0),
+            )),
+            ..egui::RawInput::default()
+        });
+        let _ = app.ctx.clone().run_ui(
+            palette_test_input(vec![
+                egui::Event::Text("X".to_string()),
+                egui::Event::Key {
+                    key: egui::Key::ArrowDown,
+                    physical_key: Some(egui::Key::ArrowDown),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]),
+            |ui| {
+                let snapshot = app.runtime.projection_snapshot();
+                let state = app.runtime.projection_view_state();
+                let _ = app.runtime.view.render_with_state(ui, &snapshot, &state);
+                app.handle_action(DesktopAction::SetLineWrappingPolicy {
+                    policy: legion_protocol::LineWrappingPolicy::Viewport,
+                    wrap_column: None,
+                })
+                .expect("settings action should be accepted");
+                app.handle_keyboard(ui, ui.input(|input| input.clone()), Some(Instant::now()));
+            },
+        );
+        assert!(app.deferred_editor_events.is_some());
+        app.runtime_mut_for_test()
+            .handle_action(DesktopAction::ReplaceDirectedCarets {
+                text: "z".to_string(),
+            })
+            .expect("edit should advance the snapshot");
+        let _ = app.run_headless_full_frame(egui::RawInput {
+            focused: true,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1_200.0, 900.0),
+            )),
+            ..egui::RawInput::default()
+        });
+        assert!(app.deferred_editor_events.is_none());
+        let text = app
+            .runtime_snapshot()
+            .active_buffer_projection
+            .small_buffer_preview
+            .expect("small fixture should remain projected");
+        assert!(text.contains('z'));
+        assert!(!text.contains('X'));
     }
 
     #[test]
@@ -7848,7 +8829,7 @@ mod tests {
         assert!(matches!(
             editor_keyboard_control_actions(&backspace, &snapshot, true, false, false).as_slice(),
             [DesktopAction::DeleteDirectedCarets {
-                buffer_id: None,
+                buffer_id: Some(BufferId(1)),
                 backward: true,
             }]
         ));
@@ -7857,7 +8838,7 @@ mod tests {
         assert!(matches!(
             editor_keyboard_control_actions(&delete, &snapshot, true, false, false).as_slice(),
             [DesktopAction::DeleteDirectedCarets {
-                buffer_id: None,
+                buffer_id: Some(BufferId(1)),
                 backward: false,
             }]
         ));
@@ -7912,6 +8893,86 @@ mod tests {
                 && message.contains("Plugin command denied")
                 && message.contains("UnsupportedHostCall")
         ));
+    }
+
+    #[test]
+    fn streamed_navigation_selector_matches_painted_rows_and_affinity() {
+        let rows = StreamedNavigationRows {
+            snapshot_id: legion_protocol::SnapshotId(7),
+            buffer_version: legion_protocol::BufferVersion(3),
+            line: 12,
+            rows: vec![
+                legion_protocol::VisualNavigationRow {
+                    logical_line: 12,
+                    start: VisualNavigationPosition {
+                        line: 12,
+                        byte_column: 0,
+                    },
+                    end: VisualNavigationPosition {
+                        line: 12,
+                        byte_column: 4,
+                    },
+                    row_index: Some(0),
+                    row_count: Some(2),
+                    stops: vec![legion_protocol::VisualNavigationStop {
+                        position: VisualNavigationPosition {
+                            line: 12,
+                            byte_column: 0,
+                        },
+                        x: legion_protocol::VisualNavigationX { value: 0.0 },
+                        affinity: legion_protocol::CaretAffinity::Upstream,
+                    }],
+                },
+                legion_protocol::VisualNavigationRow {
+                    logical_line: 12,
+                    start: VisualNavigationPosition {
+                        line: 12,
+                        byte_column: 4,
+                    },
+                    end: VisualNavigationPosition {
+                        line: 12,
+                        byte_column: 9,
+                    },
+                    row_index: Some(1),
+                    row_count: Some(2),
+                    stops: vec![legion_protocol::VisualNavigationStop {
+                        position: VisualNavigationPosition {
+                            line: 12,
+                            byte_column: 4,
+                        },
+                        x: legion_protocol::VisualNavigationX { value: 12.0 },
+                        affinity: legion_protocol::CaretAffinity::Upstream,
+                    }],
+                },
+            ],
+            terminal_error: None,
+        };
+
+        let source = streamed_navigation_selected_row(
+            &rows,
+            VisualNavigationRowRequest::Source {
+                byte_column: 4,
+                affinity: legion_protocol::CaretAffinity::Downstream,
+            },
+        )
+        .expect("downstream seam should select the next painted row");
+        assert_eq!(source.row.row_index, Some(1));
+        assert_eq!(source.source_x.unwrap().value, 12.0);
+        assert_eq!(
+            source.row.stops[0].affinity,
+            legion_protocol::CaretAffinity::Downstream
+        );
+
+        let target = streamed_navigation_selected_row(
+            &rows,
+            VisualNavigationRowRequest::Target {
+                row_index: 1,
+                preferred_x: 11.0,
+            },
+        )
+        .expect("target should use the same cached painted row");
+        assert_eq!(target.row.start.byte_column, 4);
+        assert_eq!(target.target_stop.unwrap().x.value, 12.0);
     }
 }
 

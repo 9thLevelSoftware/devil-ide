@@ -482,6 +482,14 @@ fn ensure_cache_namespace(root: &Path) -> Result<(), MaterializeError> {
     let mut current = PathBuf::new();
     for component in root.components() {
         current.push(component.as_os_str());
+        // On Windows a verbatim path begins with a Prefix component such as
+        // \\?\C:. Querying that incomplete prefix asks Win32 to stat a
+        // device-like path and returns ERROR_INVALID_FUNCTION. The complete
+        // root component is the first filesystem anchor; continue checking
+        // it and every descendant for symlink entries.
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(MaterializeError::CacheTampered);
@@ -529,6 +537,9 @@ fn materialize_inner(
         .map_err(|_| MaterializeError::InvalidRequest("entrypoint"))?;
     if request.descriptor.package_name.is_empty() || request.descriptor.version.is_empty() {
         return Err(MaterializeError::InvalidRequest("package identity"));
+    }
+    if !request.cache_root.is_absolute() {
+        return Err(MaterializeError::InvalidRequest("cache_root"));
     }
     let guard = Guard {
         token,
@@ -1420,6 +1431,48 @@ fn validate_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_workspace_cache_namespace_skips_incomplete_drive_prefix() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let canonical_workspace =
+            std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+        let cache = canonical_workspace.join(".legion").join("language-tools");
+        ensure_cache_namespace(&cache).expect("verbatim cache namespace");
+    }
+
+    #[test]
+    fn relative_cache_root_is_rejected_before_filesystem_work() {
+        let dir = tempfile::tempdir().expect("workspace");
+        let archive = dir.path().join("artifact.tgz");
+        let bytes = valid_test_archive();
+        std::fs::write(&archive, &bytes).expect("archive");
+        let hash = hex::encode(Sha256::digest(&bytes));
+        let relative_cache = PathBuf::from(format!("relative-cache-{}", uuid::Uuid::new_v4()));
+        assert!(!relative_cache.exists());
+        let request = test_request(&hash, &archive, &relative_cache);
+        assert_eq!(
+            materialize_inner(&request, &CancellationToken::new(), |_| {}),
+            Err(MaterializeError::InvalidRequest("cache_root"))
+        );
+        assert!(!relative_cache.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_relative_cache_root_is_rejected_before_filesystem_work() {
+        let dir = tempfile::tempdir().expect("workspace");
+        let archive = dir.path().join("artifact.tgz");
+        let bytes = valid_test_archive();
+        std::fs::write(&archive, &bytes).expect("archive");
+        let hash = hex::encode(Sha256::digest(&bytes));
+        let request = test_request(&hash, &archive, Path::new(r"C:relative-cache"));
+        assert_eq!(
+            materialize_inner(&request, &CancellationToken::new(), |_| {}),
+            Err(MaterializeError::InvalidRequest("cache_root"))
+        );
+    }
 
     #[test]
     fn phase_hook_cancels_real_pipeline_at_each_bounded_phase() {

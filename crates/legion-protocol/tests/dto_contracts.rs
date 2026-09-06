@@ -4029,6 +4029,7 @@ fn dto_contracts_session_record_schema_golden() {
             schema_version: 1,
         }],
         workbench_settings: WorkbenchSettingsRecord::default(),
+        language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
         memory_snapshot_json: None,
         dirty_indicators: vec![SessionDirtyIndicator {
             buffer_id: BufferId(22),
@@ -4118,6 +4119,10 @@ fn dto_contracts_session_record_schema_golden() {
                 "schema_version": 1
             },
             "schema_version": 1
+        },
+        "language_toolchain_settings": {
+            "schema_version": 1,
+            "typescript": null
         },
         "dirty_indicators": [{
             "buffer_id": 22,
@@ -9204,6 +9209,7 @@ fn dto_contracts_phase4_runtime_surfaces_are_protocol_mediated() {
 #[test]
 fn language_terminal_projection_roundtrips_language_surface() {
     let projection = LanguageToolingProjection {
+        typescript_toolchain: TypeScriptToolchainProjection::default(),
         workspace_id: Some(WorkspaceId(11)),
         buffer_id: Some(BufferId(22)),
         file_id: Some(FileId(33)),
@@ -9230,6 +9236,19 @@ fn language_terminal_projection_roundtrips_language_surface() {
             source_label: Some("lexical-index".to_string()),
             proposal_id: Some(ProposalId(700)),
             redaction_hints: vec![RedactionHint::MetadataOnly],
+            schema_version: 1,
+        }],
+        code_action_candidates: vec![LanguageCodeActionProjection {
+            response_id: "response-1".to_string(),
+            action_id: "code-action:response-1:0".to_string(),
+            title: "Add missing import".to_string(),
+            kind: Some("quickfix".to_string()),
+            is_preferred: true,
+            disabled_reason: None,
+            has_edit: true,
+            has_command: false,
+            buffer_id: Some(BufferId(22)),
+            snapshot_id: Some(SnapshotId(44)),
             schema_version: 1,
         }],
         breadcrumbs: vec![LanguageBreadcrumbProjection {

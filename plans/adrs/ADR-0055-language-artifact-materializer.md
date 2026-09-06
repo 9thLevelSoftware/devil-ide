@@ -282,3 +282,17 @@ probe and LSP health provenance; (4) a separately reviewed Python runtime
 descriptor/startup path. Each increment needs app/LSP contract tests and must
 preserve the Manual denial tests. No increment may claim Python completion
 before its own native workflow evidence exists.
+
+## 2026-09-06 implementation status note
+
+The materializer contract remains the canonical home for any TypeScript or
+JavaScript bundle identity, pinned digest, approved Node runtime, bounded
+extraction, cancellation, and Manual zero-egress decision. Current native
+TypeScript startup evidence is the
+`explicit_typescript_startup_is_lazy_live_and_restart_preserves_dirty_text`
+test (`LEGION_TEST_NODE_RUNTIME=<approved-local-node> cargo test -p legion-app
+--test typescript_app_startup -- --ignored --nocapture`, 1 passed in 16.23s).
+The run requires the retained pinned TypeScript archives and an explicit local
+Node runtime. No registry, materializer, or unit-test result is sufficient to
+claim packaged language completion; the S2 native EvidenceRun requirements
+remain in force.

@@ -2885,6 +2885,17 @@ pub enum CommandDispatchIntent {
         /// Target product mode.
         mode: DockMode,
     },
+    /// Configure the app-owned TypeScript toolchain from approved archive and runtime metadata.
+    ConfigureTypeScriptToolchain {
+        /// Archive path for the language server package.
+        server_archive: String,
+        /// Archive path for the TypeScript compiler package.
+        compiler_archive: String,
+        /// Node executable path selected by app authority.
+        node_executable: String,
+    },
+    /// Clear the app-owned TypeScript toolchain configuration.
+    ClearTypeScriptToolchain,
     /// Undo through application/editor authority for the target buffer.
     Undo {
         /// Target buffer identifier.
@@ -3545,6 +3556,20 @@ pub enum CommandDispatchIntent {
         /// Target buffer identifier.
         buffer_id: BufferId,
         /// Code-action identifier selected from projection data.
+        action_id: String,
+    },
+    /// Request bounded live code-action metadata for a document range.
+    RequestCodeActions {
+        /// Target buffer identifier.
+        buffer_id: legion_protocol::BufferId,
+        /// UTF-16 document range used as the code-action context.
+        range: legion_protocol::ProtocolTextRange,
+    },
+    /// Select one candidate from a previously projected code-action response.
+    SelectCodeAction {
+        /// Opaque response identity that produced the candidate.
+        response_id: String,
+        /// Opaque candidate token scoped to `response_id`.
         action_id: String,
     },
     /// Activate a projected language code lens through app authority.
@@ -7928,6 +7953,27 @@ mod tests {
         );
         assert_eq!(shell.projection_snapshot(), before);
         assert_eq!(shell.command_dispatch_intents.len(), 1);
+    }
+
+    #[test]
+    fn typescript_toolchain_intents_preserve_app_metadata_only() {
+        let configure = CommandDispatchIntent::ConfigureTypeScriptToolchain {
+            server_archive: "cache/typescript-language-server.tgz".to_string(),
+            compiler_archive: "cache/typescript.tgz".to_string(),
+            node_executable: "runtime/node".to_string(),
+        };
+        assert_eq!(
+            configure,
+            CommandDispatchIntent::ConfigureTypeScriptToolchain {
+                server_archive: "cache/typescript-language-server.tgz".to_string(),
+                compiler_archive: "cache/typescript.tgz".to_string(),
+                node_executable: "runtime/node".to_string(),
+            }
+        );
+        assert_eq!(
+            CommandDispatchIntent::ClearTypeScriptToolchain,
+            CommandDispatchIntent::ClearTypeScriptToolchain
+        );
     }
 
     #[test]

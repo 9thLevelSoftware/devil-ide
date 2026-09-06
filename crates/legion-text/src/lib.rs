@@ -953,7 +953,13 @@ impl LineIndex {
         max_bytes: usize,
     ) -> TextResult<TextLineChunk> {
         let metric = self.line(line)?;
-        build_line_chunk(self.inner.rope.as_ref(), &metric, line, start_byte, max_bytes)
+        build_line_chunk(
+            self.inner.rope.as_ref(),
+            &metric,
+            line,
+            start_byte,
+            max_bytes,
+        )
     }
 
     /// Return the exact logical line range requested by a viewport using an explicit per-line

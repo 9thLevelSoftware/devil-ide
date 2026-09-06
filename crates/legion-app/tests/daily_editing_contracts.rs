@@ -421,7 +421,9 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
         } else {
             format!("file:///{normalized_file}")
         };
-        let legion_app::language::LspWorkerRequest::DidChange { uri, version, text } = &request
+        let legion_app::language::LspWorkerRequest::DidChange {
+            uri, version, text, ..
+        } = &request
         else {
             panic!("expected queued DidChange request, got another worker request");
         };
@@ -543,14 +545,24 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
     );
     assert!(matches!(
         directed_request,
-        legion_app::language::LspWorkerRequest::DidChange { ref uri, version, ref text }
+        legion_app::language::LspWorkerRequest::DidChange {
+            ref uri,
+            version,
+            ref text,
+            ..
+        }
             if uri == &directed_expected_uri
                 && version == directed_descriptor.post_buffer_version.0 as i64
                 && text == "aXd"
     ));
     assert!(matches!(
         ordinary.3,
-        legion_app::language::LspWorkerRequest::DidChange { ref uri, version, ref text }
+        legion_app::language::LspWorkerRequest::DidChange {
+            ref uri,
+            version,
+            ref text,
+            ..
+        }
             if uri.ends_with("/ordinary.txt")
                 && version == ordinary.1.post_buffer_version.0 as i64
                 && text == "aXd"

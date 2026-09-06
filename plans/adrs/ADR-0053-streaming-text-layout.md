@@ -83,6 +83,21 @@ if needed to make the external `epaint` ownership rule executable; this ADR
 does not authorize weakening the current internal-edge or renderer-boundary
 checks.
 
+## 2026-09-06 implementation status note
+
+The current renderer continuation adds bounded metric/replay progress and
+preserves final-row/backpressure state across calls. Normal rendering owns a
+persistent bounded UI source lease; the worker pool is integrated into that
+workflow with checked lease/font keys and UI-only atlas replay. Terminal worker
+failure does not spin, and queued typing remains preserved. Font layout identity
+and atlas reset identity participate in cache reuse, including the unique-atlas
+epoch regression coverage. Geometry computation remains renderer-owned
+in-process CPU projection, with the existing 5 MiB snapshot and 96 KiB read
+limits. The root desktop library run (`cargo test -p legion-desktop --lib`)
+passed 233 tests, including the five focused owned-source cases. This is
+implementation evidence only; it does not replace the ADR's wrapped, desktop,
+or packaged/native acceptance gates.
+
 ## Consequences
 
 The continuation can use the reviewed local source while retaining the

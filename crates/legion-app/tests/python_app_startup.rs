@@ -7,12 +7,14 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use legion_app::AppComposition;
+use legion_app::{AppComposition, AppSaveAllStatus};
 use legion_editor::{TextEdit, TextPosition};
 use legion_lsp::LanguageServerAdapterRegistry;
 use legion_protocol::{
-    LanguageId, LspResultStatus, LspSessionLifecycleKind, PrincipalId, TextCoordinate,
-    WorkspaceTrustState,
+    CausalityId, LanguageId, LanguageToolingOperationKind, LspResultStatus,
+    LspSessionLifecycleKind, PrincipalId, ProposalLifecycleAction, ProposalLifecycleCommand,
+    ProposalLifecycleCommandReason, ProposalPayload, ProposalRequest, ProposalResponse,
+    TextCoordinate, TimestampMillis, WorkspaceTrustState,
 };
 use legion_ui::CommandDispatchIntent;
 
@@ -65,6 +67,121 @@ fn wait_for_live(app: &mut AppComposition) {
             app.lsp_session_log_projection(),
         );
         assert!(Instant::now() < deadline, "Pyright startup timed out");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn wait_for_native_proposal(
+    app: &mut AppComposition,
+    excluded: &[legion_protocol::ProposalId],
+) -> legion_protocol::WorkspaceProposal {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        app.drain_lsp_session();
+        let operation = app
+            .language_tooling_projection()
+            .operations
+            .iter()
+            .rev()
+            .find(|operation| {
+                operation.kind == LanguageToolingOperationKind::RenameProposal
+                    && operation
+                        .proposal_id
+                        .is_some_and(|proposal_id| !excluded.contains(&proposal_id))
+            })
+            .cloned();
+        if let Some(proposal_id) = operation.and_then(|operation| operation.proposal_id) {
+            if let Some(proposal) = app.workspace_proposal_for_id(proposal_id) {
+                return proposal;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Python rename proposal timed out: operations={:?}, health={:?}, session={:?}, stderr={:?}",
+            app.language_tooling_projection().operations,
+            app.lsp_server_health_record(),
+            app.lsp_session_status_projection(),
+            app.lsp_session_log_projection(),
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn cancel_native_proposal(app: &mut AppComposition, proposal: &legion_protocol::WorkspaceProposal) {
+    let response = app
+        .handle_proposal_request(ProposalRequest::Cancel(ProposalLifecycleCommand {
+            proposal_id: proposal.proposal_id,
+            principal: proposal.principal.clone(),
+            capability: proposal.capability.clone(),
+            correlation_id: proposal.correlation_id,
+            causality_id: CausalityId(uuid::Uuid::now_v7()),
+            reason: Some(ProposalLifecycleCommandReason::Cancellation(
+                legion_protocol::ProposalCancellationReason::UserCancelled,
+            )),
+            diagnostics: Vec::new(),
+            requested_at: TimestampMillis::now(),
+            schema_version: 1,
+            action: ProposalLifecycleAction::Cancel,
+        }))
+        .expect("cancel Python rename proposal");
+    assert!(matches!(response, ProposalResponse::Cancelled { .. }));
+}
+
+fn wait_for_python_problem(app: &mut AppComposition, file_name: &str, needle: &str) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        app.drain_lsp_session();
+        if app
+            .language_tooling_projection()
+            .problems
+            .iter()
+            .any(|problem| {
+                problem
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.0.ends_with(file_name))
+                    && (problem.message.contains(needle)
+                        || problem.code_label.as_deref() == Some(needle))
+            })
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Python diagnostic {needle:?} did not arrive for {file_name}: problems={:?}, health={:?}, session={:?}, stderr={:?}",
+            app.language_tooling_projection().problems,
+            app.lsp_server_health_record(),
+            app.lsp_session_status_projection(),
+            app.lsp_session_log_projection(),
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn wait_for_python_problem_clear(app: &mut AppComposition, file_name: &str, needle: &str) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        app.drain_lsp_session();
+        if !app
+            .language_tooling_projection()
+            .problems
+            .iter()
+            .any(|problem| {
+                problem
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.0.ends_with(file_name))
+                    && (problem.message.contains(needle)
+                        || problem.code_label.as_deref() == Some(needle))
+            })
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Python diagnostic {needle:?} did not clear for {file_name}: problems={:?}",
+            app.language_tooling_projection().problems,
+        );
         std::thread::sleep(Duration::from_millis(25));
     }
 }
@@ -178,4 +295,245 @@ fn explicit_python_startup_is_lazy_live_and_restart_preserves_dirty_text() {
         dirty_text,
         "restart must not discard dirty editor text"
     );
+}
+
+#[test]
+#[ignore = "opt-in native Node + retained Pyright fixture"]
+fn native_python_rename_is_reviewable_cancelable_and_saves_cross_file_edit() {
+    const LIB_BEFORE: &str = "def greet(name):\n    return name\n";
+    const MAIN_BEFORE: &str = "from lib import greet\nmessage = greet(\"world\")\n";
+    let archive = retained_archive();
+    let node = selected_node();
+    let root = tempfile::tempdir().expect("temporary Python workspace");
+    let lib = root.path().join("lib.py");
+    let main = root.path().join("main.py");
+    std::fs::write(&lib, LIB_BEFORE).expect("seed lib");
+    std::fs::write(&main, MAIN_BEFORE).expect("seed main");
+    let mut app = AppComposition::new();
+    app.open_workspace(
+        root.path(),
+        WorkspaceTrustState::Trusted,
+        PrincipalId("python-native-rename".to_string()),
+    )
+    .expect("open workspace");
+    let adapter = LanguageServerAdapterRegistry::tier_two()
+        .adapters_for_language(&LanguageId("python".to_string()))
+        .into_iter()
+        .find(|candidate| candidate.is_primary)
+        .cloned()
+        .expect("tier-two Python adapter");
+    app.configure_downloaded_language_server_local(
+        adapter,
+        archive,
+        node,
+        root.path().join("language-cache"),
+    )
+    .expect("configure local Pyright");
+    app.open_file(lib.to_string_lossy()).expect("open lib");
+    let lib_buffer = app.active_buffer_id().expect("lib buffer");
+    app.open_file(main.to_string_lossy()).expect("open main");
+    let main_buffer = app.active_buffer_id().expect("main buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::LspStartSession)
+        .expect("start Python");
+    wait_for_live(&mut app);
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: lib_buffer,
+    })
+    .expect("activate Python definition");
+    app.dispatch_ui_intent(CommandDispatchIntent::RequestRenameProposal {
+        buffer_id: lib_buffer,
+        position: TextCoordinate {
+            line: 0,
+            character: 4,
+            byte_offset: None,
+            utf16_offset: None,
+        },
+        new_name: "welcome".to_string(),
+    })
+    .expect("request Python rename");
+    let proposal = wait_for_native_proposal(&mut app, &[]);
+    let ProposalPayload::WorkspaceEdit(payload) = &proposal.payload else {
+        panic!(
+            "Python rename must produce a workspace edit: {:?}",
+            proposal.payload
+        );
+    };
+    assert!(
+        payload.file_edits.len() >= 2,
+        "rename must cover definition and use"
+    );
+    assert_eq!(std::fs::read_to_string(&lib).unwrap(), LIB_BEFORE);
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), MAIN_BEFORE);
+    cancel_native_proposal(&mut app, &proposal);
+
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: lib_buffer,
+    })
+    .expect("reactivate Python definition");
+    app.dispatch_ui_intent(CommandDispatchIntent::RequestRenameProposal {
+        buffer_id: lib_buffer,
+        position: TextCoordinate {
+            line: 0,
+            character: 4,
+            byte_offset: None,
+            utf16_offset: None,
+        },
+        new_name: "welcome".to_string(),
+    })
+    .expect("request Python rename again");
+    let proposal = wait_for_native_proposal(&mut app, &[proposal.proposal_id]);
+    let response = app
+        .approve_and_apply_rename_proposal(proposal.proposal_id)
+        .expect("apply approved Python rename");
+    assert!(matches!(response, ProposalResponse::Applied(_)));
+    assert!(app.editor().text(lib_buffer).unwrap().contains("welcome"));
+    assert!(app.editor().text(main_buffer).unwrap().contains("welcome"));
+    assert_eq!(std::fs::read_to_string(&lib).unwrap(), LIB_BEFORE);
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), MAIN_BEFORE);
+    let save = app.save_all().expect("save Python rename");
+    assert_eq!(save.status, AppSaveAllStatus::Saved);
+    assert!(
+        std::fs::read_to_string(&lib)
+            .unwrap()
+            .contains("def welcome")
+    );
+    assert!(
+        std::fs::read_to_string(&main)
+            .unwrap()
+            .contains("from lib import welcome")
+    );
+    assert!(
+        std::fs::read_to_string(&main)
+            .unwrap()
+            .contains("welcome(\"world\")")
+    );
+}
+
+#[test]
+#[ignore = "opt-in native Node + retained Pyright fixture"]
+fn native_python_rename_external_overwrite_rejects_without_partial_mutation() {
+    const LIB_BEFORE: &str = "def greet(name):\n    return name\n";
+    const MAIN_BEFORE: &str = "from lib import greet\nmessage = greet(\"world\")\n";
+    let root = tempfile::tempdir().expect("temporary Python workspace");
+    let lib = root.path().join("lib.py");
+    let main = root.path().join("main.py");
+    std::fs::write(&lib, LIB_BEFORE).expect("seed lib");
+    std::fs::write(&main, MAIN_BEFORE).expect("seed main");
+    let mut app = AppComposition::new();
+    app.open_workspace(
+        root.path(),
+        WorkspaceTrustState::Trusted,
+        PrincipalId("python-native-rename-conflict".to_string()),
+    )
+    .expect("open workspace");
+    let adapter = LanguageServerAdapterRegistry::tier_two()
+        .adapters_for_language(&LanguageId("python".to_string()))
+        .into_iter()
+        .find(|candidate| candidate.is_primary)
+        .cloned()
+        .expect("tier-two Python adapter");
+    app.configure_downloaded_language_server_local(
+        adapter,
+        retained_archive(),
+        selected_node(),
+        root.path().join("language-cache"),
+    )
+    .expect("configure local Pyright");
+    app.open_file(lib.to_string_lossy()).expect("open lib");
+    let lib_buffer = app.active_buffer_id().expect("lib buffer");
+    app.open_file(main.to_string_lossy()).expect("open main");
+    let main_buffer = app.active_buffer_id().expect("main buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::LspStartSession)
+        .expect("start Python");
+    wait_for_live(&mut app);
+    app.dispatch_ui_intent(CommandDispatchIntent::SwitchTab {
+        buffer_id: lib_buffer,
+    })
+    .expect("activate Python definition");
+    app.dispatch_ui_intent(CommandDispatchIntent::RequestRenameProposal {
+        buffer_id: lib_buffer,
+        position: TextCoordinate {
+            line: 0,
+            character: 4,
+            byte_offset: None,
+            utf16_offset: None,
+        },
+        new_name: "welcome".to_string(),
+    })
+    .expect("request Python rename");
+    let proposal = wait_for_native_proposal(&mut app, &[]);
+    std::fs::write(&lib, "external definition\n").expect("external overwrite");
+    let response = app.approve_and_apply_rename_proposal(proposal.proposal_id);
+    assert!(response.is_err() || !matches!(response.unwrap(), ProposalResponse::Applied(_)));
+    assert_eq!(
+        std::fs::read_to_string(&lib).unwrap(),
+        "external definition\n"
+    );
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), MAIN_BEFORE);
+    assert_eq!(app.editor().text(lib_buffer).unwrap(), LIB_BEFORE);
+    assert_eq!(app.editor().text(main_buffer).unwrap(), MAIN_BEFORE);
+}
+
+#[test]
+#[ignore = "opt-in native Node + retained Pyright fixture"]
+fn native_python_diagnostic_clears_after_editor_replace_and_save() {
+    const BEFORE: &str = "value: int = \"wrong\"\n";
+    const AFTER: &str = "value: int = 42\n";
+    let root = tempfile::tempdir().expect("temporary Python workspace");
+    let source = root.path().join("main.py");
+    std::fs::write(&source, BEFORE).expect("seed invalid Python source");
+    let mut app = AppComposition::new();
+    app.open_workspace(
+        root.path(),
+        WorkspaceTrustState::Trusted,
+        PrincipalId("python-native-diagnostics".to_string()),
+    )
+    .expect("open workspace");
+    let adapter = LanguageServerAdapterRegistry::tier_two()
+        .adapters_for_language(&LanguageId("python".to_string()))
+        .into_iter()
+        .find(|candidate| candidate.is_primary)
+        .cloned()
+        .expect("tier-two Python adapter");
+    app.configure_downloaded_language_server_local(
+        adapter,
+        retained_archive(),
+        selected_node(),
+        root.path().join("language-cache"),
+    )
+    .expect("configure local Pyright");
+    app.open_file(source.to_string_lossy())
+        .expect("open source");
+    let buffer_id = app.active_buffer_id().expect("source buffer");
+    app.dispatch_ui_intent(CommandDispatchIntent::LspStartSession)
+        .expect("start Python");
+    wait_for_live(&mut app);
+    wait_for_python_problem(&mut app, "main.py", "cannot be assigned");
+
+    app.dispatch_ui_intent(CommandDispatchIntent::SetDirectedSelection {
+        buffer_id,
+        anchor: TextCoordinate {
+            line: 0,
+            character: 13,
+            byte_offset: None,
+            utf16_offset: None,
+        },
+        head: TextCoordinate {
+            line: 0,
+            character: 20,
+            byte_offset: None,
+            utf16_offset: None,
+        },
+    })
+    .expect("select invalid Python value");
+    app.dispatch_ui_intent(CommandDispatchIntent::ReplaceDirectedCarets {
+        buffer_id,
+        text: "42".to_string(),
+    })
+    .expect("replace invalid Python value through editor intent");
+    assert_eq!(app.buffer_text_for_input(buffer_id).unwrap(), AFTER);
+    wait_for_python_problem_clear(&mut app, "main.py", "cannot be assigned");
+    let save = app.save_all().expect("save corrected Python source");
+    assert_eq!(save.status, AppSaveAllStatus::Saved);
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), AFTER);
 }

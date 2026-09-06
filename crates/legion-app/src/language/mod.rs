@@ -13,6 +13,8 @@ pub use runtime::{
 };
 mod startup_authority;
 pub use startup_authority::{LanguageStartupAuthority, LanguageStartupContext};
+mod typescript_bundle;
+pub use typescript_bundle::TypeScriptBundleDescriptor;
 mod materialize;
 pub use download::{
     DownloadDecision, RustAnalyzerDownloadRequest, evaluate_rust_analyzer_download,
@@ -42,7 +44,25 @@ pub use translate::{
     translate_workspace_edit, uri_to_canonical_path,
 };
 
+mod code_action_commands;
+mod code_action_diagnostics;
+mod code_actions;
+#[cfg(test)]
+#[path = "server_apply_edit_tests.rs"]
+mod server_apply_edit_tests;
+mod server_apply_edits;
+pub(crate) use server_apply_edits::ServerApplyEditAuthority;
+mod apply_edit_decision;
+pub(crate) use apply_edit_decision::{
+    ApplyEditClaim, ApplyEditDecision, ApplyEditDecisionResult, DeadlineDecision,
+};
 mod lsp_reads;
+pub(crate) use code_action_commands::{
+    CodeActionCommand, CodeActionCommandSidecars, extract_command,
+};
+pub(crate) use code_action_diagnostics::{CodeActionDiagnostics, DiagnosticIdentity};
+pub(crate) use code_actions::{CodeActionAuthority, CodeActionIdentity, bounded_code_action_size};
+pub(crate) use lsp_reads::DeferredLspWrite;
 
 mod problem_rows;
 pub(crate) use problem_rows::{
@@ -58,6 +78,7 @@ pub use call_hierarchy::{
 mod app_lsp;
 #[cfg(any(test, feature = "test-helpers"))]
 pub use app_lsp::LspWorkerRequest;
+pub(crate) use app_lsp::PendingLspWriteOperation;
 pub use app_lsp::{
     LanguageServerStartConfig, LspReadKind, LspRequestTag, LspSelectedServerMetadata,
     LspSessionHandle, LspWorkerResult,

@@ -9,6 +9,7 @@
 //! file needs to know the module exists.
 
 use crate::*;
+use std::path::PathBuf;
 
 use crate::extension_management::ExtensionCatalogRequest;
 
@@ -603,6 +604,17 @@ impl CommandDispatcher {
                     action_id,
                 })
             }
+            CommandDispatchIntent::RequestCodeActions { buffer_id, range } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::RequestCodeActions { buffer_id, range })
+            }
+            CommandDispatchIntent::SelectCodeAction {
+                response_id,
+                action_id,
+            } => Ok(AppCommandRequest::SelectCodeAction {
+                response_id,
+                action_id,
+            }),
             CommandDispatchIntent::ActivateLanguageCodeLens { buffer_id, lens_id } => {
                 Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
                 Ok(AppCommandRequest::ActivateLanguageCodeLens { buffer_id, lens_id })
@@ -779,6 +791,18 @@ impl CommandDispatcher {
             }),
             CommandDispatchIntent::LspStartSession => Ok(AppCommandRequest::LspStartSession),
             CommandDispatchIntent::LspRestartSession => Ok(AppCommandRequest::LspRestartSession),
+            CommandDispatchIntent::ConfigureTypeScriptToolchain {
+                server_archive,
+                compiler_archive,
+                node_executable,
+            } => Ok(AppCommandRequest::ConfigureTypeScriptToolchain {
+                server_archive: PathBuf::from(server_archive),
+                compiler_archive: PathBuf::from(compiler_archive),
+                node_executable: PathBuf::from(node_executable),
+            }),
+            CommandDispatchIntent::ClearTypeScriptToolchain => {
+                Ok(AppCommandRequest::ClearTypeScriptToolchain)
+            }
             CommandDispatchIntent::PreviewProposal { .. }
             | CommandDispatchIntent::ApproveProposal { .. }
             | CommandDispatchIntent::RejectProposal { .. }

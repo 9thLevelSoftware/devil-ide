@@ -12,7 +12,7 @@ use legion_protocol::{
     LegionWorkflowSessionId, LegionWorkflowSignOffId, LegionWorkflowVerificationGateId,
     LineWrappingPolicy, ProposalCancellationReason, ProposalId, ProposalRejectionReason,
     ProposalRollbackReason, ProtocolTextRange, RemoteWorkspaceSessionId, SnapshotId,
-    TerminalSessionId, TextCoordinate, ViewportScroll, VisualNavigationRequest,
+    TerminalSessionId, TextCoordinate, ViewportProjection, ViewportScroll, VisualNavigationRequest,
 };
 use legion_protocol::{CapabilityId, PluginContribution, PluginId};
 use legion_ui::{
@@ -125,6 +125,21 @@ pub enum DesktopAction {
         /// Target product mode.
         mode: DockMode,
     },
+    /// Configure the projected TypeScript toolchain through app authority.
+    ConfigureTypeScriptToolchain {
+        /// Metadata path for the language-server archive.
+        server_archive: String,
+        /// Metadata path for the compiler archive.
+        compiler_archive: String,
+        /// Explicit Node runtime path.
+        node_executable: String,
+    },
+    /// Clear the projected TypeScript toolchain configuration through app authority.
+    ClearTypeScriptToolchain,
+    /// Start the projected language-server session for the active file.
+    StartLspSession,
+    /// Restart the projected language-server session for the active file.
+    RestartLspSession,
     /// Switch to a projected tab.
     SwitchTab {
         /// Target buffer identifier.
@@ -1066,6 +1081,15 @@ pub enum DesktopAction {
         /// Code-action identifier.
         action_id: String,
     },
+    /// Request live code-action metadata for the active selection.
+    RequestCodeActions,
+    /// Select an authoritative projected code-action candidate.
+    SelectCodeAction {
+        /// Opaque response identity from the projection.
+        response_id: String,
+        /// Opaque candidate token scoped to that response.
+        action_id: String,
+    },
     /// Cancel a language operation.
     CancelLanguageOperation {
         /// Operation identifier.
@@ -1128,6 +1152,15 @@ pub enum DesktopAction {
     NavigateToDefinition {
         /// Zero-based index into the projected definitions list.
         index: usize,
+    },
+    /// Navigate to a projected reference location.
+    NavigateToReference {
+        /// Canonical project-relative path.
+        path: String,
+        /// Zero-based line.
+        line: u32,
+        /// Zero-based character column.
+        character: u32,
     },
     /// Launch a terminal session through app authority.
     TerminalLaunch {
@@ -1758,6 +1791,44 @@ pub enum DesktopBridgeError {
 #[derive(Debug, Default)]
 pub struct DesktopCommandBridge;
 
+/// Converts projected absolute UTF-16 endpoints into the line-local protocol
+/// range expected by the language server. Every endpoint is resolved against
+/// its own line metric; an unknown origin is rejected rather than fabricated
+/// as zero.
+pub(crate) fn code_action_range(viewport: &ViewportProjection) -> Option<ProtocolTextRange> {
+    fn endpoint(
+        viewport: &ViewportProjection,
+        mut position: TextCoordinate,
+    ) -> Option<TextCoordinate> {
+        let absolute_utf16 = position.utf16_offset?;
+        let index = viewport
+            .line_slices
+            .iter()
+            .position(|slice| slice.line_number == position.line)?;
+        let line_start = viewport
+            .line_metrics
+            .get(index)
+            .and_then(|metric| metric.line_start_utf16_offset)?;
+        let character = absolute_utf16.checked_sub(line_start)?;
+        position.character = u32::try_from(character).ok()?;
+        position.utf16_offset = None;
+        Some(position)
+    }
+
+    let source = viewport
+        .selections
+        .first()
+        .cloned()
+        .unwrap_or_else(|| ProtocolTextRange {
+            start: viewport.cursor,
+            end: viewport.cursor,
+        });
+    Some(ProtocolTextRange {
+        start: endpoint(viewport, source.start)?,
+        end: endpoint(viewport, source.end)?,
+    })
+}
+
 impl DesktopCommandBridge {
     /// Creates a bridge that owns no app/editor/workspace state.
     pub fn new() -> Self {
@@ -1774,6 +1845,24 @@ impl DesktopCommandBridge {
             DesktopAction::Quit => DesktopBridgeOutput::Intent(CommandDispatchIntent::Quit),
             DesktopAction::SetProductMode { mode } => {
                 DesktopBridgeOutput::Intent(CommandDispatchIntent::SetProductMode { mode })
+            }
+            DesktopAction::ConfigureTypeScriptToolchain {
+                server_archive,
+                compiler_archive,
+                node_executable,
+            } => DesktopBridgeOutput::Intent(CommandDispatchIntent::ConfigureTypeScriptToolchain {
+                server_archive,
+                compiler_archive,
+                node_executable,
+            }),
+            DesktopAction::ClearTypeScriptToolchain => {
+                DesktopBridgeOutput::Intent(CommandDispatchIntent::ClearTypeScriptToolchain)
+            }
+            DesktopAction::StartLspSession => {
+                DesktopBridgeOutput::Intent(CommandDispatchIntent::LspStartSession)
+            }
+            DesktopAction::RestartLspSession => {
+                DesktopBridgeOutput::Intent(CommandDispatchIntent::LspRestartSession)
             }
             DesktopAction::SaveActive => self.with_active_buffer(snapshot, |buffer_id| {
                 CommandDispatchIntent::Save { buffer_id }
@@ -2612,12 +2701,11 @@ impl DesktopCommandBridge {
                     head_affinity,
                 }
             }),
-            DesktopAction::MoveVertically {
-                buffer_id,
-                request,
-            } => self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
-                CommandDispatchIntent::MoveVertically { buffer_id, request }
-            }),
+            DesktopAction::MoveVertically { buffer_id, request } => {
+                self.with_resolved_buffer(snapshot, buffer_id, |buffer_id| {
+                    CommandDispatchIntent::MoveVertically { buffer_id, request }
+                })
+            }
             DesktopAction::ReplaceDirectedCarets { text } => self
                 .with_active_buffer(snapshot, |buffer_id| {
                     CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text }
@@ -2804,6 +2892,24 @@ impl DesktopCommandBridge {
                     }
                 })
             }
+            DesktopAction::RequestCodeActions => {
+                let Some(viewport) = snapshot.active_buffer_projection.viewport.as_ref() else {
+                    return DesktopBridgeOutput::Noop;
+                };
+                let Some(range) = code_action_range(viewport) else {
+                    return DesktopBridgeOutput::Noop;
+                };
+                self.with_active_buffer(snapshot, |buffer_id| {
+                    CommandDispatchIntent::RequestCodeActions { buffer_id, range }
+                })
+            }
+            DesktopAction::SelectCodeAction {
+                response_id,
+                action_id,
+            } => DesktopBridgeOutput::Intent(CommandDispatchIntent::SelectCodeAction {
+                response_id,
+                action_id,
+            }),
             DesktopAction::CancelLanguageOperation { operation_id } => {
                 DesktopBridgeOutput::Intent(CommandDispatchIntent::CancelLanguageOperation {
                     operation_id,
@@ -2820,6 +2926,25 @@ impl DesktopCommandBridge {
                         utf16_offset: None,
                     },
                 })
+            }
+            DesktopAction::NavigateToReference {
+                path,
+                line,
+                character,
+            } => {
+                if path.trim().is_empty() {
+                    DesktopBridgeOutput::Noop
+                } else {
+                    DesktopBridgeOutput::Intent(CommandDispatchIntent::OpenPathAtPosition {
+                        path,
+                        position: legion_protocol::TextCoordinate {
+                            line,
+                            character,
+                            byte_offset: None,
+                            utf16_offset: None,
+                        },
+                    })
+                }
             }
             // T4: problems panel keyboard-nav intercepted in DesktopRuntime::handle_action.
             DesktopAction::ProblemNext
@@ -3967,4 +4092,253 @@ fn active_assist_prediction_id(snapshot: &ShellProjectionSnapshot) -> Option<Str
         .active_prediction
         .as_ref()
         .map(|prediction| prediction.prediction_id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use legion_ui::Shell;
+
+    #[test]
+    fn typescript_toolchain_actions_translate_to_ui_intents() {
+        let snapshot = Shell::empty("desktop bridge").projection_snapshot();
+        let bridge = DesktopCommandBridge::new();
+        assert_eq!(
+            bridge.translate(
+                DesktopAction::ConfigureTypeScriptToolchain {
+                    server_archive: "server.tgz".to_string(),
+                    compiler_archive: "compiler.tgz".to_string(),
+                    node_executable: "node".to_string(),
+                },
+                &snapshot,
+            ),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::ConfigureTypeScriptToolchain {
+                server_archive: "server.tgz".to_string(),
+                compiler_archive: "compiler.tgz".to_string(),
+                node_executable: "node".to_string(),
+            })
+        );
+        assert_eq!(
+            bridge.translate(DesktopAction::ClearTypeScriptToolchain, &snapshot),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::ClearTypeScriptToolchain)
+        );
+        assert_eq!(
+            bridge.translate(DesktopAction::StartLspSession, &snapshot),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::LspStartSession)
+        );
+        assert_eq!(
+            bridge.translate(DesktopAction::RestartLspSession, &snapshot),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::LspRestartSession)
+        );
+    }
+
+    #[test]
+    fn reference_activation_translates_to_open_path_position() {
+        let snapshot = Shell::empty("desktop bridge").projection_snapshot();
+        let bridge = DesktopCommandBridge::new();
+        assert_eq!(
+            bridge.translate(
+                DesktopAction::NavigateToReference {
+                    path: "src/lib.rs".to_owned(),
+                    line: 6,
+                    character: 3,
+                },
+                &snapshot,
+            ),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::OpenPathAtPosition {
+                path: "src/lib.rs".to_owned(),
+                position: legion_protocol::TextCoordinate {
+                    line: 6,
+                    character: 3,
+                    byte_offset: None,
+                    utf16_offset: None,
+                },
+            })
+        );
+        assert_eq!(
+            bridge.translate(
+                DesktopAction::NavigateToReference {
+                    path: String::new(),
+                    line: 0,
+                    character: 0,
+                },
+                &snapshot,
+            ),
+            DesktopBridgeOutput::Noop
+        );
+    }
+
+    #[test]
+    fn code_action_selection_preserves_response_and_action_tokens() {
+        let snapshot = Shell::empty("desktop bridge").projection_snapshot();
+        let bridge = DesktopCommandBridge::new();
+        assert_eq!(
+            bridge.translate(
+                DesktopAction::SelectCodeAction {
+                    response_id: "response-7".to_owned(),
+                    action_id: "candidate-2".to_owned(),
+                },
+                &snapshot,
+            ),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::SelectCodeAction {
+                response_id: "response-7".to_owned(),
+                action_id: "candidate-2".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn code_action_request_converts_each_multiline_astral_endpoint_from_its_own_origin() {
+        let mut viewport = legion_protocol::ViewportProjection {
+            workspace_id: legion_protocol::WorkspaceId(1),
+            buffer_id: BufferId(1),
+            file_id: None,
+            snapshot_id: SnapshotId(1),
+            buffer_version: BufferVersion(1),
+            visible_range: ProtocolTextRange {
+                start: TextCoordinate {
+                    line: 0,
+                    character: 0,
+                    byte_offset: None,
+                    utf16_offset: Some(0),
+                },
+                end: TextCoordinate {
+                    line: 1,
+                    character: 0,
+                    byte_offset: None,
+                    utf16_offset: Some(6),
+                },
+            },
+            selections: vec![ProtocolTextRange {
+                start: TextCoordinate {
+                    line: 0,
+                    character: 99,
+                    byte_offset: None,
+                    utf16_offset: Some(1),
+                },
+                end: TextCoordinate {
+                    line: 1,
+                    character: 99,
+                    byte_offset: None,
+                    utf16_offset: Some(6),
+                },
+            }],
+            cursor: TextCoordinate {
+                line: 0,
+                character: 0,
+                byte_offset: None,
+                utf16_offset: Some(0),
+            },
+            cursors: Vec::new(),
+            cursor_affinities: Vec::new(),
+            scroll: ViewportScroll {
+                top_line: 0,
+                left_column: 0,
+            },
+            dimensions: legion_protocol::ViewportDimensions {
+                width_px: 800,
+                height_px: 600,
+            },
+            line_wrapping_policy: LineWrappingPolicy::Off,
+            wrap_column: None,
+            mode: legion_protocol::ViewportProjectionMode::default(),
+            line_slices: vec![
+                legion_protocol::ViewportLineSlice {
+                    line_number: 0,
+                    visible_text: "a😀".to_owned(),
+                    byte_range: legion_protocol::ByteRange::new(0, 5),
+                    utf16_range: legion_protocol::Utf16Range {
+                        start: legion_protocol::Utf16Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: legion_protocol::Utf16Position {
+                            line: 0,
+                            character: 3,
+                        },
+                    },
+                    chunk_hash: legion_protocol::FileFingerprint {
+                        algorithm: "test".to_owned(),
+                        value: "0".to_owned(),
+                    },
+                    truncation_state: legion_protocol::ViewportLineTruncationState::None,
+                },
+                legion_protocol::ViewportLineSlice {
+                    line_number: 1,
+                    visible_text: "xy".to_owned(),
+                    byte_range: legion_protocol::ByteRange::new(6, 8),
+                    utf16_range: legion_protocol::Utf16Range {
+                        start: legion_protocol::Utf16Position {
+                            line: 1,
+                            character: 0,
+                        },
+                        end: legion_protocol::Utf16Position {
+                            line: 1,
+                            character: 2,
+                        },
+                    },
+                    chunk_hash: legion_protocol::FileFingerprint {
+                        algorithm: "test".to_owned(),
+                        value: "1".to_owned(),
+                    },
+                    truncation_state: legion_protocol::ViewportLineTruncationState::None,
+                },
+            ],
+            line_metrics: vec![
+                legion_protocol::ViewportLineMetric {
+                    byte_length: 5,
+                    utf16_length: 3,
+                    line_start_byte_offset: Some(0),
+                    line_start_utf16_offset: Some(0),
+                    line_ending_width: 1,
+                    exact: true,
+                },
+                legion_protocol::ViewportLineMetric {
+                    byte_length: 2,
+                    utf16_length: 2,
+                    line_start_byte_offset: Some(6),
+                    line_start_utf16_offset: Some(4),
+                    line_ending_width: 0,
+                    exact: true,
+                },
+            ],
+            decoration_spans: Vec::new(),
+            fold_ranges: Vec::new(),
+            semantic_token_overlays: Vec::new(),
+            large_file_status: None,
+            schema_version: 1,
+        };
+        let range = code_action_range(&viewport).expect("both endpoint origins are present");
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 1);
+        assert_eq!(range.end.line, 1);
+        assert_eq!(range.end.character, 2);
+
+        let mut snapshot = Shell::empty("desktop bridge").projection_snapshot();
+        snapshot.active_buffer_projection.buffer_id = Some(BufferId(1));
+        snapshot.active_buffer_projection.viewport = Some(viewport.clone());
+        assert_eq!(
+            DesktopCommandBridge::new().translate(DesktopAction::RequestCodeActions, &snapshot),
+            DesktopBridgeOutput::Intent(CommandDispatchIntent::RequestCodeActions {
+                buffer_id: BufferId(1),
+                range: ProtocolTextRange {
+                    start: TextCoordinate {
+                        line: 0,
+                        character: 1,
+                        byte_offset: None,
+                        utf16_offset: None,
+                    },
+                    end: TextCoordinate {
+                        line: 1,
+                        character: 2,
+                        byte_offset: None,
+                        utf16_offset: None,
+                    },
+                },
+            })
+        );
+
+        viewport.line_metrics[1].line_start_utf16_offset = None;
+        assert!(code_action_range(&viewport).is_none());
+    }
 }

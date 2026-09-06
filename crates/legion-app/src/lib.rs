@@ -19,7 +19,7 @@ use legion_agent::{
     dag::{WorkflowDag, workflow_dag_from_approved_plan},
     plan::editable_plan_from_workflow_artifacts,
 };
-#[cfg(feature = "ai")]
+#[cfg(all(feature = "ai", any(test, feature = "test-helpers")))]
 use legion_agent::{DelegatedTaskProposalGenerator, DelegatedTaskProposalInput};
 #[cfg(feature = "ai")]
 use legion_ai::{InlinePredictionRequest, ProviderRegistry, ProviderRouter};
@@ -154,6 +154,8 @@ use legion_editor::{
 };
 // `AppSaveOutcome` carries this in two public variants, so a caller matching on
 // it needs to be able to name it without depending on `legion-editor` directly.
+/// Re-export the editor-owned, revocable snapshot handle for desktop workers.
+pub use legion_editor::OwnedSnapshotLease;
 pub use legion_editor::SaveRequestDto as PublicSaveRequestDto;
 use legion_index::{
     DEFAULT_GRAMMAR_VERSION, DEFAULT_MODEL_VERSION, LexicalIndexer, RetrievalQuery,
@@ -227,6 +229,7 @@ use legion_protocol::{
     LanguageCodeLensProjection, LanguageCompletionProjection, LanguageHoverProjection, LanguageId,
     LanguageInlayHintProjection, LanguageLocationProjection, LanguageOutlineSymbolProjection,
     LanguageProblemProjection, LanguageServerId, LanguageStickyScopeProjection,
+    LanguageToolchainConfigurationStatus, LanguageToolchainSettingsRecord,
     LanguageToolingOperationKind, LanguageToolingOperationProjection, LanguageToolingProjection,
     LanguageToolingStatusKind, LegionCloudLaneProjection, LegionCloudLaneProjectionRow,
     LegionCloudLaneTaskId, LegionCloudLaneTaskRequest, LegionCloudLaneTaskState,
@@ -267,22 +270,22 @@ use legion_protocol::{
     TerminalPanelProjection, TerminalPanelStatus, TerminalPanelStatusKind,
     TerminalPolicyProjection, TerminalResize, TerminalRuntimeState, TerminalScrollbackProjection,
     TerminalSearchProjection, TerminalSessionId, TextCoordinate,
-    TextEdit as ProtocolWorkspaceTextEdit, TextRange as ProtocolEditTextRange,
-    TextTransactionDescriptor, TimestampMillis, TransactionSource, TrustDecisionContext,
-    Utf16Position, Utf16Range, VersionContext, ViewportLineSlice, ViewportProjection,
-    ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay, VisualNavigationCaret,
-    VisualNavigationDirection, VisualNavigationPosition, VisualNavigationProjection,
-    VisualNavigationRequest, VisualNavigationRow, VisualNavigationWindow, VisualNavigationX,
-    WorkbenchSettingsRecord, WorkbenchTelemetryConsent, WorkspaceCloseRequest,
-    WorkspaceEditProposalPayload, WorkspaceEditSourceKind, WorkspaceGeneration, WorkspaceId,
-    WorkspaceOpenRequest, WorkspaceOpened, WorkspacePort, WorkspaceProposal, WorkspaceRequest,
-    WorkspaceResponse, WorkspaceSessionRecord, WorkspaceTextEdit, WorkspaceTrustState,
-    delegated_task_tool_permission_request, inline_prediction_projection_from_results,
-    validate_inline_prediction_lifecycle_command, validate_legion_cloud_lane_projection,
-    validate_legion_cloud_lane_task_request, validate_legion_workflow_decision_feed_entry,
-    validate_legion_workflow_kill_switch, validate_legion_workflow_risk_monitor_snapshot,
-    validate_mcp_registry_snapshot, validate_terminal_input, validate_terminal_kill_request,
-    validate_terminal_resize,
+    TextRange as ProtocolEditTextRange, TextTransactionDescriptor, TimestampMillis,
+    TransactionSource, TrustDecisionContext, TypeScriptToolchainProjection,
+    TypeScriptToolchainSettings, Utf16Position, Utf16Range, VersionContext, ViewportLineSlice,
+    ViewportProjection, ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay,
+    VisualNavigationCaret, VisualNavigationDirection, VisualNavigationPosition,
+    VisualNavigationProjection, VisualNavigationRequest, VisualNavigationRow,
+    VisualNavigationWindow, VisualNavigationX, WorkbenchSettingsRecord, WorkbenchTelemetryConsent,
+    WorkspaceCloseRequest, WorkspaceEditProposalPayload, WorkspaceEditSourceKind,
+    WorkspaceGeneration, WorkspaceId, WorkspaceOpenRequest, WorkspaceOpened, WorkspacePort,
+    WorkspaceProposal, WorkspaceRequest, WorkspaceResponse, WorkspaceSessionRecord,
+    WorkspaceTrustState, delegated_task_tool_permission_request,
+    inline_prediction_projection_from_results, validate_inline_prediction_lifecycle_command,
+    validate_legion_cloud_lane_projection, validate_legion_cloud_lane_task_request,
+    validate_legion_workflow_decision_feed_entry, validate_legion_workflow_kill_switch,
+    validate_legion_workflow_risk_monitor_snapshot, validate_mcp_registry_snapshot,
+    validate_terminal_input, validate_terminal_kill_request, validate_terminal_resize,
 };
 use legion_remote::{
     RemoteConnectionSpec, RemoteDevelopmentRuntime, RemoteOperationOutcome, RemoteRuntimeConfig,
@@ -1099,6 +1102,13 @@ mod daily_editing_save_all_internal_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "language/code_action_tests.rs"]
+mod code_action_tests;
+#[cfg(test)]
+#[path = "language/toolchain_approval_tests.rs"]
+mod toolchain_approval_tests;
 
 /// Typed save result returned by application save routing.
 #[derive(Debug, Clone)]
@@ -6595,29 +6605,11 @@ impl ActiveDocumentController {
             .ok_or(AppCompositionError::WorkspaceNotOpen)
     }
 
-    /// Finds the `BufferId` for an open buffer whose canonical path matches
-    /// `path`.  Returns `None` if no open buffer has that path.
-    fn buffer_id_for_path(&self, path: &str) -> Option<BufferId> {
-        // Check active buffer first (fast path).
-        if let Some(meta) = &self.active_file_metadata
-            && meta.identity.canonical_path.0 == path
-        {
-            return self.active_buffer_id;
-        }
-        // Fall back to iterating the open buffer metadata map.
-        for (buffer_id, meta) in &self.buffer_file_metadata {
-            if meta.identity.canonical_path.0 == path {
-                return Some(*buffer_id);
-            }
-        }
-        None
-    }
-
     /// Every file with an open buffer right now.
     ///
     /// The active buffer is included explicitly rather than assumed to be in
-    /// the map, mirroring `buffer_id_for_path`, which checks it first for the
-    /// same reason.
+    /// the map, because the active buffer can be projected before its metadata
+    /// has been inserted into the map.
     fn open_file_ids(&self) -> std::collections::HashSet<FileId> {
         let mut ids: std::collections::HashSet<FileId> = self
             .buffer_file_metadata
@@ -6848,8 +6840,8 @@ impl LanguageToolingWorkflow {
         self.projection.status_message = format!("Language operation {operation_id} cancelled");
         self.projection.cancellation_count = self.projection.cancellation_count.saturating_add(1);
         self.projection.generated_at = TimestampMillis::now();
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: LanguageToolingOperationKind::Diagnostics,
             status: LanguageToolingStatusKind::Cancelled,
             request_id: None,
@@ -6859,7 +6851,62 @@ impl LanguageToolingWorkflow {
             causality_id: Some(event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
+    }
+
+    /// Updates the existing metadata-only row for an accepted LSP write.
+    ///
+    /// Write operations are admitted with an opaque app operation id and must
+    /// keep that same id through terminal failure, staleness, cancellation, or
+    /// proposal creation.  In particular, this helper never manufactures an
+    /// LSP request id: the request tag is app-owned and the worker does not
+    /// expose a protocol id at this boundary.
+    pub(crate) fn upsert_write_operation(
+        &mut self,
+        pending: &crate::language::PendingLspWriteOperation,
+        status: LanguageToolingStatusKind,
+        message: String,
+        proposal_id: Option<ProposalId>,
+    ) -> LanguageToolingProjection {
+        self.projection.workspace_id = Some(pending.workspace_id);
+        self.projection.buffer_id = Some(pending.buffer_id);
+        self.projection.file_id = Some(pending.file_id);
+        self.projection.status = status;
+        self.projection.status_message = message.clone();
+        self.projection.generated_at = TimestampMillis::now();
+        let row = LanguageToolingOperationProjection {
+            operation_id: pending.operation_id.clone(),
+            kind: pending.operation_kind,
+            status,
+            request_id: None,
+            proposal_id,
+            message,
+            correlation_id: Some(pending.event_context.correlation_id),
+            causality_id: Some(pending.event_context.causality_id),
+            generated_at: TimestampMillis::now(),
+            schema_version: 1,
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == pending.operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
+        self.projection()
     }
 
     fn ingest_lsp_diagnostics(
@@ -7005,8 +7052,8 @@ impl LanguageToolingWorkflow {
         }
         self.projection = projection;
         let operation_id = self.next_operation_id(operation_kind);
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: operation_kind,
             status: LanguageToolingStatusKind::Ready,
             request_id: ingest.request_id,
@@ -7016,7 +7063,17 @@ impl LanguageToolingWorkflow {
             causality_id: Some(input.event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
         self.projection()
     }
 
@@ -7311,6 +7368,7 @@ impl LanguageToolingWorkflow {
             });
 
         self.projection = LanguageToolingProjection {
+            typescript_toolchain: previous_projection.typescript_toolchain,
             workspace_id: Some(input.workspace_id),
             buffer_id: Some(input.buffer_id),
             file_id: Some(input.metadata.identity.file_id),
@@ -7322,6 +7380,7 @@ impl LanguageToolingWorkflow {
             sticky_scopes,
             inlay_hints,
             code_lenses,
+            code_action_candidates: previous_projection.code_action_candidates,
             hover: if matches!(kind, LanguageReadKind::Hover) {
                 hover
             } else {
@@ -7403,6 +7462,7 @@ impl LanguageToolingWorkflow {
         proposal_id: ProposalId,
         action_id: Option<&str>,
         message: String,
+        operation_id: Option<String>,
     ) -> LanguageToolingProjection {
         let operation_kind = match kind {
             LanguageProposalKind::Formatting => LanguageToolingOperationKind::FormattingProposal,
@@ -7427,19 +7487,34 @@ impl LanguageToolingWorkflow {
                 }
             }
         }
-        let operation_id = self.next_operation_id(operation_kind);
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let has_explicit_operation_id = operation_id.is_some();
+        let operation_id = operation_id.unwrap_or_else(|| self.next_operation_id(operation_kind));
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: operation_kind,
             status: LanguageToolingStatusKind::Ready,
-            request_id: Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7())),
+            request_id: if has_explicit_operation_id {
+                None
+            } else {
+                Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7()))
+            },
             proposal_id: Some(proposal_id),
             message,
             correlation_id: Some(input.event_context.correlation_id),
             causality_id: Some(input.event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
         self.projection()
     }
 
@@ -7448,6 +7523,16 @@ impl LanguageToolingWorkflow {
         input: &LanguageRequestInput,
         kind: LanguageProposalKind,
         message: String,
+    ) -> LanguageToolingProjection {
+        self.record_proposal_failure_with_operation_id(input, kind, message, None)
+    }
+
+    fn record_proposal_failure_with_operation_id(
+        &mut self,
+        input: &LanguageRequestInput,
+        kind: LanguageProposalKind,
+        message: String,
+        operation_id: Option<String>,
     ) -> LanguageToolingProjection {
         let operation_kind = match kind {
             LanguageProposalKind::Formatting => LanguageToolingOperationKind::FormattingProposal,
@@ -7463,19 +7548,34 @@ impl LanguageToolingWorkflow {
         self.projection.status = LanguageToolingStatusKind::Failed;
         self.projection.status_message = message.clone();
         self.projection.generated_at = TimestampMillis::now();
-        let operation_id = self.next_operation_id(operation_kind);
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let has_explicit_operation_id = operation_id.is_some();
+        let operation_id = operation_id.unwrap_or_else(|| self.next_operation_id(operation_kind));
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: operation_kind,
             status: LanguageToolingStatusKind::Failed,
-            request_id: Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7())),
+            request_id: if has_explicit_operation_id {
+                None
+            } else {
+                Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7()))
+            },
             proposal_id: None,
             message,
             correlation_id: Some(input.event_context.correlation_id),
             causality_id: Some(input.event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
         self.projection()
     }
 
@@ -7487,8 +7587,19 @@ impl LanguageToolingWorkflow {
     fn push_operation(&mut self, operation: LanguageToolingOperationProjection) {
         self.projection.operations.push(operation);
         if self.projection.operations.len() > 20 {
-            let excess = self.projection.operations.len() - 20;
-            self.projection.operations.drain(0..excess);
+            // Keep every admitted write row while it is Running so a bounded
+            // 32-entry request map cannot lose cancellation/status identity.
+            // Completed history remains bounded at twenty rows.
+            while self.projection.operations.len() > 20 {
+                let Some(index) =
+                    self.projection.operations.iter().position(|operation| {
+                        operation.status != LanguageToolingStatusKind::Running
+                    })
+                else {
+                    break;
+                };
+                self.projection.operations.remove(index);
+            }
         }
     }
 }
@@ -8565,22 +8676,14 @@ impl TerminalWorkflow {
 ///   (lowercase) for a document opened as `file:///C:/…`, and lsp-types'
 ///   `Url` can percent-encode the colon (`C%3A`). Before this
 ///   normalization, every echoed diagnostic for an open buffer was
-///   silently dropped by the `buffer_id_for_path` lookup on Windows.
+///   silently dropped by exact path lookup on Windows.
 /// - Unix absolute paths keep their leading `/` — stripping `file:///`
 ///   consumed it, so `/tmp/ws/main.rs` became `tmp/ws/main.rs` and the
 ///   lookup silently dropped diagnostics on Unix through this path too.
 /// - `/` becomes `\` on Windows for consistency with the editor's paths.
 fn uri_to_canonical_path(uri: &str) -> String {
     let path_part = if let Some(rest) = uri.strip_prefix("file:///") {
-        // Percent-decode a drive colon (`C%3A` → `C:`), either hex case.
-        let rest = if rest.len() >= 4
-            && rest.as_bytes()[0].is_ascii_alphabetic()
-            && rest[1..4].eq_ignore_ascii_case("%3a")
-        {
-            format!("{}:{}", &rest[..1], &rest[4..])
-        } else {
-            rest.to_string()
-        };
+        let rest = percent_decode_uri_path(rest);
         let bytes = rest.as_bytes();
         if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
             // Windows drive path: canonical uppercase drive letter.
@@ -8589,8 +8692,15 @@ fn uri_to_canonical_path(uri: &str) -> String {
             // Unix absolute path: restore the leading `/` the strip consumed.
             format!("/{rest}")
         }
+    } else if let Some(rest) = uri.strip_prefix("file://localhost/") {
+        let rest = percent_decode_uri_path(rest);
+        if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
+            rest
+        } else {
+            format!("/{rest}")
+        }
     } else if let Some(rest) = uri.strip_prefix("file://") {
-        rest.to_string()
+        format!("//{}", percent_decode_uri_path(rest))
     } else {
         uri.to_string()
     };
@@ -8603,6 +8713,38 @@ fn uri_to_canonical_path(uri: &str) -> String {
     {
         path_part
     }
+}
+
+/// Normalizes an LSP file URI to the app's authoritative URI spelling.
+pub(crate) fn normalize_lsp_document_uri(uri: &str) -> Option<String> {
+    if !uri.starts_with("file://") || uri.contains('?') || uri.contains('#') {
+        return None;
+    }
+    Some(canonical_path_to_uri(&uri_to_canonical_path(uri)))
+}
+
+fn percent_decode_uri_path(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) {
+                decoded.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_string())
 }
 
 #[cfg(test)]
@@ -8637,6 +8779,22 @@ mod uri_to_canonical_path_tests {
         assert_eq!(
             uri_to_canonical_path("file:///tmp/ws/src/main.rs"),
             "/tmp/ws/src/main.rs"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn file_uris_decode_spaces_and_unicode_without_path_guessing() {
+        let path = uri_to_canonical_path("file:///tmp/ws/space%20and%20%E2%98%83.ts");
+        assert_eq!(path, "/tmp/ws/space and ☃.ts");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unix_localhost_file_uri_is_local_absolute_path() {
+        assert_eq!(
+            uri_to_canonical_path("file://localhost/tmp/ws/src/main.ts"),
+            "/tmp/ws/src/main.ts"
         );
     }
 
@@ -9170,46 +9328,6 @@ fn selected_line_count(selected: &str) -> usize {
     } else {
         selected.bytes().filter(|byte| *byte == b'\n').count() + 1
     }
-}
-
-fn identifier_byte_range_at(text: &str, requested_byte: u64) -> Option<ByteRange> {
-    if text.is_empty() {
-        return None;
-    }
-
-    let mut index = usize::try_from(requested_byte).unwrap_or(usize::MAX);
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    let bytes = text.as_bytes();
-    if index == bytes.len() && index > 0 {
-        index -= 1;
-    }
-    if index < bytes.len()
-        && !is_identifier_byte(bytes[index])
-        && index > 0
-        && is_identifier_byte(bytes[index - 1])
-    {
-        index -= 1;
-    }
-    if index >= bytes.len() || !is_identifier_byte(bytes[index]) {
-        return None;
-    }
-
-    let mut start = index;
-    while start > 0 && is_identifier_byte(bytes[start - 1]) {
-        start -= 1;
-    }
-    let mut end = index + 1;
-    while end < bytes.len() && is_identifier_byte(bytes[end]) {
-        end += 1;
-    }
-    Some(ByteRange::new(start as u64, end as u64))
-}
-
-fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 #[derive(Debug, Clone)]
@@ -10153,6 +10271,20 @@ pub enum AppCommandRequest {
         /// Code-action identifier selected from projection data.
         action_id: String,
     },
+    /// Request bounded metadata for all code actions in a document range.
+    RequestCodeActions {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// UTF-16 range supplied to the language server.
+        range: ProtocolTextRange,
+    },
+    /// Select an opaque candidate from a previously projected response.
+    SelectCodeAction {
+        /// Response-scoped identity.
+        response_id: String,
+        /// Candidate token scoped to the response.
+        action_id: String,
+    },
     /// Activate a projected language code lens through app authority.
     ActivateLanguageCodeLens {
         /// Target buffer identifier.
@@ -10417,6 +10549,17 @@ pub enum AppCommandRequest {
     LspStartSession,
     /// Restart the language server session, resetting the circuit breaker (PKT-LSP-C T1/T3).
     LspRestartSession,
+    /// Explicitly configure the local TypeScript toolchain.
+    ConfigureTypeScriptToolchain {
+        /// Local TypeScript language-server archive.
+        server_archive: PathBuf,
+        /// Local TypeScript compiler archive.
+        compiler_archive: PathBuf,
+        /// Explicit Node executable.
+        node_executable: PathBuf,
+    },
+    /// Clear the local TypeScript toolchain configuration.
+    ClearTypeScriptToolchain,
 }
 
 /// Minimal editor command port used by app command routing.
@@ -10761,6 +10904,8 @@ impl CommandExecutionService {
             | AppCommandRequest::RequestRenameProposal { .. }
             | AppCommandRequest::RequestOrganizeImportsProposal { .. }
             | AppCommandRequest::RequestCodeActionProposal { .. }
+            | AppCommandRequest::RequestCodeActions { .. }
+            | AppCommandRequest::SelectCodeAction { .. }
             | AppCommandRequest::ActivateLanguageCodeLens { .. }
             | AppCommandRequest::CancelLanguageOperation { .. }
             | AppCommandRequest::TerminalLaunch { .. }
@@ -10792,7 +10937,9 @@ impl CommandExecutionService {
             | AppCommandRequest::LeaveCollaborationSession { .. }
             | AppCommandRequest::PublishCollaborationPresence { .. }
             | AppCommandRequest::LspStartSession
-            | AppCommandRequest::LspRestartSession => Ok(None),
+            | AppCommandRequest::LspRestartSession
+            | AppCommandRequest::ConfigureTypeScriptToolchain { .. }
+            | AppCommandRequest::ClearTypeScriptToolchain => Ok(None),
             AppCommandRequest::RefreshExplorer => {
                 let workspace_id = state.require_workspace_id()?;
                 let tree = workspace.tree_snapshot(workspace_id)?;
@@ -11911,6 +12058,7 @@ fn capture_workspace_session_record(
         },
         dock_layouts: Vec::new(),
         workbench_settings: WorkbenchSettingsRecord::default(),
+        language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
         memory_snapshot_json: None,
         dirty_indicators,
         saved_at: TimestampMillis::now(),
@@ -14653,6 +14801,9 @@ pub struct AppComposition {
     /// Assist publishes nothing until the worker exists, and a Delegate turn is
     /// already half written by the time the spawn is attempted.
     injected_delegate_chat_spawn_failure: bool,
+    /// One-shot workspace-edit preflight barrier used by in-crate atomicity tests.
+    #[cfg(test)]
+    workspace_edit_preflight_hook: Option<Box<dyn FnOnce()>>,
     /// Test-only interruption seam after a Pending proposal observation is
     /// durable but before its proposals are published to the live ledger.
     #[cfg(any(test, feature = "test-helpers"))]
@@ -14712,6 +14863,13 @@ pub struct AppComposition {
     language_server_configured_paths: HashMap<LanguageServerId, std::path::PathBuf>,
     language_server_downloaded: HashMap<LanguageServerId, LanguageDownloadedStartup>,
     language_server_local_downloads: HashMap<LanguageServerId, LanguageDownloadedLocalConfig>,
+    typescript_bundles: HashMap<LanguageServerId, TypeScriptBundleStartup>,
+    typescript_node_approval: Option<PathBuf>,
+    /// Persisted metadata for the operator-configured local TypeScript bundle.
+    /// This is configuration only; startup authority and receipts remain
+    /// process-local and are rebuilt after every explicit start.
+    language_toolchain_settings: LanguageToolchainSettingsRecord,
+    document_sync_ledger: HashMap<String, Vec<DesiredDocumentSync>>,
     /// Direction awaiting a `prepareCallHierarchy` response.
     ///
     /// Call hierarchy is two round trips: `prepareCallHierarchy` resolves the
@@ -14719,6 +14877,19 @@ pub struct AppComposition {
     /// for. The direction is chosen at the first step and needed at the second,
     /// so it waits here in between. See `language/call_hierarchy.rs`.
     pending_call_hierarchy: Option<crate::language::PendingCallHierarchy>,
+    /// Accepted write-side LSP requests awaiting their matching server response.
+    pending_lsp_writes: HashMap<String, crate::language::PendingLspWriteOperation>,
+    /// Bounded rename requests admitted while their document sync is queued.
+    deferred_lsp_writes: HashMap<String, crate::language::DeferredLspWrite>,
+    /// Bounded two-step code-action response and selection authority.
+    code_action_authority: crate::language::CodeActionAuthority,
+    code_action_command_sidecars: crate::language::CodeActionCommandSidecars,
+    code_action_diagnostics: crate::language::CodeActionDiagnostics,
+    server_apply_edits: crate::language::ServerApplyEditAuthority,
+    /// Full contexts for command actions currently awaiting a server response.
+    /// Keeping the complete context prevents an inbound applyEdit from being
+    /// authorized solely by a recycled request-id string.
+    pending_code_action_contexts: HashMap<String, legion_protocol::LspOperationContext>,
     /// Arming instant, buffer, and position for the completion debounce (I1).
     lsp_ui_completion_debounce: Option<(Instant, BufferId, TextCoordinate)>,
     /// Count of completions seen at the last pre-sync; used for new-arrival detection (I1).
@@ -14768,10 +14939,46 @@ struct LanguageDownloadedLocalConfig {
 }
 
 #[derive(Clone)]
+struct TypeScriptBundleStartup {
+    descriptor: crate::language::TypeScriptBundleDescriptor,
+    server_archive: PathBuf,
+    compiler_archive: PathBuf,
+    node_path: PathBuf,
+    cache_root: PathBuf,
+}
+
+/// Non-persistent state of the normal TypeScript toolchain controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanguageToolchainConfigurationState {
+    /// No saved operator input exists.
+    Unconfigured,
+    /// Saved metadata exists but has not been explicitly approved in this app
+    /// session (including unsupported schema versions).
+    Draft,
+    /// Metadata and the app-owned runtime bindings are configured.
+    Configured,
+}
+
+#[derive(Clone)]
+enum DesiredDocumentSync {
+    Open {
+        buffer_id: BufferId,
+        language_id: LanguageId,
+        version: i64,
+        needs_open: bool,
+        sent: bool,
+    },
+    Closed {
+        buffer_id: BufferId,
+    },
+}
+
+#[derive(Clone)]
 enum LanguageStartupSelection {
     Configured(legion_lsp::LspServerProcessConfig),
     Downloaded(Box<LanguageDownloadedStartup>),
     DownloadedLocal(Box<LanguageDownloadedLocalConfig>),
+    TypeScriptBundle(Box<TypeScriptBundleStartup>),
 }
 
 struct LanguageStartupInputs {
@@ -15100,6 +15307,8 @@ impl AppComposition {
             #[cfg(any(test, feature = "test-helpers"))]
             injected_assist_reply: None,
             injected_delegate_chat_spawn_failure: false,
+            #[cfg(test)]
+            workspace_edit_preflight_hook: None,
             #[cfg(any(test, feature = "test-helpers"))]
             interrupt_after_proposal_observation_store: false,
             #[cfg(feature = "ai")]
@@ -15145,7 +15354,18 @@ impl AppComposition {
             language_server_configured_paths: HashMap::new(),
             language_server_downloaded: HashMap::new(),
             language_server_local_downloads: HashMap::new(),
+            typescript_bundles: HashMap::new(),
+            typescript_node_approval: None,
+            language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
+            document_sync_ledger: HashMap::new(),
             pending_call_hierarchy: None,
+            pending_lsp_writes: HashMap::new(),
+            deferred_lsp_writes: HashMap::new(),
+            code_action_authority: crate::language::CodeActionAuthority::default(),
+            code_action_command_sidecars: crate::language::CodeActionCommandSidecars::default(),
+            code_action_diagnostics: crate::language::CodeActionDiagnostics::new(),
+            server_apply_edits: crate::language::ServerApplyEditAuthority::default(),
+            pending_code_action_contexts: HashMap::new(),
             lsp_ui_completion_debounce: None,
             lsp_ui_last_completion_count: 0,
             lsp_ui_hover_debounce: None,
@@ -16405,6 +16625,12 @@ impl AppComposition {
         trust: WorkspaceTrustState,
         principal: PrincipalId,
     ) -> Result<WorkspaceOpened, AppCompositionError> {
+        let switching_workspace = self
+            .active_documents
+            .workspace_root_path
+            .as_deref()
+            .map(|current| current != root.as_ref().to_string_lossy().as_ref())
+            .unwrap_or(false);
         let root_path = CanonicalPath(root.as_ref().to_string_lossy().into_owned());
         let request = WorkspaceOpenRequest {
             correlation_id: self.correlation_generator.next(),
@@ -16428,11 +16654,24 @@ impl AppComposition {
         };
         self.active_documents
             .bind_workspace(opened.clone(), root_path, principal, trust.clone());
+        if switching_workspace {
+            self.terminalize_pending_lsp_writes(
+                None,
+                LanguageToolingStatusKind::Stale,
+                "workspace changed while an LSP write was pending",
+            );
+            self.lsp_session.reset_to_idle();
+            self.clear_typescript_toolchain();
+        }
         self.language_server_registry = legion_lsp::LanguageServerAdapterRegistry::tier_two()
             .for_workspace(opened.workspace_id)
             .unwrap_or_default();
         self.debug_workflow.clear_workspace_state();
         self.language_tooling.clear_workspace_state();
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_session();
+        self.server_apply_edits.clear();
+        self.pending_code_action_contexts.clear();
         self.assist_inline_prediction_state = AssistInlinePredictionState::default();
         self.palette = PaletteState::default();
 
@@ -16548,6 +16787,320 @@ impl AppComposition {
         Ok(())
     }
 
+    /// Configure the pinned offline TypeScript server/compiler bundle.
+    pub fn configure_typescript_bundle(
+        &mut self,
+        server_id: LanguageServerId,
+        server_archive: impl Into<PathBuf>,
+        compiler_archive: impl Into<PathBuf>,
+        node_path: impl Into<PathBuf>,
+        cache_root: impl Into<PathBuf>,
+    ) -> Result<(), AppCompositionError> {
+        let node_path = std::fs::canonicalize(node_path.into()).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "typescript_node_invalid".into(),
+                message: error.to_string(),
+            })
+        })?;
+        if !node_path.is_file() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "typescript_node_invalid".into(),
+                message: "Node path is not a file".into(),
+            }));
+        }
+        let replaced_node = self
+            .typescript_bundles
+            .get(&server_id)
+            .map(|bundle| bundle.node_path.clone())
+            .or_else(|| self.typescript_node_approval.clone());
+        self.language_startup_authority
+            .allow_exact_binary(&node_path)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "typescript_node_invalid".into(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.typescript_node_approval = Some(node_path.clone());
+        self.typescript_bundles.insert(
+            server_id,
+            TypeScriptBundleStartup {
+                descriptor: crate::language::TypeScriptBundleDescriptor::pinned(),
+                server_archive: server_archive.into(),
+                compiler_archive: compiler_archive.into(),
+                node_path: node_path.clone(),
+                cache_root: cache_root.into(),
+            },
+        );
+        if let Some(replaced_node) = replaced_node
+            && replaced_node != node_path
+            && !self
+                .typescript_bundles
+                .values()
+                .any(|bundle| bundle.node_path.as_path() == replaced_node.as_path())
+            && !self
+                .language_server_configured_paths
+                .values()
+                .any(|path| path == &replaced_node)
+            && !self
+                .language_server_local_downloads
+                .values()
+                .any(|config| config.node_path.as_path() == replaced_node.as_path())
+            && !self
+                .language_server_downloaded
+                .values()
+                .any(|config| config.approved_node.canonical_path() == replaced_node.as_path())
+        {
+            let _ = self
+                .language_startup_authority
+                .revoke_exact_binary(&replaced_node);
+        }
+        Ok(())
+    }
+
+    /// Configure the operator-selected local TypeScript toolchain for the
+    /// active trusted workspace.
+    ///
+    /// This records only canonical input metadata. It does not materialize
+    /// either archive or start a process; each explicit start/restart creates
+    /// fresh artifact and Node receipts through the language authority.
+    pub fn configure_typescript_toolchain(
+        &mut self,
+        server_archive: impl AsRef<Path>,
+        compiler_archive: impl AsRef<Path>,
+        node_executable: impl AsRef<Path>,
+    ) -> Result<(), AppCompositionError> {
+        if self.active_documents.workspace_id().is_none() {
+            return Err(AppCompositionError::WorkspaceNotOpen);
+        }
+        if self.active_documents.active_workspace_trust != Some(WorkspaceTrustState::Trusted) {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_untrusted".to_string(),
+                message: "TypeScript toolchains require a trusted workspace".to_string(),
+            }));
+        }
+
+        fn canonical_regular_file(
+            path: &Path,
+            label: &str,
+        ) -> Result<PathBuf, AppCompositionError> {
+            let canonical = std::fs::canonicalize(path).map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_input_invalid".to_string(),
+                    message: format!("{label} is invalid: {error}"),
+                })
+            })?;
+            if !canonical.is_file() {
+                return Err(AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_input_invalid".to_string(),
+                    message: format!("{label} must be a regular file"),
+                }));
+            }
+            if canonical.to_str().is_none() {
+                return Err(AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_input_invalid".to_string(),
+                    message: format!("{label} path is not valid UTF-8"),
+                }));
+            }
+            Ok(canonical)
+        }
+
+        // Validate every input before changing the policy store or replacing
+        // the existing configuration, so an invalid third path is atomic.
+        let server_archive = canonical_regular_file(server_archive.as_ref(), "server archive")?;
+        let compiler_archive =
+            canonical_regular_file(compiler_archive.as_ref(), "compiler archive")?;
+        let node_executable = canonical_regular_file(node_executable.as_ref(), "Node executable")?;
+        let root = self
+            .active_documents
+            .workspace_root_path
+            .as_deref()
+            .ok_or(AppCompositionError::WorkspaceNotOpen)?;
+        let root = std::fs::canonicalize(root).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_invalid".to_string(),
+                message: error.to_string(),
+            })
+        })?;
+        if !root.is_dir() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_invalid".to_string(),
+                message: "workspace root must be a directory".to_string(),
+            }));
+        }
+        let previous_node = self.typescript_node_approval.clone();
+        self.language_startup_authority
+            .allow_exact_binary(&node_executable)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_node_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.typescript_node_approval = Some(node_executable.clone());
+        let mut replaced_nodes = HashSet::new();
+        for server_id in [
+            LanguageServerId(102),
+            LanguageServerId(106),
+            LanguageServerId(107),
+            LanguageServerId(108),
+        ] {
+            if let Some(bundle) = self.typescript_bundles.get(&server_id) {
+                replaced_nodes.insert(bundle.node_path.clone());
+            }
+            if let Some(path) = self.language_server_configured_paths.remove(&server_id) {
+                replaced_nodes.insert(path);
+            }
+            if let Some(config) = self.language_server_local_downloads.remove(&server_id) {
+                replaced_nodes.insert(config.node_path);
+            }
+            if let Some(config) = self.language_server_downloaded.remove(&server_id) {
+                replaced_nodes.insert(config.approved_node.canonical_path().to_path_buf());
+            }
+        }
+        let cache_root = root.join(".legion").join("language-tools");
+        let descriptor = crate::language::TypeScriptBundleDescriptor::pinned();
+        let settings = TypeScriptToolchainSettings {
+            server_archive: CanonicalPath(server_archive.to_str().unwrap().to_string()),
+            compiler_archive: CanonicalPath(compiler_archive.to_str().unwrap().to_string()),
+            node_executable: CanonicalPath(node_executable.to_str().unwrap().to_string()),
+        };
+        self.language_toolchain_settings.schema_version = 1;
+        for server_id in [
+            LanguageServerId(102),
+            LanguageServerId(106),
+            LanguageServerId(107),
+            LanguageServerId(108),
+        ] {
+            self.typescript_bundles.insert(
+                server_id,
+                TypeScriptBundleStartup {
+                    descriptor: descriptor.clone(),
+                    server_archive: server_archive.clone(),
+                    compiler_archive: compiler_archive.clone(),
+                    node_path: node_executable.clone(),
+                    cache_root: cache_root.clone(),
+                },
+            );
+        }
+        if let Some(previous_node) = previous_node {
+            replaced_nodes.insert(previous_node);
+        }
+        for node in replaced_nodes {
+            if node != node_executable
+                && !self
+                    .language_server_configured_paths
+                    .values()
+                    .any(|path| path == &node)
+                && !self
+                    .language_server_local_downloads
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path())
+                && !self
+                    .language_server_downloaded
+                    .values()
+                    .any(|config| config.approved_node.canonical_path() == node.as_path())
+                && !self
+                    .typescript_bundles
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path())
+            {
+                let _ = self.language_startup_authority.revoke_exact_binary(&node);
+            }
+        }
+        self.language_toolchain_settings.typescript = Some(settings);
+        Ok(())
+    }
+
+    /// Return the metadata-only local language-toolchain configuration.
+    pub fn language_toolchain_settings(&self) -> LanguageToolchainSettingsRecord {
+        self.language_toolchain_settings.clone()
+    }
+
+    /// Return the non-persistent approval/configuration state for UI
+    /// projection. A restored record is always a draft until reconfigured.
+    pub fn language_toolchain_configuration_state(&self) -> LanguageToolchainConfigurationState {
+        if self.language_toolchain_settings.typescript.is_none() {
+            LanguageToolchainConfigurationState::Unconfigured
+        } else if self.language_toolchain_settings.schema_version != 1
+            || ![102_u64, 106, 107, 108]
+                .iter()
+                .all(|id| self.typescript_bundles.contains_key(&LanguageServerId(*id)))
+        {
+            LanguageToolchainConfigurationState::Draft
+        } else {
+            LanguageToolchainConfigurationState::Configured
+        }
+    }
+
+    /// Clear the configured TypeScript toolchain without deleting its cache
+    /// or changing editor buffers and dirty state.
+    pub fn clear_typescript_toolchain(&mut self) {
+        let selected_server_is_typescript = self
+            .lsp_session
+            .selected_server_id()
+            .is_some_and(|server_id| matches!(server_id.0, 102 | 106 | 107 | 108));
+        if selected_server_is_typescript {
+            self.terminalize_pending_lsp_writes(
+                None,
+                LanguageToolingStatusKind::Cancelled,
+                "TypeScript language server configuration was cleared",
+            );
+            self.lsp_session.reset_to_idle();
+        }
+        let prior_node = self.typescript_node_approval.take();
+        let typescript_server_ids = [
+            LanguageServerId(102),
+            LanguageServerId(106),
+            LanguageServerId(107),
+            LanguageServerId(108),
+        ];
+        let mut removed_nodes = HashSet::new();
+        if let Some(node) = prior_node.clone() {
+            removed_nodes.insert(node);
+        }
+        for server_id in typescript_server_ids {
+            if let Some(path) = self.language_server_configured_paths.get(&server_id) {
+                removed_nodes.insert(path.clone());
+            }
+            if let Some(config) = self.language_server_local_downloads.get(&server_id) {
+                removed_nodes.insert(config.node_path.clone());
+            }
+            if let Some(config) = self.language_server_downloaded.get(&server_id) {
+                removed_nodes.insert(config.approved_node.canonical_path().to_path_buf());
+            }
+            if let Some(config) = self.typescript_bundles.get(&server_id) {
+                removed_nodes.insert(config.node_path.clone());
+            }
+            self.typescript_bundles.remove(&server_id);
+            self.language_server_configured_paths.remove(&server_id);
+            self.language_server_local_downloads.remove(&server_id);
+            self.language_server_downloaded.remove(&server_id);
+        }
+        self.language_toolchain_settings.typescript = None;
+        for node in removed_nodes {
+            let retained_elsewhere = self
+                .language_server_configured_paths
+                .values()
+                .any(|path| path == &node)
+                || self
+                    .language_server_local_downloads
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path())
+                || self
+                    .language_server_downloaded
+                    .values()
+                    .any(|config| config.approved_node.canonical_path() == node.as_path())
+                || self
+                    .typescript_bundles
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path());
+            if !retained_elsewhere {
+                let _ = self.language_startup_authority.revoke_exact_binary(&node);
+            }
+        }
+    }
+
     /// Test-only: starts the LSP session using an explicit server binary path,
     /// bypassing PATH-based discovery.  Allows integration tests to inject the
     /// mock server without mutating the process environment (which races in
@@ -16581,6 +17134,31 @@ impl AppComposition {
     ) -> std::sync::mpsc::Receiver<LspWorkerRequest> {
         self.lsp_session
             .set_live_with_request_receiver_for_test(health)
+    }
+
+    /// Test-only: install a cap-one live session and retain its result sender
+    /// so draining does not mistake a dropped harness channel for worker death.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn set_lsp_request_harness_for_test(
+        &mut self,
+        health: legion_protocol::LspServerHealthRecord,
+    ) -> (
+        std::sync::mpsc::Receiver<LspWorkerRequest>,
+        std::sync::mpsc::SyncSender<crate::language::LspWorkerResult>,
+    ) {
+        self.lsp_session
+            .set_live_with_request_and_result_sender_for_test(health)
+    }
+
+    /// Test-only: run a one-shot callback after workspace-edit preflight and
+    /// before the first mutation. This gives atomicity tests a deterministic
+    /// late external-change point without exposing a production seam.
+    #[cfg(test)]
+    pub(crate) fn set_workspace_edit_preflight_hook_for_test<F>(&mut self, hook: F)
+    where
+        F: FnOnce() + 'static,
+    {
+        self.workspace_edit_preflight_hook = Some(Box::new(hook));
     }
 
     /// Test-only: inject a pre-created cancellation flag so that tests can
@@ -16891,6 +17469,19 @@ impl AppComposition {
                         Arc::clone(&cancel),
                         preparation_root_uri.clone(),
                     ),
+                LanguageStartupSelection::TypeScriptBundle(bundle) => authority
+                    .prepare_typescript_bundle(
+                        &context,
+                        &bundle.descriptor,
+                        &bundle.server_archive,
+                        &bundle.compiler_archive,
+                        &bundle.node_path,
+                        &bundle.cache_root,
+                        Arc::clone(&cancel),
+                        preparation_root_uri.clone(),
+                        preparation_language_id.clone(),
+                        server_id,
+                    ),
             }
         };
         let metadata = match &selection {
@@ -16930,6 +17521,16 @@ impl AppComposition {
                     download_decision_id: None,
                 }
             }
+            LanguageStartupSelection::TypeScriptBundle(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: Some("6.0.0".into()),
+                    download_decision_id: None,
+                }
+            }
         };
         self.lsp_session
             .start_preparing_with_factory(PathBuf::from(root), metadata, preparation);
@@ -16941,6 +17542,15 @@ impl AppComposition {
     ///
     /// Called from the "Restart language server" palette command (PKT-LSP-C T1/T3).
     fn restart_lsp_session_for_current_workspace(&mut self) {
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_session();
+        self.server_apply_edits.clear();
+        self.pending_code_action_contexts.clear();
+        self.terminalize_pending_lsp_writes(
+            None,
+            LanguageToolingStatusKind::Cancelled,
+            "language server restarted while an LSP write was pending",
+        );
         let Some(inputs) = self.language_startup_inputs() else {
             let Some(root) = self.active_documents.workspace_root_path.clone() else {
                 return;
@@ -17020,6 +17630,16 @@ impl AppComposition {
                     download_decision_id: None,
                 }
             }
+            LanguageStartupSelection::TypeScriptBundle(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: Some("6.0.0".into()),
+                    download_decision_id: None,
+                }
+            }
         };
         let preparation = move |cancel: Arc<std::sync::atomic::AtomicBool>| {
             if cancel.load(std::sync::atomic::Ordering::Acquire) {
@@ -17064,6 +17684,19 @@ impl AppComposition {
                         Arc::clone(&cancel),
                         root_uri,
                     ),
+                LanguageStartupSelection::TypeScriptBundle(bundle) => authority
+                    .prepare_typescript_bundle(
+                        &context,
+                        &bundle.descriptor,
+                        &bundle.server_archive,
+                        &bundle.compiler_archive,
+                        &bundle.node_path,
+                        &bundle.cache_root,
+                        Arc::clone(&cancel),
+                        root_uri,
+                        language_id,
+                        server_id,
+                    ),
             }
         };
         self.lsp_session.restart_for_workspace_preparing(
@@ -17098,9 +17731,9 @@ impl AppComposition {
             .ok()?
             .into_iter()
             .find(|adapter| adapter.is_primary)?;
-        let selection = if let Some(local) =
-            self.language_server_local_downloads.get(&adapter.server_id)
-        {
+        let selection = if let Some(bundle) = self.typescript_bundles.get(&adapter.server_id) {
+            LanguageStartupSelection::TypeScriptBundle(Box::new(bundle.clone()))
+        } else if let Some(local) = self.language_server_local_downloads.get(&adapter.server_id) {
             let mut local = local.clone();
             local.adapter = adapter.clone();
             LanguageStartupSelection::DownloadedLocal(Box::new(local))
@@ -17145,15 +17778,265 @@ impl AppComposition {
         buffer_id: BufferId,
         descriptor: &legion_protocol::TextTransactionDescriptor,
     ) {
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_buffer(buffer_id);
+        self.server_apply_edits.clear();
+        self.pending_code_action_contexts.clear();
         let Some(meta) = self.active_documents.metadata_for_buffer(buffer_id) else {
             return;
         };
         let uri = canonical_path_to_uri(&meta.identity.canonical_path.0);
         let version = descriptor.post_buffer_version.0 as i64;
-        if let Ok(text) = self.editor.text(buffer_id) {
-            self.lsp_session
-                .send_did_change(uri, version, text.to_string());
+        if let Some(entries) = self.document_sync_ledger.get_mut(&uri) {
+            // A URI has at most one current open intent.  Keep a pending
+            // close marker, but discard superseded open intents so repeated
+            // edits cannot grow this offline ledger.
+            entries.retain(|entry| {
+                matches!(entry, DesiredDocumentSync::Closed { .. })
+                    || matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+            });
+            if let Some(DesiredDocumentSync::Open {
+                buffer_id: entry_buffer,
+                version: desired_version,
+                needs_open,
+                sent,
+                ..
+            }) = entries.iter_mut().rev().find(|entry| {
+                matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+            }) {
+                *desired_version = version;
+                if *sent {
+                    *needs_open = false;
+                }
+                *sent = false;
+                *entry_buffer = buffer_id;
+            } else {
+                entries.push(DesiredDocumentSync::Open {
+                    buffer_id,
+                    language_id: language_id_for_path(&CanonicalPath(
+                        meta.identity.canonical_path.0.clone(),
+                    )),
+                    version,
+                    needs_open: true,
+                    sent: false,
+                });
+            }
+        } else {
+            self.document_sync_ledger.insert(
+                uri.clone(),
+                vec![DesiredDocumentSync::Open {
+                    buffer_id,
+                    language_id: language_id_for_path(&CanonicalPath(
+                        meta.identity.canonical_path.0.clone(),
+                    )),
+                    version,
+                    needs_open: true,
+                    sent: false,
+                }],
+            );
         }
+        self.flush_document_sync_uri(&uri);
+    }
+
+    /// Sends the current contents to a live language session after a buffer is
+    /// opened. Existing buffers are replayed when startup transitions to Live.
+    fn notify_lsp_did_open(&mut self, buffer_id: BufferId) {
+        let Some(meta) = self.active_documents.metadata_for_buffer(buffer_id) else {
+            return;
+        };
+        let uri = canonical_path_to_uri(&meta.identity.canonical_path.0);
+        let language_id =
+            language_id_for_path(&CanonicalPath(meta.identity.canonical_path.0.clone()));
+        let Ok(version) = self.editor.buffer_version(buffer_id) else {
+            return;
+        };
+        let entries = self.document_sync_ledger.entry(uri.clone()).or_default();
+        entries.retain(|entry| {
+            matches!(entry, DesiredDocumentSync::Closed { .. })
+                || matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+        });
+        if let Some(DesiredDocumentSync::Open {
+            version: desired,
+            sent,
+            language_id: id,
+            needs_open,
+            ..
+        }) = entries.iter_mut().rev().find(|entry| {
+            matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+        })
+        {
+            *desired = version.0 as i64;
+            *id = language_id.clone();
+            *needs_open = true;
+            *sent = false;
+        } else {
+            entries.push(DesiredDocumentSync::Open {
+                buffer_id,
+                language_id,
+                version: version.0 as i64,
+                needs_open: true,
+                sent: false,
+            });
+        }
+        self.flush_document_sync_uri(&uri);
+    }
+
+    fn flush_document_sync_uri(&mut self, uri: &str) {
+        let Some(entries) = self.document_sync_ledger.get(uri).cloned() else {
+            return;
+        };
+        for entry in entries {
+            match entry {
+                DesiredDocumentSync::Closed { buffer_id } => {
+                    if self.lsp_session.send_did_close(uri.to_string()) {
+                        if let Some(items) = self.document_sync_ledger.get_mut(uri) {
+                            items.retain(|item| !matches!(item, DesiredDocumentSync::Closed { buffer_id: id } if *id == buffer_id));
+                        }
+                    } else {
+                        // Preserve per-URI ordering: a later open must not
+                        // overtake a close that is still queued for retry.
+                        break;
+                    }
+                }
+                DesiredDocumentSync::Open {
+                    buffer_id,
+                    language_id,
+                    version: _,
+                    needs_open,
+                    sent,
+                } if !sent => {
+                    let Ok(current_version) = self.editor.buffer_version(buffer_id) else {
+                        break;
+                    };
+                    let current_version = current_version.0 as i64;
+                    let event_context = self.next_event_context();
+                    let snapshot_id = self
+                        .editor
+                        .current_snapshot(buffer_id)
+                        .ok()
+                        .map(|snapshot| snapshot.snapshot_id);
+                    let operation_context = snapshot_id.and_then(|snapshot_id| {
+                        self.lsp_operation_context(buffer_id, snapshot_id, event_context)
+                    });
+                    let editor = &self.editor;
+                    let delivered = if needs_open {
+                        self.lsp_session.send_did_open_deferred_with_context(
+                            uri.to_string(),
+                            language_id.0,
+                            current_version,
+                            buffer_id,
+                            || editor.text(buffer_id).ok().map(|text| text.to_string()),
+                            operation_context,
+                        )
+                    } else {
+                        self.lsp_session.send_did_change_deferred_with_context(
+                            uri.to_string(),
+                            current_version,
+                            || editor.text(buffer_id).ok().map(|text| text.to_string()),
+                            operation_context,
+                        )
+                    };
+                    if delivered
+                        && let Some(items) = self.document_sync_ledger.get_mut(uri)
+                        && let Some(DesiredDocumentSync::Open {
+                            version,
+                            needs_open,
+                            sent,
+                            ..
+                        }) = items.iter_mut().rev().find(|item| matches!(item, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id))
+                    {
+                        *version = current_version;
+                        *needs_open = false;
+                        *sent = true;
+                    } else if !delivered {
+                        // The cap-one worker queue is full or no longer live;
+                        // retry this URI before considering later entries.
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self
+            .document_sync_ledger
+            .get(uri)
+            .is_some_and(|items| items.is_empty())
+        {
+            self.document_sync_ledger.remove(uri);
+        }
+    }
+
+    fn flush_document_sync_ledger(&mut self) {
+        let uris = self
+            .document_sync_ledger
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for uri in uris {
+            self.flush_document_sync_uri(&uri);
+        }
+    }
+
+    fn reset_document_sync_for_new_session(&mut self) {
+        for entries in self.document_sync_ledger.values_mut() {
+            for entry in entries {
+                if let DesiredDocumentSync::Open {
+                    needs_open, sent, ..
+                } = entry
+                {
+                    *needs_open = true;
+                    *sent = false;
+                }
+            }
+        }
+    }
+
+    /// LSP reads must observe a document only after its latest desired sync
+    /// has entered the worker queue.  The ledger stores metadata only; text is
+    /// read from the authoritative editor when the sync is flushed.
+    fn lsp_document_sync_ready(&self, buffer_id: BufferId) -> bool {
+        let Some(meta) = self.active_documents.metadata_for_buffer(buffer_id) else {
+            return false;
+        };
+        let uri = canonical_path_to_uri(&meta.identity.canonical_path.0);
+        let Some(entries) = self.document_sync_ledger.get(&uri) else {
+            return false;
+        };
+        let Some(DesiredDocumentSync::Open {
+            version,
+            sent: true,
+            buffer_id: entry_buffer,
+            ..
+        }) = entries.iter().rev().find(|entry| {
+            matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+        }) else {
+            return false;
+        };
+        let Ok(current_version) = self.editor.buffer_version(buffer_id) else {
+            return false;
+        };
+        *entry_buffer == buffer_id && *version == current_version.0 as i64
+    }
+
+    /// Workspace-sensitive LSP reads must wait until every open document has
+    /// entered the worker queue and no close is waiting to overtake an open.
+    /// The worker request channel is intentionally bounded to one item, so a
+    /// per-buffer check can otherwise let a workspace read race another tab's
+    /// pending `didOpen`.
+    pub(crate) fn lsp_workspace_sync_ready(&self) -> bool {
+        if self.document_sync_ledger.values().flatten().any(|entry| {
+            matches!(
+                entry,
+                DesiredDocumentSync::Closed { .. } | DesiredDocumentSync::Open { sent: false, .. }
+            )
+        }) {
+            return false;
+        }
+        self.active_documents
+            .open_tabs
+            .iter()
+            .copied()
+            .all(|buffer_id| self.lsp_document_sync_ready(buffer_id))
     }
 
     /// Returns the current LSP server health record, if available.
@@ -17193,6 +18076,19 @@ impl AppComposition {
     ) -> Result<SnapshotLeaseDescriptor, EditorError> {
         self.editor
             .lease_snapshot(buffer_id, SnapshotConsumerKind::Ui)
+    }
+
+    /// Convert an exact UI lease descriptor into an editor-owned, revocable
+    /// handle suitable for a desktop worker.  The editor remains the authority
+    /// for lease identity, expiry, and snapshot lifetime.
+    pub fn owned_ui_snapshot(
+        &mut self,
+        lease: &SnapshotLeaseDescriptor,
+    ) -> Result<OwnedSnapshotLease, EditorError> {
+        if lease.consumer_kind != SnapshotConsumerKind::Ui {
+            return Err(EditorError::InvalidEdit("UI snapshot lease required"));
+        }
+        self.editor.owned_snapshot_lease(lease)
     }
 
     /// Read one bounded logical-line chunk through a UI snapshot lease.
@@ -17357,6 +18253,7 @@ impl AppComposition {
             )?;
 
         self.active_documents.bind_opened_file(&opened, buffer_id);
+        self.notify_lsp_did_open(buffer_id);
         // Lexical retrieval indexing is not on the open path (GAP-09.3). Language
         // reads, Delegate retrieval, and the symbol palette index on demand. Save
         // and first paint must not wait on LexicalIndexer.
@@ -17376,6 +18273,7 @@ impl AppComposition {
         let descriptor =
             self.apply_edit_to_buffer_with_correlation(buffer_id, edit.clone(), correlation_id)?;
         self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(buffer_id, &descriptor);
         let _ = self.maybe_request_next_edit_prediction_after_edit(
             buffer_id,
             edit.range.start.line as u32,
@@ -19241,14 +20139,13 @@ impl AppComposition {
                         let replacement = self.buffer_search_state.replace_text.clone();
                         let edit =
                             TextEdit::new(CommandDispatcher::editor_range(range), replacement);
-                        if self
-                            .apply_edit_to_buffer_with_correlation(
-                                buffer_id,
-                                edit,
-                                event_context.correlation_id,
-                            )
-                            .is_ok()
-                        {
+                        if let Ok(descriptor) = self.apply_edit_to_buffer_with_correlation(
+                            buffer_id,
+                            edit,
+                            event_context.correlation_id,
+                        ) {
+                            self.emit_transaction_event(&descriptor);
+                            self.notify_lsp_did_change(buffer_id, &descriptor);
                             self.refresh_buffer_search_matches(buffer_id);
                         }
                     }
@@ -19285,14 +20182,18 @@ impl AppComposition {
                             )
                         })
                         .collect();
-                    if !edits.is_empty() {
-                        let _ = self.editor.apply_edits(
+                    if !edits.is_empty()
+                        && let Ok(record) = self.editor.apply_edits(
                             buffer_id,
                             edits,
                             TransactionSource::User,
                             None,
                             Some(event_context.correlation_id),
-                        );
+                        )
+                    {
+                        let descriptor = record.to_protocol_descriptor();
+                        self.emit_transaction_event(&descriptor);
+                        self.notify_lsp_did_change(buffer_id, &descriptor);
                     }
                     self.refresh_buffer_search_matches(buffer_id);
                 }
@@ -19384,6 +20285,7 @@ impl AppComposition {
                     )?;
                     self.collapse_selection_to_cursor(*buffer_id, selection.start)?;
                     self.emit_transaction_event(&descriptor);
+                    self.notify_lsp_did_change(*buffer_id, &descriptor);
                 }
                 return Ok(AppCommandOutcome::ClipboardUpdated(metadata));
             }
@@ -20059,19 +20961,19 @@ impl AppComposition {
                 ))
             }
             AppCommandRequest::RequestFormattingProposal { buffer_id } => {
-                self.issue_lsp_formatting_request(buffer_id);
+                let issued = self.issue_lsp_formatting_request(buffer_id);
+                if !issued {
+                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                        let _ = self.language_tooling.record_proposal_failure(
+                            &input,
+                            LanguageProposalKind::Formatting,
+                            "formatting unavailable until a live capable language server is ready"
+                                .to_string(),
+                        );
+                    }
+                }
                 Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
-                        LanguageProposalKind::Formatting,
-                        TextCoordinate {
-                            line: 0,
-                            character: 0,
-                            byte_offset: Some(0),
-                            utf16_offset: Some(0),
-                        },
-                        "format".to_string(),
-                    )?,
+                    self.language_tooling.projection(),
                 ))
             }
             AppCommandRequest::RequestRenameProposal {
@@ -20079,58 +20981,168 @@ impl AppComposition {
                 position,
                 new_name,
             } => {
-                // Ask the language server too. Its answer arrives on a later
-                // drain as its own proposal; the index-backed one below returns
-                // now so the surface is never blank. Neither writes anything —
-                // both stop at Previewed.
-                self.issue_lsp_rename_request(buffer_id, position, new_name.clone());
+                let issued = self.issue_lsp_rename_request(buffer_id, position, new_name);
+                if !issued {
+                    let failure_message =
+                        self.lsp_rename_unavailable_message(buffer_id).to_string();
+                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                        let _ = self.language_tooling.record_proposal_failure(
+                            &input,
+                            LanguageProposalKind::Rename,
+                            failure_message,
+                        );
+                    }
+                }
                 Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
-                        LanguageProposalKind::Rename,
-                        position,
-                        new_name,
-                    )?,
+                    self.language_tooling.projection(),
                 ))
             }
             AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => {
-                if let Some(range) = self.whole_document_utf16_range(buffer_id) {
-                    self.issue_lsp_code_action_request(buffer_id, range, true);
+                let issued = self
+                    .whole_document_utf16_range(buffer_id)
+                    .is_some_and(|range| {
+                        self.request_code_actions_scoped(
+                            buffer_id,
+                            ProtocolTextRange {
+                                start: TextCoordinate {
+                                    line: range.start.line,
+                                    character: range.start.character,
+                                    byte_offset: None,
+                                    utf16_offset: None,
+                                },
+                                end: TextCoordinate {
+                                    line: range.end.line,
+                                    character: range.end.character,
+                                    byte_offset: None,
+                                    utf16_offset: None,
+                                },
+                            },
+                            true,
+                        )
+                    });
+                if !issued {
+                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                        let _ = self.language_tooling.record_proposal_failure(
+                            &input,
+                            LanguageProposalKind::OrganizeImports,
+                            "organize imports unavailable until a live capable language server is ready"
+                                .to_string(),
+                        );
+                    }
                 }
                 Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
-                        LanguageProposalKind::OrganizeImports,
-                        TextCoordinate {
-                            line: 0,
-                            character: 0,
-                            byte_offset: Some(0),
-                            utf16_offset: Some(0),
-                        },
-                        "organize-imports".to_string(),
-                    )?,
+                    self.language_tooling.projection(),
                 ))
             }
             AppCommandRequest::RequestCodeActionProposal {
                 buffer_id,
+                action_id: _action_id,
+            } => {
+                let issued = self
+                    .whole_document_utf16_range(buffer_id)
+                    .is_some_and(|range| {
+                        self.request_code_actions(
+                            buffer_id,
+                            ProtocolTextRange {
+                                start: TextCoordinate {
+                                    line: range.start.line,
+                                    character: range.start.character,
+                                    byte_offset: None,
+                                    utf16_offset: None,
+                                },
+                                end: TextCoordinate {
+                                    line: range.end.line,
+                                    character: range.end.character,
+                                    byte_offset: None,
+                                    utf16_offset: None,
+                                },
+                            },
+                        )
+                    });
+                if !issued {
+                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                        let _ = self.language_tooling.record_proposal_failure(
+                            &input,
+                            LanguageProposalKind::CodeAction,
+                            "code action request unavailable until a live capable language server is ready"
+                                .to_string(),
+                        );
+                    }
+                }
+                Ok(AppCommandOutcome::language_tooling(
+                    self.language_tooling.projection(),
+                ))
+            }
+            AppCommandRequest::RequestCodeActions { buffer_id, range } => {
+                let issued = self.request_code_actions(buffer_id, range);
+                if !issued {
+                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                        let _ = self.language_tooling.record_proposal_failure(
+                            &input,
+                            LanguageProposalKind::CodeAction,
+                            "code actions unavailable until a live capable language server is ready"
+                                .to_string(),
+                        );
+                    }
+                }
+                Ok(AppCommandOutcome::language_tooling(
+                    self.language_tooling.projection(),
+                ))
+            }
+            AppCommandRequest::SelectCodeAction {
+                response_id,
                 action_id,
-            } => Ok(AppCommandOutcome::language_tooling(
-                self.run_language_proposal(
-                    buffer_id,
-                    LanguageProposalKind::CodeAction,
-                    TextCoordinate {
-                        line: 0,
-                        character: 0,
-                        byte_offset: Some(0),
-                        utf16_offset: Some(0),
-                    },
-                    action_id,
-                )?,
-            )),
+            } => {
+                let failure_buffer = self
+                    .code_action_authority
+                    .candidate_buffer_id(&response_id, &action_id);
+                let failure_kind = self
+                    .code_action_authority
+                    .candidate_is_organize_imports(&response_id, &action_id)
+                    .map(|organize| {
+                        if organize {
+                            LanguageProposalKind::OrganizeImports
+                        } else {
+                            LanguageProposalKind::CodeAction
+                        }
+                    });
+                if let Err(error) = self.select_code_action_and_propose(&response_id, &action_id) {
+                    if let Some(buffer_id) =
+                        failure_buffer.or(self.active_documents.active_buffer_id)
+                    {
+                        if let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                            let _ = self.language_tooling.record_proposal_failure(
+                                &input,
+                                failure_kind.unwrap_or(LanguageProposalKind::CodeAction),
+                                format!("code action selection refused: {error}"),
+                            );
+                        }
+                    }
+                }
+                Ok(AppCommandOutcome::language_tooling(
+                    self.language_tooling.projection(),
+                ))
+            }
             AppCommandRequest::CancelLanguageOperation { operation_id } => {
+                if !self
+                    .code_action_authority
+                    .remove_resolve_attempt(&operation_id)
+                {
+                    self.clear_code_actions();
+                }
                 let event_context = self.next_event_context();
-                self.language_tooling
-                    .cancel_operation(operation_id, event_context);
+                self.deferred_lsp_writes.remove(&operation_id);
+                if let Some(pending) = self.pending_lsp_writes.remove(&operation_id) {
+                    let _ = self.language_tooling.upsert_write_operation(
+                        &pending,
+                        LanguageToolingStatusKind::Cancelled,
+                        "cancelled by app authority".to_string(),
+                        None,
+                    );
+                } else {
+                    self.language_tooling
+                        .cancel_operation(operation_id, event_context);
+                }
                 Ok(AppCommandOutcome::language_tooling(
                     self.language_tooling.projection(),
                 ))
@@ -20363,9 +21375,34 @@ impl AppComposition {
                 Ok(AppCommandOutcome::Opened(self.open_file(path)?))
             }
             AppCommandRequest::OpenPathAtPosition { path, position } => {
+                let previous_buffer = self.active_documents.active_buffer_id;
+                let previous_cursors =
+                    previous_buffer.and_then(|buffer_id| self.editor.cursors(buffer_id).ok());
                 let outcome = self.open_file(path)?;
                 if let Some(buffer_id) = self.active_documents.active_buffer_id {
-                    self.set_buffer_cursor(buffer_id, position)?;
+                    let cursor = match self.editor.protocol_position(
+                        buffer_id,
+                        position.line,
+                        position.character,
+                    ) {
+                        Ok(cursor) => cursor,
+                        Err(error) => {
+                            // Opening the destination is intentionally retained as a tab, but a
+                            // bad protocol coordinate must not strand navigation on that tab.
+                            // Restore the prior authority-selected tab and its caret set before
+                            // returning the validation error.
+                            if let Some(previous_buffer) = previous_buffer {
+                                let _ = self.switch_tab(previous_buffer);
+                                if let Some(previous_cursors) = previous_cursors {
+                                    let _ =
+                                        self.editor.set_cursors(previous_buffer, previous_cursors);
+                                }
+                            }
+                            return Err(error.into());
+                        }
+                    };
+                    self.editor
+                        .set_cursors(buffer_id, vec![legion_editor::Cursor { position: cursor }])?;
                 }
                 // A definition result is a one-shot navigation surface. Do
                 // not carry the source file's picker data into the destination.
@@ -20507,6 +21544,22 @@ impl AppComposition {
             }
             AppCommandRequest::LspRestartSession => {
                 self.restart_lsp_session_for_current_workspace();
+                Ok(AppCommandOutcome::Noop)
+            }
+            AppCommandRequest::ConfigureTypeScriptToolchain {
+                server_archive,
+                compiler_archive,
+                node_executable,
+            } => {
+                self.configure_typescript_toolchain(
+                    server_archive,
+                    compiler_archive,
+                    node_executable,
+                )?;
+                Ok(AppCommandOutcome::Noop)
+            }
+            AppCommandRequest::ClearTypeScriptToolchain => {
+                self.clear_typescript_toolchain();
                 Ok(AppCommandOutcome::Noop)
             }
             _ => unreachable!("command execution service handled non-workflow command"),
@@ -20761,6 +21814,7 @@ impl AppComposition {
         }
         let descriptor = self.apply_collaboration_operation_through_editor(operation)?;
         self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(descriptor.buffer_id, &descriptor);
         let audit = self.collaboration_audit_record(Some(descriptor.correlation_id), None, None)?;
         self.persist_collaboration_audit(audit)?;
         Ok(Some(AppCommandOutcome::CollaborationOperationApplied(
@@ -26208,15 +27262,27 @@ impl AppComposition {
             });
         }
 
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_buffer(buffer_id);
+
         let lsp_uri = self
             .active_documents
             .metadata_for_buffer(buffer_id)
             .map(|metadata| canonical_path_to_uri(&metadata.identity.canonical_path.0));
+        self.terminalize_pending_lsp_writes(
+            Some(buffer_id),
+            LanguageToolingStatusKind::Stale,
+            "buffer closed while an LSP write was pending",
+        );
         self.editor.close_buffer(buffer_id)?;
         if let Some(uri) = lsp_uri {
-            // Keep the language server's open-document set in sync with the
-            // editor.  This is best-effort and non-blocking, like didChange.
-            let _ = self.lsp_session.send_did_close(uri);
+            let entries = self.document_sync_ledger.entry(uri.clone()).or_default();
+            // A close supersedes an unsent open for this buffer.  Retain the
+            // close marker so a later reopen of the same URI is ordered as
+            // close(old buffer) then open(new buffer).
+            entries.clear();
+            entries.push(DesiredDocumentSync::Closed { buffer_id });
+            self.flush_document_sync_uri(&uri);
         }
         self.active_documents.remove_open_tab(buffer_id);
         self.assist_inline_prediction_state
@@ -27301,7 +28367,22 @@ impl AppComposition {
 
     /// Return the current app-owned language tooling projection.
     pub fn language_tooling_projection(&self) -> LanguageToolingProjection {
-        self.language_tooling.projection()
+        let mut projection = self.language_tooling.projection();
+        projection.typescript_toolchain = TypeScriptToolchainProjection {
+            settings: self.language_toolchain_settings.typescript.clone(),
+            status: match self.language_toolchain_configuration_state() {
+                LanguageToolchainConfigurationState::Unconfigured => {
+                    LanguageToolchainConfigurationStatus::Unconfigured
+                }
+                LanguageToolchainConfigurationState::Draft => {
+                    LanguageToolchainConfigurationStatus::Draft
+                }
+                LanguageToolchainConfigurationState::Configured => {
+                    LanguageToolchainConfigurationStatus::Configured
+                }
+            },
+        };
+        projection
     }
 
     /// Build an LSP `textDocument/completion` request for an already-open buffer.
@@ -28526,6 +29607,7 @@ impl AppComposition {
             })?;
         let descriptor = record.to_protocol_descriptor();
         self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(buffer_id, &descriptor);
         self.mark_inline_prediction_lifecycle(index, InlinePredictionResultState::Accepted)?;
         Ok(self.assist_inline_prediction_projection(TimestampMillis::now()))
     }
@@ -29119,257 +30201,6 @@ impl AppComposition {
         }
     }
 
-    fn run_language_proposal(
-        &mut self,
-        buffer_id: BufferId,
-        kind: LanguageProposalKind,
-        position: TextCoordinate,
-        label: String,
-    ) -> Result<LanguageToolingProjection, AppCompositionError> {
-        let event_context = self.next_event_context();
-        let input = self.language_request_input(buffer_id, event_context)?;
-        let proposal_id = self.proposal_coordinator.next_id();
-        let capability = CapabilityId("fs.write".to_string());
-        let preconditions = ProposalVersionPreconditions {
-            file_version: Some(input.metadata.file_content_version),
-            buffer_version: Some(input.buffer_version),
-            snapshot_id: Some(input.snapshot_id),
-            generation: Some(input.metadata.workspace_generation),
-            file_content_version: Some(input.metadata.file_content_version),
-            workspace_generation: Some(input.metadata.workspace_generation),
-            expected_fingerprint: Some(input.metadata.fingerprint.clone()),
-            expected_file_length: input.metadata.file_length,
-            expected_modified_at: input.metadata.modified_at,
-        };
-        let source = match kind {
-            LanguageProposalKind::Formatting => WorkspaceEditSourceKind::LspFormatting,
-            LanguageProposalKind::Rename => WorkspaceEditSourceKind::LspRename,
-            LanguageProposalKind::OrganizeImports | LanguageProposalKind::CodeAction => {
-                WorkspaceEditSourceKind::LspCodeAction
-            }
-        };
-        let title = match kind {
-            LanguageProposalKind::Formatting => "Format active buffer".to_string(),
-            LanguageProposalKind::Rename => {
-                format!("Rename symbol to {}", bounded_label(&label, 64))
-            }
-            LanguageProposalKind::OrganizeImports => "Organize imports".to_string(),
-            LanguageProposalKind::CodeAction => {
-                format!("Apply code action {}", bounded_label(&label, 64))
-            }
-        };
-        let (workspace_edit, diagnostics) = match kind {
-            LanguageProposalKind::Rename => {
-                // When the LSP session is live, route through `textDocument/rename`
-                // for multi-file rename coverage (PKT-LSP-C I-2).  The result
-                // arrives asynchronously via `ingest_lsp_rename_result` and is
-                // projected into `language_tooling` on the next drain call.
-                if self.lsp_session.is_live()
-                    && self.issue_lsp_rename_request_inner(buffer_id, position, label.clone())
-                {
-                    return Ok(self.language_tooling.projection());
-                }
-                // --- local (non-LSP) rename path ---
-                let replacement = bounded_label(&label, 128);
-                if replacement.trim().is_empty() {
-                    return Ok(self.language_tooling.record_proposal_failure(
-                        &input,
-                        kind,
-                        "Rename proposal requires a non-empty replacement label".to_string(),
-                    ));
-                }
-                let Some(range) =
-                    identifier_byte_range_at(&input.text, position.byte_offset.unwrap_or(0))
-                else {
-                    return Ok(self.language_tooling.record_proposal_failure(
-                        &input,
-                        kind,
-                        "Rename proposal requires an identifier at the requested position"
-                            .to_string(),
-                    ));
-                };
-                let target = ProposalAffectedTarget {
-                    target_id: format!("file:{}", input.metadata.identity.file_id.0),
-                    kind: ProposalTargetKind::OpenBuffer,
-                    workspace_id: Some(input.workspace_id),
-                    file_id: Some(input.metadata.identity.file_id),
-                    buffer_id: Some(buffer_id),
-                    path: Some(input.metadata.identity.canonical_path.clone()),
-                    terminal_session_id: None,
-                    plugin_id: None,
-                    remote_authority: None,
-                    collaboration_session_id: None,
-                    byte_ranges: vec![range],
-                    redaction_hints: vec![RedactionHint::MetadataOnly],
-                };
-                let workspace_edit = WorkspaceEditProposalPayload {
-                    workspace_id: input.workspace_id,
-                    edit_id: uuid::Uuid::now_v7(),
-                    title: title.clone(),
-                    source,
-                    target_coverage: ProposalTargetCoverage {
-                        coverage_kind: ProposalTargetCoverageKind::Complete,
-                        targets: vec![target],
-                        omitted_target_count: 0,
-                        redaction_hints: vec![RedactionHint::MetadataOnly],
-                    },
-                    file_edits: vec![WorkspaceTextEdit {
-                        file: input.metadata.identity.clone(),
-                        buffer_id: Some(buffer_id),
-                        edits: EditBatch {
-                            edits: vec![ProtocolWorkspaceTextEdit {
-                                range: ProtocolEditTextRange::byte(range.start, range.end),
-                                replacement,
-                            }],
-                        },
-                        preconditions: preconditions.clone(),
-                    }],
-                    file_operations: Vec::new(),
-                    required_capability: capability.clone(),
-                    diagnostics: Vec::new(),
-                    schema_version: 1,
-                };
-                (workspace_edit, Vec::new())
-            }
-            LanguageProposalKind::Formatting
-            | LanguageProposalKind::OrganizeImports
-            | LanguageProposalKind::CodeAction => {
-                let mut diagnostics = Vec::new();
-                diagnostics.push(ProtocolDiagnostic {
-                    code: "language_tooling.runtime_edit_unavailable".to_string(),
-                    message: format!(
-                        "{title} is represented as a safe no-op preview until live LSP edits are wired"
-                    ),
-                    severity: ProtocolDiagnosticSeverity::Warning,
-                    path: Some(input.metadata.identity.canonical_path.clone()),
-                    range: None,
-                });
-                let target = ProposalAffectedTarget {
-                    target_id: format!("file:{}", input.metadata.identity.file_id.0),
-                    kind: ProposalTargetKind::OpenBuffer,
-                    workspace_id: Some(input.workspace_id),
-                    file_id: Some(input.metadata.identity.file_id),
-                    buffer_id: Some(buffer_id),
-                    path: Some(input.metadata.identity.canonical_path.clone()),
-                    terminal_session_id: None,
-                    plugin_id: None,
-                    remote_authority: None,
-                    collaboration_session_id: None,
-                    byte_ranges: vec![ByteRange::new(0, input.text.len() as u64)],
-                    redaction_hints: vec![RedactionHint::MetadataOnly],
-                };
-                let workspace_edit = WorkspaceEditProposalPayload {
-                    workspace_id: input.workspace_id,
-                    edit_id: uuid::Uuid::now_v7(),
-                    title: title.clone(),
-                    source,
-                    target_coverage: ProposalTargetCoverage {
-                        coverage_kind: ProposalTargetCoverageKind::Complete,
-                        targets: vec![target],
-                        omitted_target_count: 0,
-                        redaction_hints: vec![RedactionHint::MetadataOnly],
-                    },
-                    file_edits: vec![WorkspaceTextEdit {
-                        file: input.metadata.identity.clone(),
-                        buffer_id: Some(buffer_id),
-                        edits: EditBatch {
-                            edits: vec![ProtocolWorkspaceTextEdit {
-                                range: ProtocolEditTextRange::byte(0, input.text.len() as u64),
-                                replacement: input.text.clone(),
-                            }],
-                        },
-                        preconditions: preconditions.clone(),
-                    }],
-                    file_operations: Vec::new(),
-                    required_capability: capability.clone(),
-                    diagnostics: diagnostics.clone(),
-                    schema_version: 1,
-                };
-                (workspace_edit, diagnostics)
-            }
-        };
-        let request = LspRequestCorrelation {
-            request_id: legion_protocol::LspRequestId(uuid::Uuid::now_v7()),
-            server_id: legion_protocol::LanguageServerId(1),
-            workspace_id: input.workspace_id,
-            file_id: Some(input.metadata.identity.file_id),
-            snapshot_id: Some(input.snapshot_id),
-            buffer_version: Some(input.buffer_version),
-            correlation_id: input.event_context.correlation_id,
-            causality_id: input.event_context.causality_id,
-            cancellation_token: Some(CancellationTokenId(uuid::Uuid::now_v7())),
-            privacy_scope: SemanticPrivacyScope::Workspace,
-            issued_at: TimestampMillis::now(),
-            schema_version: 1,
-        };
-        let proposal = legion_protocol::convert_lsp_edit_to_workspace_proposal(
-            LspEditProposalConversionInput {
-                proposal_id,
-                principal: input.principal.clone(),
-                capability,
-                request,
-                workspace_edit,
-                preconditions,
-                lifecycle_state: ProposalLifecycleState::Created,
-                privacy_label: legion_protocol::ProposalPrivacyLabel::WorkspaceMetadata,
-                preview: PreviewSummary {
-                    summary: title.clone(),
-                    details: vec![
-                        "language_tooling.proposal_preview".to_string(),
-                        format!("buffer_version={}", input.buffer_version.0),
-                        format!("snapshot_id={}", input.snapshot_id.0),
-                    ],
-                },
-                expires_at: None,
-                created_at: TimestampMillis::now(),
-                diagnostics,
-                schema_version: 1,
-            },
-        )
-        .map_err(|error| AppCompositionError::LanguageTooling(format!("{error:?}")))?;
-        self.proposal_coordinator
-            .register_lifecycle_context(proposal.proposal_id, input.event_context);
-        let created = self.proposal_coordinator.created_response(&proposal);
-        if !matches!(created, ProposalResponse::Created(_)) {
-            return Ok(self.language_tooling.record_proposal_failure(
-                &input,
-                kind,
-                format!("{} proposal creation failed: {created:?}", title),
-            ));
-        }
-        let validated = self
-            .proposal_coordinator
-            .handle(ProposalRequest::Validate(proposal.clone()));
-        if !matches!(validated, Ok(ProposalResponse::Validated(_))) {
-            return Ok(self.language_tooling.record_proposal_failure(
-                &input,
-                kind,
-                format!("{} proposal validation failed: {validated:?}", title),
-            ));
-        }
-        let previewed = self
-            .proposal_coordinator
-            .handle(ProposalRequest::Preview(proposal.clone()));
-        if !matches!(previewed, Ok(ProposalResponse::Previewed { .. })) {
-            return Ok(self.language_tooling.record_proposal_failure(
-                &input,
-                kind,
-                format!("{} proposal preview failed: {previewed:?}", title),
-            ));
-        }
-        Ok(self.language_tooling.record_proposal(
-            &input,
-            kind,
-            proposal.proposal_id,
-            if matches!(kind, LanguageProposalKind::CodeAction) {
-                Some(label.as_str())
-            } else {
-                None
-            },
-            format!("{} proposal preview created", title),
-        ))
-    }
-
     fn run_active_file_structural_search(
         &self,
         query_id: &str,
@@ -29683,6 +30514,7 @@ impl AppComposition {
     ) -> Result<WorkspaceSessionRecord, AppCompositionError> {
         let mut record = capture_workspace_session_record(&self.active_documents, &self.editor)?;
         record.workbench_settings = workbench_settings_record_from_projection(&self.settings);
+        record.language_toolchain_settings = self.language_toolchain_settings.clone();
         record.memory_snapshot_json = Some(
             serde_json::to_string(
                 &self
@@ -29700,6 +30532,10 @@ impl AppComposition {
         record: &WorkspaceSessionRecord,
     ) -> Result<AppSessionRestoreOutcome, AppCompositionError> {
         self.settings = settings_projection_from_workbench_record(&record.workbench_settings);
+        // Restore metadata only. Stored paths remain an unapproved draft until
+        // the operator explicitly configures the toolchain again.
+        self.clear_typescript_toolchain();
+        self.language_toolchain_settings = record.language_toolchain_settings.clone();
         // Apply user-level terminal shell preference from loaded settings.
         self.terminal_workflow
             .set_user_shell_selection(TerminalShellSelection::from_label(
@@ -30125,7 +30961,7 @@ impl AppComposition {
             language_tooling_projection: {
                 // D2: inject live LSP health records from the background session handle.
                 // PKT-LSP-C T3: also inject session lifecycle status (backoff countdown etc).
-                let mut p = self.language_tooling.projection();
+                let mut p = self.language_tooling_projection();
                 if let Some(record) = self.lsp_session.health_record() {
                     p.lsp_health_records.push(record);
                 }
@@ -30579,7 +31415,110 @@ impl AppComposition {
                 );
                 Ok(response)
             }
-            ProposalRequest::Apply(proposal) => self.apply_workspace_proposal(proposal),
+            ProposalRequest::Apply(proposal) => {
+                let proposal_id = proposal.proposal_id;
+                let mixed_command = self.code_action_command_sidecars.take(proposal_id);
+                let command_buffer_id = mixed_command
+                    .as_ref()
+                    .map(|command| command.identity.buffer_id);
+                if let Some(command) = mixed_command.as_ref()
+                    && !self
+                        .lsp_session
+                        .supports_execute_command(&command.command_id)
+                {
+                    return Err(AppCompositionError::Protocol(ProtocolError {
+                        code: "code_action_command_unadvertised".to_string(),
+                        message:
+                            "language server no longer advertises the retained code-action command"
+                                .to_string(),
+                    }));
+                }
+                let requires_mixed_command =
+                    self.proposal_coordinator
+                        .proposal_for_id(proposal_id)
+                        .is_some_and(|canonical| {
+                            canonical.preview.details.iter().any(|detail| {
+                                detail == "language_tooling.code_action_mixed_command"
+                            })
+                        });
+                if requires_mixed_command && mixed_command.is_none() {
+                    return Err(AppCompositionError::Protocol(ProtocolError {
+                        code: "code_action_command_sidecar_missing".to_string(),
+                        message: "mixed code action command authorization is no longer live"
+                            .to_string(),
+                    }));
+                }
+                self.server_apply_edits.expire();
+                let server_apply_edit_proposal = self
+                    .proposal_coordinator
+                    .proposal_for_id(proposal_id)
+                    .is_some_and(|canonical| {
+                        canonical
+                            .preview
+                            .details
+                            .iter()
+                            .any(|detail| detail == "language_tooling.server_apply_edit")
+                    });
+                if server_apply_edit_proposal && !self.server_apply_edits.is_live(proposal_id) {
+                    return Err(AppCompositionError::Protocol(ProtocolError {
+                        code: "workspace_apply_edit_expired".to_string(),
+                        message:
+                            "server-originated workspace/applyEdit proposal is no longer authorized"
+                                .to_string(),
+                    }));
+                }
+                let apply_edit_reply = if server_apply_edit_proposal {
+                    let Some((claim, reply)) = self.server_apply_edits.claim(proposal_id) else {
+                        return Err(AppCompositionError::Protocol(ProtocolError {
+                            code: "workspace_apply_edit_expired".to_string(),
+                            message:
+                                "server-originated workspace/applyEdit proposal is no longer authorized"
+                                    .to_string(),
+                        }));
+                    };
+                    Some((claim, reply))
+                } else {
+                    None
+                };
+                let response = self.apply_workspace_proposal(proposal);
+                if let Some((claim, reply)) = apply_edit_reply {
+                    match &response {
+                        Ok(ProposalResponse::Applied(_)) => {
+                            crate::language::ServerApplyEditAuthority::finish_claimed(
+                                claim,
+                                reply,
+                                true,
+                                String::new(),
+                            )
+                        }
+                        Ok(_) | Err(_) => {
+                            crate::language::ServerApplyEditAuthority::finish_claimed(
+                                claim,
+                                reply,
+                                false,
+                                "workspace/applyEdit proposal was not applied".to_string(),
+                            )
+                        }
+                    }
+                }
+                if let (Ok(ProposalResponse::Applied(_)), Some(command)) =
+                    (&response, mixed_command)
+                {
+                    if let Err(error) = self.issue_code_action_command_sidecar(command) {
+                        if let Some(buffer_id) = command_buffer_id {
+                            if let Some(input) = self.language_request_input_for_failure(buffer_id)
+                            {
+                                let _ = self.language_tooling.record_proposal_failure(
+                                    &input,
+                                    LanguageProposalKind::CodeAction,
+                                    format!("code-action edit applied but command dispatch failed: {error}"),
+                                );
+                            }
+                        }
+                    }
+                }
+                response
+            }
             ProposalRequest::Approve(command) => {
                 self.handle_lifecycle_command_request(ProposalRequest::Approve(command))
             }
@@ -30599,6 +31538,10 @@ impl AppComposition {
         &mut self,
         request: ProposalRequest,
     ) -> Result<ProposalResponse, AppCompositionError> {
+        let terminalizes_server_apply_edit = matches!(
+            &request,
+            ProposalRequest::Reject(_) | ProposalRequest::Cancel(_) | ProposalRequest::Rollback(_)
+        );
         let proposal_id = match &request {
             ProposalRequest::Approve(command)
             | ProposalRequest::Reject(command)
@@ -30614,6 +31557,13 @@ impl AppComposition {
             .proposal_coordinator
             .handle(request)
             .map_err(AppCompositionError::Protocol)?;
+        if terminalizes_server_apply_edit {
+            self.server_apply_edits.finish(
+                proposal_id,
+                false,
+                "workspace/applyEdit proposal was rejected or cancelled".to_string(),
+            );
+        }
         if let Some(proposal) = self.proposal_coordinator.proposal(proposal_id)
             && let Err(failure) = SaveWorkflowService::observe_proposal_response(
                 &mut self.proposal_coordinator,
@@ -31464,6 +32414,7 @@ impl AppComposition {
         if let Ok(record) = self.editor.undo(buffer_id, Some(proposal.correlation_id)) {
             let descriptor = record.to_protocol_descriptor();
             self.emit_transaction_event(&descriptor);
+            self.notify_lsp_did_change(buffer_id, &descriptor);
         }
     }
 
@@ -31615,6 +32566,14 @@ impl AppComposition {
         let buffer_version = self.editor.buffer_version(buffer_id)?;
         let snapshot_id = self.editor.current_snapshot(buffer_id)?.snapshot_id;
         let metadata = self.active_documents.metadata_for_buffer(buffer_id);
+        let fingerprint = metadata.and_then(|metadata| {
+            self.workspace
+                .current_file_fingerprint(
+                    metadata.identity.workspace_id,
+                    &metadata.identity.canonical_path.0,
+                )
+                .ok()
+        });
         Ok(VersionContext {
             file_version: metadata
                 .map(|metadata| metadata.file_content_version)
@@ -31630,7 +32589,7 @@ impl AppComposition {
             workspace_generation: metadata
                 .map(|metadata| metadata.workspace_generation)
                 .unwrap_or(WorkspaceGeneration(0)),
-            fingerprint: metadata.map(|metadata| metadata.fingerprint.clone()),
+            fingerprint,
             file_length: metadata.and_then(|metadata| metadata.file_length),
             modified_at: metadata.and_then(|metadata| metadata.modified_at),
         })
@@ -31896,6 +32855,7 @@ impl AppComposition {
             Ok(record) => {
                 let descriptor = record.to_protocol_descriptor();
                 self.emit_transaction_event(&descriptor);
+                self.notify_lsp_did_change(buffer_id, &descriptor);
                 Ok(())
             }
             Err(err) => Err(self.failed_apply_response(
@@ -32255,6 +33215,11 @@ impl AppComposition {
             {
                 return response;
             }
+        }
+
+        #[cfg(test)]
+        if let Some(hook) = self.workspace_edit_preflight_hook.take() {
+            hook();
         }
 
         let mut committed = Vec::new();
@@ -33829,6 +34794,9 @@ pub fn default_workspace_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    #[path = "workspace_edit_conflict_tests.rs"]
+    mod workspace_edit_conflict_tests;
 
     use super::*;
     use std::fs;

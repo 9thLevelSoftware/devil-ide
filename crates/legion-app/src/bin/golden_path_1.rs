@@ -37,8 +37,9 @@ use legion_app::{
 use legion_editor::{TextEdit, TextPosition, TextRange};
 use legion_lsp::{LspServerProcessConfig, LspStdioLauncher, LspSupervisorConfig};
 use legion_protocol::{
-    BufferId, CapabilityDecisionId, CapabilityId, CausalityId, CorrelationId, FileFingerprint,
-    LanguageId, LanguageServerId, LspConfiguredServerIdentity, LspLaunchPolicyDecision,
+    BufferId, BufferVersion, CancellationTokenId, CapabilityDecisionId, CapabilityId, CausalityId,
+    CorrelationId, FileFingerprint, FileId, LanguageId, LanguageServerId,
+    LspConfiguredServerIdentity, LspLaunchPolicyDecision, LspOperationContext, LspRequestId,
     LspWorkspaceTrustPosture, PrincipalId, RedactionHint, SemanticPrivacyScope,
     TerminalPanelStatusKind, TerminalSessionId, WorkspaceId, WorkspaceRootId, WorkspaceTrustState,
 };
@@ -46,6 +47,25 @@ use legion_ui::{
     CommandDispatchIntent, GitHunkStageProjection, SearchProjection, SearchScopeProjection,
 };
 use uuid::Uuid;
+
+fn golden_lsp_context() -> LspOperationContext {
+    LspOperationContext {
+        request_id: LspRequestId(Uuid::now_v7()),
+        workspace_id: WorkspaceId(7),
+        file_id: FileId(11),
+        buffer_id: BufferId(13),
+        snapshot_id: legion_protocol::SnapshotId(1),
+        buffer_version: BufferVersion(1),
+        language_id: LanguageId("rust".to_string()),
+        correlation_id: CorrelationId(7),
+        causality_id: CausalityId(Uuid::now_v7()),
+        timeout_ms: 5_000,
+        cancellation_token: CancellationTokenId(Uuid::now_v7()),
+        content_hash: None,
+        privacy_scope: SemanticPrivacyScope::Workspace,
+        schema_version: 1,
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Step status
@@ -546,7 +566,7 @@ fn run_s3(
     let initial_pump_started = Instant::now();
     if pull_supported {
         eprintln!("[s3] initial pull (readiness probe) ...");
-        match session.pull_diagnostics(&scratchpad_uri) {
+        match session.pull_diagnostics_with_context(&scratchpad_uri, golden_lsp_context()) {
             Ok(pulled) => eprintln!(
                 "[s3] initial pull done: kind_full={} items={} errors={} elapsed={}ms",
                 pulled.kind_full,
@@ -658,7 +678,7 @@ fn run_s3(
                 break;
             }
             if pull_supported {
-                match session.pull_diagnostics(&scratchpad_uri) {
+                match session.pull_diagnostics_with_context(&scratchpad_uri, golden_lsp_context()) {
                     Ok(pulled) if pulled.kind_full && pulled.error_count > 0 => {
                         eprintln!(
                             "[s3] pull returned error report: items={} errors={}",
@@ -783,7 +803,7 @@ fn run_s3(
                 break;
             }
             if pull_supported {
-                match session.pull_diagnostics(&scratchpad_uri) {
+                match session.pull_diagnostics_with_context(&scratchpad_uri, golden_lsp_context()) {
                     Ok(pulled) if pulled.kind_full && pulled.error_count == 0 => {
                         eprintln!(
                             "[s3] pull returned clean report: items={}",

@@ -1950,6 +1950,7 @@ fn projection_rendering_maps_editor_pointer_to_text_coordinate() {
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(5),
             line_start_utf16_offset: None,
         },
         DesktopCodeLineViewModel {
@@ -1969,6 +1970,7 @@ fn projection_rendering_maps_editor_pointer_to_text_coordinate() {
                 },
             },
             line_start_byte_offset: Some(0),
+            logical_end_byte: Some(10),
             line_start_utf16_offset: None,
         },
     ];
@@ -2018,6 +2020,7 @@ fn projection_rendering_computes_word_and_line_selection_ranges() {
             },
         },
         line_start_byte_offset: Some(0),
+        logical_end_byte: Some(20),
         line_start_utf16_offset: None,
     };
     let word = word_range_for_coordinate(&line, coord(7, 6, 6)).expect("word range");
@@ -2052,6 +2055,7 @@ fn projection_rendering_anchors_drag_selection_at_gesture_start() {
             },
         },
         line_start_byte_offset: Some(0),
+        logical_end_byte: Some(20),
         line_start_utf16_offset: None,
     };
     let old_cursor = coord(20, 0, 0);
@@ -2087,6 +2091,7 @@ fn projection_rendering_drag_coordinates_use_utf8_byte_columns_and_keep_directio
             },
         },
         line_start_byte_offset: Some(0),
+        logical_end_byte: Some(8),
         line_start_utf16_offset: None,
     };
     let anchor = drag_anchor_for_line_pointer(&line, 18.0, egui::vec2(0.0, 0.0), 0.0, 8.0);

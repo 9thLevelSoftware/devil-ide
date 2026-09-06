@@ -37,6 +37,27 @@ use legion_protocol::{
 };
 use uuid::Uuid;
 
+fn fixture_context(
+    snapshot_id: legion_protocol::SnapshotId,
+) -> legion_protocol::LspOperationContext {
+    legion_protocol::LspOperationContext {
+        request_id: legion_protocol::LspRequestId(Uuid::now_v7()),
+        workspace_id: WorkspaceId(7),
+        file_id: legion_protocol::FileId(11),
+        buffer_id: legion_protocol::BufferId(13),
+        snapshot_id,
+        buffer_version: legion_protocol::BufferVersion(1),
+        language_id: LanguageId("rust".to_string()),
+        correlation_id: CorrelationId(7),
+        causality_id: CausalityId(Uuid::now_v7()),
+        timeout_ms: 5_000,
+        cancellation_token: legion_protocol::CancellationTokenId(Uuid::now_v7()),
+        content_hash: None,
+        privacy_scope: SemanticPrivacyScope::Workspace,
+        schema_version: 1,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Support helpers
 // ---------------------------------------------------------------------------
@@ -257,10 +278,11 @@ fn rust_analyzer_full_workflow() {
         "position": { "line": 1, "character": 10 },
     });
     let completion_outcome = session
-        .request_read(
+        .request_read_with_context(
             "textDocument/completion",
             completion_params,
             legion_protocol::SnapshotId(0),
+            Some(fixture_context(legion_protocol::SnapshotId(0))),
         )
         .expect("completion request_read should not error");
     eprintln!(
@@ -282,10 +304,11 @@ fn rust_analyzer_full_workflow() {
         "position": { "line": 1, "character": 7 },
     });
     let hover_outcome = session
-        .request_read(
+        .request_read_with_context(
             "textDocument/hover",
             hover_params,
             legion_protocol::SnapshotId(0),
+            Some(fixture_context(legion_protocol::SnapshotId(0))),
         )
         .expect("hover request_read should not error");
     eprintln!(
@@ -304,10 +327,11 @@ fn rust_analyzer_full_workflow() {
         "position": { "line": 1, "character": 7 },
     });
     let definition_outcome = session
-        .request_read(
+        .request_read_with_context(
             "textDocument/definition",
             definition_params,
             legion_protocol::SnapshotId(0),
+            Some(fixture_context(legion_protocol::SnapshotId(0))),
         )
         .expect("definition request_read should not error");
     eprintln!(
@@ -329,10 +353,11 @@ fn rust_analyzer_full_workflow() {
         "context": { "includeDeclaration": true },
     });
     let references_outcome = session
-        .request_read(
+        .request_read_with_context(
             "textDocument/references",
             references_params,
             legion_protocol::SnapshotId(0),
+            Some(fixture_context(legion_protocol::SnapshotId(0))),
         )
         .expect("references request_read should not error");
     eprintln!(
@@ -351,10 +376,11 @@ fn rust_analyzer_full_workflow() {
         "options": { "tabSize": 4, "insertSpaces": true },
     });
     let formatting_outcome = session
-        .request_read(
+        .request_read_with_context(
             "textDocument/formatting",
             formatting_params,
             legion_protocol::SnapshotId(0),
+            Some(fixture_context(legion_protocol::SnapshotId(0))),
         )
         .expect("formatting request_read should not error");
     eprintln!(
@@ -382,10 +408,11 @@ fn rust_analyzer_full_workflow() {
         "newName": "add_renamed",
     });
     let rename_outcome = session
-        .request_read(
+        .request_read_with_context(
             "textDocument/rename",
             rename_params,
             legion_protocol::SnapshotId(0),
+            Some(fixture_context(legion_protocol::SnapshotId(0))),
         )
         .expect("rename request_read should not fail at the transport layer");
     eprintln!(

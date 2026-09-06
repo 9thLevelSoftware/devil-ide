@@ -29,6 +29,7 @@ fn line(
             },
         },
         line_start_byte_offset: origin,
+        logical_end_byte: Some(origin.unwrap_or(0) + text.len() as u64),
         line_start_utf16_offset: None,
     }
 }

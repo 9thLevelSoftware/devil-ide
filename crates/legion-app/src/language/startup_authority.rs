@@ -12,6 +12,7 @@ use std::{
 
 use legion_lsp::{
     LanguageServerAdapterPlan, LspServerBinarySource, LspServerProcessConfig, LspSupervisorConfig,
+    node_compatible_path,
 };
 use legion_platform::NativeProcessService;
 use legion_protocol::{
@@ -24,6 +25,7 @@ use legion_protocol::{
 use legion_security::DenyByDefaultBroker;
 use sha2::{Digest, Sha256};
 
+use super::typescript_bundle::TypeScriptBundleDescriptor;
 use super::{
     ApprovedNodeRuntime, ArtifactDescriptor, ArtifactSource, LanguageArtifactMaterializer,
     LanguageServerLaunchConfig, LanguageServerStartConfig, LanguageSessionError,
@@ -59,6 +61,158 @@ pub struct LanguageStartupAuthority {
 }
 
 impl LanguageStartupAuthority {
+    /// Materialize both pinned TypeScript archives and bind a fresh Node
+    /// receipt to one launch preparation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_typescript_bundle(
+        &self,
+        context: &LanguageStartupContext,
+        bundle: &TypeScriptBundleDescriptor,
+        server_archive: &Path,
+        compiler_archive: &Path,
+        node_path: &Path,
+        cache_root: &Path,
+        cancellation: Arc<AtomicBool>,
+        root_uri: String,
+        language_id: LanguageId,
+        server_id: LanguageServerId,
+    ) -> Result<LanguageServerStartConfig, LanguageSessionError> {
+        validate_context(context)?;
+        if !matches!(
+            language_id.0.as_str(),
+            "typescript" | "typescriptreact" | "javascript" | "javascriptreact"
+        ) {
+            return Err(invalid(
+                "TypeScript bundle requires a TypeScript-family language",
+            ));
+        }
+        let node_path = std::fs::canonicalize(node_path)
+            .map_err(|e| invalid(format!("Node executable is invalid: {e}")))?;
+        if !node_path.is_file() {
+            return Err(invalid("Node executable must be a regular file"));
+        }
+        let runtime_request = NodeRuntimeApprovalRequest {
+            executable: node_path,
+            principal_id: context.principal_id.clone(),
+            workspace_id: context.workspace_id,
+            workspace_trust_state: context.trust.clone(),
+            correlation_id: context.correlation_id,
+            causality_id: context.causality_id,
+            minimum_version: match &bundle.server.runtime {
+                legion_lsp::LspArtifactRuntime::Node { minimum_version } => *minimum_version,
+            },
+        };
+        let token = super::CancellationToken::from_atomic(Arc::clone(&cancellation));
+        let materialize = |descriptor: &ArtifactDescriptor, archive: &Path| {
+            let request = MaterializeRequest {
+                descriptor: descriptor.clone(),
+                source: ArtifactSource::LocalArchive {
+                    path: archive.to_path_buf(),
+                },
+                operation_id: context.correlation_id.0 as u128,
+                correlation_id: context.correlation_id,
+                causality_id: context.causality_id,
+                trusted: true,
+                cache_root: cache_root.to_path_buf(),
+                deadline: std::time::Duration::from_secs(600),
+            };
+            LanguageArtifactMaterializer::materialize_with_cancellation(&request, &token)
+                .map_err(|e| invalid(e.to_string()))
+        };
+        let server = materialize(&bundle.server, server_archive)
+            .map_err(|error| invalid(format!("server archive materialization failed: {error}")))?;
+        let compiler = materialize(&bundle.compiler, compiler_archive).map_err(|error| {
+            invalid(format!("compiler archive materialization failed: {error}"))
+        })?;
+        LanguageArtifactMaterializer::revalidate_materialized_artifact(
+            &server,
+            &bundle.server,
+            &token,
+        )
+        .map_err(|e| invalid(e.to_string()))?;
+        LanguageArtifactMaterializer::revalidate_materialized_artifact(
+            &compiler,
+            &bundle.compiler,
+            &token,
+        )
+        .map_err(|e| invalid(e.to_string()))?;
+        let node = super::approve_node_runtime(
+            &*self.broker,
+            &NativeProcessService,
+            runtime_request,
+            Arc::clone(&cancellation),
+        )
+        .map_err(|e| invalid(e.to_string()))?;
+        let server_entrypoint = server
+            .cache_root
+            .join(&bundle.server.package_root)
+            .join(&bundle.server.entrypoint);
+        let compiler_entrypoint = compiler
+            .cache_root
+            .join(&bundle.compiler.package_root)
+            .join(&bundle.tsserver_entrypoint);
+        let server_entrypoint = server_entrypoint
+            .canonicalize()
+            .map_err(|_| invalid("server entrypoint missing"))?;
+        let compiler_entrypoint = compiler_entrypoint
+            .canonicalize()
+            .map_err(|_| invalid("TypeScript compiler entrypoint missing"))?;
+        let server_cache_root = server
+            .cache_root
+            .canonicalize()
+            .map_err(|_| invalid("server artifact cache root missing"))?;
+        let compiler_cache_root = compiler
+            .cache_root
+            .canonicalize()
+            .map_err(|_| invalid("TypeScript compiler cache root missing"))?;
+        if !server_entrypoint.is_file()
+            || !compiler_entrypoint.is_file()
+            || !server_entrypoint.starts_with(&server_cache_root)
+            || !compiler_entrypoint.starts_with(&compiler_cache_root)
+        {
+            return Err(invalid("TypeScript bundle entrypoint containment failed"));
+        }
+        let process = LspServerProcessConfig {
+            command: node
+                .canonical_path()
+                .to_str()
+                .ok_or_else(|| invalid("Node path is not UTF-8"))?
+                .to_string(),
+            args: vec![
+                node_compatible_path(&server_entrypoint, "server entrypoint")
+                    .map_err(|e| invalid(e.to_string()))?,
+                "--stdio".to_string(),
+            ],
+            cwd: Some(context.workspace_root.clone()),
+            env: Vec::new(),
+        };
+        let compiler_entrypoint_for_node =
+            node_compatible_path(&compiler_entrypoint, "TypeScript compiler entrypoint")
+                .map_err(|e| invalid(e.to_string()))?;
+        let mut config = self.prepare(
+            context,
+            server_id,
+            language_id,
+            "typescript-language-server".to_string(),
+            process,
+            root_uri,
+            LspServerBinaryProvenance::Downloaded,
+            Some(FileFingerprint {
+                algorithm: "sha256".into(),
+                value: server.sha256,
+            }),
+            None,
+            Some(bundle.initialization_options(&compiler_entrypoint_for_node)),
+            None,
+        )?;
+        config.launch_config.version = Some(bundle.server.version.clone());
+        config.launch_config.node_runtime_version = Some(node.observed_version());
+        config.launch_config.artifact_dependencies = vec![FileFingerprint {
+            algorithm: "sha256".into(),
+            value: compiler.sha256,
+        }];
+        Ok(config)
+    }
     /// Creates an authority backed by the app's real capability broker.
     pub fn new(broker: Arc<dyn CapabilityBrokerPort + Send + Sync>) -> Self {
         Self {
@@ -101,6 +255,25 @@ impl LanguageStartupAuthority {
         {
             broker.policy.lsp_policy.allowed_binaries.push(value);
         }
+        Ok(())
+    }
+
+    /// Remove one exact app-language executable approval.
+    pub fn revoke_exact_binary(&self, path: &Path) -> Result<(), LanguageSessionError> {
+        let Some(policy) = &self.policy_store else {
+            return Err(invalid("language policy store is not configurable"));
+        };
+        let value = path
+            .to_str()
+            .ok_or_else(|| invalid("configured binary path is not valid UTF-8"))?;
+        let mut broker = policy
+            .lock()
+            .map_err(|_| invalid("language policy store is poisoned"))?;
+        broker
+            .policy
+            .lsp_policy
+            .allowed_binaries
+            .retain(|entry| entry != value);
         Ok(())
     }
 
@@ -467,7 +640,9 @@ impl LanguageStartupAuthority {
                 language_id,
                 binary_provenance: provenance,
                 artifact_hash,
+                artifact_dependencies: Vec::new(),
                 version: None,
+                node_runtime_version: None,
                 download_decision_id,
             },
             initialization_options,

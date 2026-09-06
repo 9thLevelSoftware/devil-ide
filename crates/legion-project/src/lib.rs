@@ -5350,6 +5350,39 @@ impl WorkspaceActor {
             .map_err(WorkspaceError::Platform)
     }
 
+    /// Read the current disk fingerprint for an existing workspace file.
+    ///
+    /// This deliberately bypasses cached tree metadata: proposal apply
+    /// preflight uses it to detect an external edit made after a file was
+    /// opened or a proposal was previewed.
+    pub fn current_file_fingerprint(
+        &self,
+        workspace_id: WorkspaceId,
+        path: impl AsRef<str>,
+    ) -> WorkspaceResult<ProtocolFileFingerprint> {
+        let state_guard = self
+            .state
+            .lock()
+            .map_err(|_| WorkspaceError::Internal("workspace state lock poisoned"))?;
+        let state = state_guard
+            .as_ref()
+            .ok_or(WorkspaceError::WorkspaceMissing { workspace_id })?;
+        if state.workspace_id != workspace_id {
+            return Err(WorkspaceError::WorkspaceMissing { workspace_id });
+        }
+        let canonical = self.canonicalize_candidate(state, path.as_ref())?;
+        let metadata = self
+            .fs
+            .read_metadata(&canonical)
+            .map_err(WorkspaceError::Platform)?;
+        let fingerprint = if metadata.is_file() {
+            FileFingerprint::from_metadata(&canonical, self.fs.as_ref(), &metadata)?
+        } else {
+            FileFingerprint::from_dir()
+        };
+        Ok(fingerprint.to_protocol())
+    }
+
     /// Read file text through the harness-facing alias.
     pub fn read_workspace_text(
         &self,
