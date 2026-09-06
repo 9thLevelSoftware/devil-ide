@@ -539,6 +539,21 @@ struct SnapshotLeaseRecord {
     descriptor: SnapshotLeaseDescriptor,
 }
 
+/// Bounded logical-line data read through a validated snapshot lease.
+///
+/// The lease descriptor binds the chunk to one immutable snapshot and buffer
+/// version. `line` is a bounded source range and may be iterated by passing
+/// its `end_byte` back to [`EditorEngine::read_snapshot_lease_line_chunk`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotLeaseLineChunk {
+    /// Descriptor for the lease that authorized this read.
+    pub lease: SnapshotLeaseDescriptor,
+    /// Bounded logical-line chunk.
+    pub line: legion_text::TextLineChunk,
+    /// Read DTO schema version.
+    pub schema_version: u16,
+}
+
 /// Drained metadata-only transaction events captured by the editor.
 #[derive(Debug, Clone, Default)]
 pub struct DrainedTransactionEvents {
@@ -1199,6 +1214,68 @@ impl EditorEngine {
             lease: descriptor.clone(),
             chunk: Self::protocol_snapshot_chunk_descriptor(descriptor.snapshot_id, chunk),
             text,
+            schema_version: 1,
+        })
+    }
+
+    /// Read one bounded logical-line chunk through an active snapshot lease.
+    ///
+    /// `start_byte` is an absolute snapshot byte offset. Pass the returned
+    /// `line.end_byte` to continue; the method validates the supplied lease
+    /// descriptor and expiry before touching the retained snapshot.
+    pub fn read_snapshot_lease_line_chunk(
+        &self,
+        expected_lease: &SnapshotLeaseDescriptor,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> Result<SnapshotLeaseLineChunk, EditorError> {
+        self.read_snapshot_lease_line_chunk_at(
+            expected_lease,
+            line,
+            start_byte,
+            max_bytes,
+            TimestampMillis::now(),
+        )
+    }
+
+    fn read_snapshot_lease_line_chunk_at(
+        &self,
+        expected_lease: &SnapshotLeaseDescriptor,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+        now: TimestampMillis,
+    ) -> Result<SnapshotLeaseLineChunk, EditorError> {
+        let lease = self
+            .snapshot_leases
+            .get(&expected_lease.lease_id)
+            .ok_or(EditorError::SnapshotLeaseNotFound(expected_lease.lease_id))?;
+        let descriptor = &lease.descriptor;
+        if now.0 > descriptor.expires_at.0 {
+            return Err(EditorError::SnapshotLeaseExpired {
+                lease_id: expected_lease.lease_id,
+                expired_at: descriptor.expires_at,
+                now,
+            });
+        }
+        if descriptor != expected_lease {
+            return Err(EditorError::SnapshotLeaseStale {
+                lease_id: expected_lease.lease_id,
+                expected_buffer_id: expected_lease.buffer_id,
+                actual_buffer_id: descriptor.buffer_id,
+                expected_snapshot_id: expected_lease.snapshot_id,
+                actual_snapshot_id: descriptor.snapshot_id,
+                expected_buffer_version: expected_lease.buffer_version,
+                actual_buffer_version: descriptor.buffer_version,
+            });
+        }
+        let line = lease
+            .snapshot
+            .line_chunk_from_byte(line, start_byte, max_bytes)?;
+        Ok(SnapshotLeaseLineChunk {
+            lease: descriptor.clone(),
+            line,
             schema_version: 1,
         })
     }
@@ -4959,6 +5036,92 @@ mod tests {
         assert_eq!(chunk.text.len() as u64, chunk.chunk.byte_len);
         assert!(chunk.text.len() < engine.current_snapshot(buffer).unwrap().byte_len);
         assert_eq!(chunk.schema_version, 1);
+    }
+
+    #[test]
+    fn snapshot_lease_reads_huge_line_in_bounded_absolute_chunks() {
+        let mut engine = EditorEngine::new();
+        let text = "🦀".repeat(3 * 1024 * 1024);
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(48), "huge-line.rs", text)
+            .expect("open huge buffer");
+        let lease = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Editor)
+            .expect("lease snapshot");
+        assert!(matches!(
+            engine.text(buffer),
+            Err(EditorError::Text(TextError::FullCacheBudgetExceeded { .. }))
+        ));
+
+        let mut offset = 0;
+        let mut chunks = 0;
+        loop {
+            let payload = engine
+                .read_snapshot_lease_line_chunk(
+                    &lease,
+                    0,
+                    offset,
+                    4096,
+                )
+                .expect("read leased line chunk");
+            assert_eq!(payload.lease, lease);
+            assert_eq!(payload.line.line, 0);
+            assert_eq!(payload.line.start_byte, offset);
+            assert!(payload.line.text.len() <= 4096 + 3);
+            assert!(payload.line.end_byte > offset || payload.line.is_final);
+            chunks += 1;
+            offset = payload.line.end_byte;
+            if payload.line.is_final {
+                assert_eq!(payload.line.end_byte, payload.line.logical_end_byte);
+                break;
+            }
+        }
+        assert!(chunks > 1);
+    }
+
+    #[test]
+    fn snapshot_lease_line_chunk_rejects_stale_and_expired_reads() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(WorkspaceId(1), FileId(49), "line.rs", "abc")
+            .expect("open buffer");
+        let lease = engine
+            .lease_snapshot(buffer, SnapshotConsumerKind::Editor)
+            .expect("lease snapshot");
+        let stale = engine.read_snapshot_lease_line_chunk(
+            &SnapshotLeaseDescriptor {
+                snapshot_id: SnapshotId(0),
+                ..lease.clone()
+            },
+            0,
+            0,
+            8,
+        );
+        assert!(matches!(stale, Err(EditorError::SnapshotLeaseStale { .. })));
+        let wrong_buffer = SnapshotLeaseDescriptor {
+            buffer_id: BufferId(999),
+            ..lease.clone()
+        };
+        assert!(matches!(
+            engine.read_snapshot_lease_line_chunk(&wrong_buffer, 0, 0, 8),
+            Err(EditorError::SnapshotLeaseStale { .. })
+        ));
+        let wrong_version = SnapshotLeaseDescriptor {
+            buffer_version: BufferVersion(99),
+            ..lease.clone()
+        };
+        assert!(matches!(
+            engine.read_snapshot_lease_line_chunk(&wrong_version, 0, 0, 8),
+            Err(EditorError::SnapshotLeaseStale { .. })
+        ));
+        let expired = engine.read_snapshot_lease_line_chunk_at(
+            &lease,
+            0,
+            0,
+            8,
+            TimestampMillis(lease.expires_at.0.saturating_add(1)),
+        );
+        assert!(matches!(expired, Err(EditorError::SnapshotLeaseExpired { .. })));
     }
 
     #[test]

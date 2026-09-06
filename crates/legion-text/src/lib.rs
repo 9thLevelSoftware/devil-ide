@@ -241,6 +241,36 @@ pub struct TextLineSlice {
     pub text: String,
 }
 
+/// A bounded, sequential slice of one logical line.
+///
+/// Unlike [`TextLineSlice`], this value may begin in the middle of a logical
+/// line. The source offsets are absolute within the immutable snapshot, while
+/// the UTF-16 offsets are relative to the logical line start. The text is
+/// limited by the caller's byte budget and is never a whole-line allocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextLineChunk {
+    /// Zero-based logical line number.
+    pub line: usize,
+    /// Absolute start of the logical line.
+    pub line_start_byte: usize,
+    /// Absolute exclusive end of the logical line content.
+    pub logical_end_byte: usize,
+    /// Absolute start of this bounded chunk.
+    pub start_byte: usize,
+    /// Absolute exclusive end of this bounded chunk.
+    pub end_byte: usize,
+    /// UTF-16 offset of `start_byte` relative to the logical line start.
+    pub start_utf16: usize,
+    /// UTF-16 offset of `end_byte` relative to the logical line start.
+    pub end_utf16: usize,
+    /// Logical line ending byte width: `0`, `1`, or `2`.
+    pub line_ending_bytes: usize,
+    /// Whether this chunk reaches the logical line content end.
+    pub is_final: bool,
+    /// Bounded UTF-8 source text.
+    pub text: String,
+}
+
 /// A bounded immutable window around a caret within one logical line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextWindow {
@@ -451,6 +481,17 @@ impl TextSnapshot {
         self.line_index.line_slice(line, max_bytes)
     }
 
+    /// Read one bounded chunk of a logical line from an absolute byte offset.
+    pub fn line_chunk_from_byte(
+        &self,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> TextResult<TextLineChunk> {
+        self.line_index
+            .line_chunk_from_byte(line, start_byte, max_bytes)
+    }
+
     /// Return a bounded UTF-8 window centered around an absolute caret byte offset.
     ///
     /// The window never crosses a logical line ending or exceeds `max_bytes`. Text is extracted
@@ -646,6 +687,14 @@ pub enum TextError {
         requested: usize,
         /// Maximum permitted window byte budget.
         maximum: usize,
+    },
+    /// The requested chunk budget cannot fit the next UTF-8 scalar.
+    #[error("chunk budget {requested} cannot fit the next UTF-8 scalar requiring {required} bytes")]
+    ChunkBudgetTooSmall {
+        /// Requested chunk byte budget.
+        requested: usize,
+        /// Bytes required for the next scalar.
+        required: usize,
     },
     /// A full-text compatibility operation exceeded the text-model byte budget.
     #[error(
@@ -894,6 +943,17 @@ impl LineIndex {
     pub fn line_slice(&self, line: usize, max_bytes: usize) -> TextResult<TextLineSlice> {
         let metric = self.line(line)?;
         build_line_slice(self.inner.rope.as_ref(), &metric, line, max_bytes)
+    }
+
+    /// Read one bounded chunk of a logical line from an absolute byte offset.
+    pub fn line_chunk_from_byte(
+        &self,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> TextResult<TextLineChunk> {
+        let metric = self.line(line)?;
+        build_line_chunk(self.inner.rope.as_ref(), &metric, line, start_byte, max_bytes)
     }
 
     /// Return the exact logical line range requested by a viewport using an explicit per-line
@@ -1398,6 +1458,17 @@ impl TextBuffer {
         self.line_index.line_slice(line, max_bytes)
     }
 
+    /// Read one bounded chunk of a logical line from an absolute byte offset.
+    pub fn line_chunk_from_byte(
+        &self,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> TextResult<TextLineChunk> {
+        self.line_index
+            .line_chunk_from_byte(line, start_byte, max_bytes)
+    }
+
     /// Return the exact logical line range requested by a viewport using the default per-line
     /// slice budget.
     pub fn visible_line_slices(
@@ -1800,6 +1871,74 @@ fn build_line_slice(
         utf16_len: text.encode_utf16().count(),
         line_ending_bytes: metric.line_ending_bytes,
         truncated: slice_end_byte < metric.content_end_byte,
+        text,
+    })
+}
+
+fn build_line_chunk(
+    rope: &Rope,
+    metric: &LineMetric,
+    line: usize,
+    start_byte: usize,
+    max_bytes: usize,
+) -> TextResult<TextLineChunk> {
+    if !(1..=DEFAULT_LINE_SLICE_MAX_BYTES).contains(&max_bytes) {
+        return Err(TextError::InvalidWindowBudget {
+            requested: max_bytes,
+            maximum: DEFAULT_LINE_SLICE_MAX_BYTES,
+        });
+    }
+    if start_byte < metric.start_byte || start_byte > metric.content_end_byte {
+        return Err(TextError::InvalidRange {
+            start: start_byte,
+            end: metric.content_end_byte,
+        });
+    }
+    let boundary = rope.char_to_byte(rope.byte_to_char(start_byte));
+    if boundary != start_byte {
+        return Err(TextError::NotUtf8Boundary { offset: start_byte });
+    }
+    let end_byte = if start_byte == metric.content_end_byte {
+        start_byte
+    } else {
+        let remaining = metric.content_end_byte.saturating_sub(start_byte);
+        let budget = remaining.min(max_bytes);
+        let candidate = floor_char_boundary(rope, start_byte.saturating_add(budget));
+        if candidate > start_byte {
+            candidate.min(metric.content_end_byte)
+        } else {
+            let next = next_char_boundary_after(rope, start_byte).min(metric.content_end_byte);
+            let required = next.saturating_sub(start_byte);
+            if required > max_bytes {
+                return Err(TextError::ChunkBudgetTooSmall {
+                    requested: max_bytes,
+                    required,
+                });
+            }
+            next
+        }
+    };
+    if end_byte <= start_byte && start_byte < metric.content_end_byte {
+        return Err(TextError::InvalidRange {
+            start: start_byte,
+            end: end_byte,
+        });
+    }
+    let text = rope_string_from_byte_range(rope, start_byte, end_byte);
+    Ok(TextLineChunk {
+        line,
+        line_start_byte: metric.start_byte,
+        logical_end_byte: metric.content_end_byte,
+        start_byte,
+        end_byte,
+        start_utf16: rope
+            .char_to_utf16_cu(rope.byte_to_char(start_byte))
+            .saturating_sub(rope.char_to_utf16_cu(rope.byte_to_char(metric.start_byte))),
+        end_utf16: rope
+            .char_to_utf16_cu(rope.byte_to_char(end_byte))
+            .saturating_sub(rope.char_to_utf16_cu(rope.byte_to_char(metric.start_byte))),
+        line_ending_bytes: metric.line_ending_bytes,
+        is_final: end_byte == metric.content_end_byte,
         text,
     })
 }
@@ -2661,6 +2800,111 @@ mod tests {
         assert!(matches!(
             buf.try_full_text(),
             Err(TextError::FullCacheBudgetExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn line_chunks_iterate_huge_single_line_without_full_text_materialization() {
+        let text = "🦀".repeat(DEFAULT_FULL_CACHE_BYTE_BUDGET_BYTES / 2 + 2048);
+        let snapshot = TextSnapshot::try_new(text).unwrap();
+        assert!(matches!(
+            snapshot.try_full_text(),
+            Err(TextError::FullCacheBudgetExceeded { .. })
+        ));
+
+        let mut offset = 0;
+        let mut chunks = 0;
+        let mut total = 0;
+        loop {
+            let chunk = snapshot
+                .line_chunk_from_byte(0, offset, 4096)
+                .expect("bounded line chunk");
+            assert!(chunk.text.len() <= 4096 + 3);
+            assert!(chunk.end_byte > offset || chunk.is_final);
+            assert_eq!(chunk.start_byte, offset);
+            assert_eq!(chunk.start_utf16 * 2, chunk.start_byte);
+            assert_eq!(chunk.end_utf16 * 2, chunk.end_byte);
+            total += chunk.text.len();
+            chunks += 1;
+            offset = chunk.end_byte;
+            if chunk.is_final {
+                break;
+            }
+        }
+        assert!(chunks > 1);
+        assert_eq!(total, snapshot.len());
+    }
+
+    #[test]
+    fn line_chunk_rejects_non_boundary_and_invalid_budget() {
+        let snapshot = TextSnapshot::try_new("a🦀b").unwrap();
+        assert!(matches!(
+            snapshot.line_chunk_from_byte(0, 2, 8),
+            Err(TextError::NotUtf8Boundary { offset: 2 })
+        ));
+        assert!(matches!(
+            snapshot.line_chunk_from_byte(0, 0, 0),
+            Err(TextError::InvalidWindowBudget { requested: 0, .. })
+        ));
+        for budget in 1..=3 {
+            assert!(matches!(
+                snapshot.line_chunk_from_byte(0, 1, budget),
+                Err(TextError::ChunkBudgetTooSmall {
+                    requested,
+                    required: 4
+                }) if requested == budget
+            ));
+        }
+        let ascii = TextSnapshot::try_new("ab").unwrap();
+        let chunk = ascii.line_chunk_from_byte(0, 0, 1).unwrap();
+        assert_eq!(chunk.text, "a");
+    }
+
+    #[test]
+    fn line_chunks_preserve_empty_lines_crlf_and_mixed_utf16_offsets() {
+        let snapshot = TextSnapshot::try_new("a\r\n\r\n").unwrap();
+        let first_empty = snapshot.line_chunk_from_byte(1, 3, 8).unwrap();
+        let trailing_empty = snapshot.line_chunk_from_byte(2, 5, 8).unwrap();
+        assert!(first_empty.is_final && first_empty.text.is_empty());
+        assert_eq!(first_empty.line_ending_bytes, 2);
+        assert!(trailing_empty.is_final && trailing_empty.text.is_empty());
+        assert_eq!(trailing_empty.line_ending_bytes, 0);
+
+        let mixed = TextSnapshot::try_new("prefix\né🦀").unwrap();
+        let chunk = mixed.line_chunk_from_byte(1, 7, 96).unwrap();
+        assert_eq!(chunk.line_start_byte, 7);
+        assert_eq!(chunk.start_utf16, 0);
+        assert_eq!(chunk.end_utf16, 3);
+        assert_eq!(chunk.text, "é🦀");
+    }
+
+    #[test]
+    fn line_chunk_keeps_exact_budget_across_utf8_boundary_and_rejects_ranges() {
+        let limit = DEFAULT_LINE_SLICE_MAX_BYTES;
+        let text = format!("{}🦀z", "a".repeat(limit - 2));
+        let snapshot = TextSnapshot::try_new(text).unwrap();
+        let first = snapshot.line_chunk_from_byte(0, 0, limit).unwrap();
+        assert_eq!(first.text.len(), limit - 2);
+        assert_eq!(first.end_byte, limit - 2);
+        assert!(first.text.len() <= limit);
+        let second = snapshot
+            .line_chunk_from_byte(0, first.end_byte, limit)
+            .unwrap();
+        assert_eq!(second.text, "🦀z");
+        assert!(second.is_final);
+
+        assert!(matches!(
+            snapshot.line_chunk_from_byte(99, 0, 8),
+            Err(TextError::LineOutOfBounds { .. })
+        ));
+        let offset_snapshot = TextSnapshot::try_new("prefix\nabc").unwrap();
+        assert!(matches!(
+            offset_snapshot.line_chunk_from_byte(1, 0, 8),
+            Err(TextError::InvalidRange { .. })
+        ));
+        assert!(matches!(
+            snapshot.line_chunk_from_byte(0, snapshot.len() + 1, 8),
+            Err(TextError::InvalidRange { .. })
         ));
     }
 
