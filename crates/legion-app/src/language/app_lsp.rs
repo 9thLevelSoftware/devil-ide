@@ -1990,8 +1990,16 @@ fn startup_configured_session(
             "workspace root is not a directory".to_string(),
         ));
     }
-    let expected_root_uri = path_to_file_uri(&canonical_root);
-    if config.root_uri != expected_root_uri {
+    // Compare after filesystem canonicalize. macOS `/var` vs `/private/var`
+    // and Windows `\\?\` prefixes produce different URI spellings for the
+    // same directory; a string compare of those spellings refused Live.
+    let incoming_root = crate::uri_to_canonical_path(&config.root_uri);
+    let incoming_canonical = std::fs::canonicalize(&incoming_root).map_err(|error| {
+        LanguageSessionError::InvalidConfiguration(format!(
+            "root_uri cannot be canonicalized: {error}"
+        ))
+    })?;
+    if incoming_canonical != canonical_root {
         return Err(LanguageSessionError::InvalidConfiguration(
             "root_uri does not match the configured workspace root".to_string(),
         ));

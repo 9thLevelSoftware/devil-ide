@@ -166,7 +166,10 @@ fn a_references_request_now_reaches_the_server_and_comes_back() {
         utf16_offset: None,
     };
     assert!(
-        app.issue_lsp_references_request(buffer_id, position, true),
+        lsp_mock::wait_until(|| {
+            app.drain_lsp_session();
+            app.issue_lsp_references_request(buffer_id, position, true)
+        }),
         "the capability gate refused the request; before the parser fix this is \
          exactly where references died, silently, for every workspace"
     );

@@ -137,6 +137,27 @@ fn live_app() -> LiveApp {
         "the mock session reached Live without synchronizing the open buffer"
     );
 
+    // Live + didOpen is still not enough: prepare is capability-gated and
+    // an empty health list fail-closes. Wait until the handshake published
+    // `callHierarchyProvider` or Incoming looks like a silent "nobody".
+    let mut capable = false;
+    for _ in 0..MAX_POLLS {
+        app.drain_lsp_session();
+        if app.lsp_server_health_record().is_some_and(|health| {
+            health.capabilities.iter().any(|capability| {
+                capability.capability == "callHierarchyProvider" && capability.supported
+            })
+        }) {
+            capable = true;
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    assert!(
+        capable,
+        "the mock session reached Live without advertising callHierarchyProvider"
+    );
+
     LiveApp {
         app,
         buffer_id,
@@ -163,9 +184,27 @@ impl LiveApp {
                 position: caret(),
             },
         };
-        self.app
-            .dispatch_ui_intent(intent)
-            .expect("call-hierarchy intent dispatches");
+        for _ in 0..MAX_POLLS {
+            self.app.drain_lsp_session();
+            self.app
+                .dispatch_ui_intent(intent.clone())
+                .expect("call-hierarchy intent dispatches");
+            if self
+                .app
+                .language_tooling_projection()
+                .call_hierarchy_awaiting
+            {
+                return;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        let projection = self.app.language_tooling_projection();
+        panic!(
+            "the call-hierarchy question was never issued; the cap-one worker \
+             queue may still have held didOpen. direction={direction:?} \
+             awaiting={} status={:?} message={:?}",
+            projection.call_hierarchy_awaiting, projection.status, projection.status_message,
+        );
     }
 
     /// Drain until rows arrive, then return them with the direction stamped on

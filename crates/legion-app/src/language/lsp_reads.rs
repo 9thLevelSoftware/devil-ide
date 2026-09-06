@@ -1660,8 +1660,10 @@ impl AppComposition {
                 self.active_documents
                     .metadata_for_buffer(*buffer_id)
                     .is_some_and(|metadata| {
-                        crate::canonical_path_to_uri(&metadata.identity.canonical_path.0)
-                            == normalized_uri
+                        crate::lsp_file_uris_refer_to_same_document(
+                            &normalized_uri,
+                            &crate::canonical_path_to_uri(&metadata.identity.canonical_path.0),
+                        )
                     })
             })
         else {

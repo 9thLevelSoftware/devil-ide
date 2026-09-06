@@ -160,8 +160,14 @@ fn document_sync_ledger_coalesces_edits_and_preserves_close_before_reopen() {
 
     drop(receiver);
     app.switch_tab(second_buffer).expect("switch second");
-    let second_path = second.to_string_lossy();
-    let second_uri = crate::canonical_path_to_uri(second_path.as_ref());
+    let second_uri = crate::canonical_path_to_uri(
+        &app.active_documents
+            .metadata_for_buffer(second_buffer)
+            .expect("second buffer metadata")
+            .identity
+            .canonical_path
+            .0,
+    );
     let (offline_receiver, offline_result_guard) = app.set_lsp_request_harness_for_test(health());
     drop(offline_receiver);
     drop(offline_result_guard);

@@ -8723,6 +8723,33 @@ pub(crate) fn normalize_lsp_document_uri(uri: &str) -> Option<String> {
     Some(canonical_path_to_uri(&uri_to_canonical_path(uri)))
 }
 
+/// Return whether two `file://` URIs name the same on-disk document.
+///
+/// Drive-letter and percent-encoding differences are normalized first.
+/// When both paths exist, filesystem canonicalize then equates macOS
+/// `/var` vs `/private/var` and Windows `\\?\` prefixes so a live
+/// server echo cannot drop diagnostics for an open buffer.
+pub(crate) fn lsp_file_uris_refer_to_same_document(left: &str, right: &str) -> bool {
+    let Some(left) = normalize_lsp_document_uri(left) else {
+        return false;
+    };
+    let Some(right) = normalize_lsp_document_uri(right) else {
+        return false;
+    };
+    if left == right {
+        return true;
+    }
+    let left_path = uri_to_canonical_path(&left);
+    let right_path = uri_to_canonical_path(&right);
+    match (
+        std::fs::canonicalize(&left_path),
+        std::fs::canonicalize(&right_path),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 fn percent_decode_uri_path(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -8805,6 +8832,30 @@ mod uri_to_canonical_path_tests {
             uri_to_canonical_path("file:///tmp/WS/src/Main.rs"),
             "/tmp/WS/src/Main.rs"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_and_canonical_file_uris_name_the_same_document() {
+        use super::{canonical_path_to_uri, lsp_file_uris_refer_to_same_document};
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let real_dir = root.path().join("real");
+        std::fs::create_dir(&real_dir).expect("mkdir real");
+        let file = real_dir.join("main.ts");
+        std::fs::write(&file, "const value = 1;\n").expect("write");
+        let alias_dir = root.path().join("alias");
+        symlink(&real_dir, &alias_dir).expect("symlink");
+        let alias_file = alias_dir.join("main.ts");
+
+        let real_uri = canonical_path_to_uri(&file.to_string_lossy());
+        let alias_uri = canonical_path_to_uri(&alias_file.to_string_lossy());
+        assert_ne!(
+            real_uri, alias_uri,
+            "the test must exercise two different URI spellings"
+        );
+        assert!(lsp_file_uris_refer_to_same_document(&real_uri, &alias_uri));
     }
 }
 
@@ -17722,6 +17773,8 @@ impl AppComposition {
     /// worker.
     fn language_startup_inputs(&self) -> Option<LanguageStartupInputs> {
         let root = self.active_documents.workspace_root_path.clone()?;
+        let canonical_root = std::fs::canonicalize(&root).unwrap_or_else(|_| PathBuf::from(&root));
+        let canonical_root_str = canonical_root.to_string_lossy().into_owned();
         let opened = self.active_documents.opened_workspace.clone()?;
         let principal_id = self.active_documents.active_principal_id.clone()?;
         let trust = self
@@ -17758,7 +17811,7 @@ impl AppComposition {
                 .cloned()?;
             let mut process = adapter.process.clone();
             process.command = configured_path.to_str()?.to_string();
-            process.cwd = Some(PathBuf::from(root.clone()));
+            process.cwd = Some(canonical_root.clone());
             LanguageStartupSelection::Configured(process)
         };
         Some(LanguageStartupInputs {
@@ -17767,7 +17820,7 @@ impl AppComposition {
             context: crate::language::LanguageStartupContext {
                 workspace_id: opened.workspace_id,
                 root_id: opened.root_id,
-                workspace_root: PathBuf::from(root.clone()),
+                workspace_root: canonical_root,
                 principal_id,
                 trust,
                 correlation_id: CorrelationId(1),
@@ -17777,7 +17830,7 @@ impl AppComposition {
             language_id,
             display_name: adapter.display_name.clone(),
             selection,
-            root_uri: canonical_path_to_uri(&root),
+            root_uri: canonical_path_to_uri(&canonical_root_str),
         })
     }
 
