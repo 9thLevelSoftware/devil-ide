@@ -624,10 +624,11 @@ impl FontFace {
         let prepared = Self::prepare_glyph_metrics(glyph_info, chr, metrics, h_pos)
             .expect("valid glyph id was checked above");
 
-        let entry = match self
-            .glyph_alloc_cache
-            .entry(GlyphCacheKey::new(prepared.glyph_id, metrics, prepared.bin))
-        {
+        let entry = match self.glyph_alloc_cache.entry(GlyphCacheKey::new(
+            prepared.glyph_id,
+            metrics,
+            prepared.bin,
+        )) {
             std::collections::hash_map::Entry::Occupied(glyph_alloc) => {
                 let mut glyph_alloc = *glyph_alloc.get();
                 glyph_alloc.id = prepared.glyph_id;
@@ -894,8 +895,10 @@ mod tests {
                 .expect("thin-space glyph is valid")
                 .advance_width_px
         );
-        assert!(FontFace::prepare_glyph_metrics(GlyphInfo::INVISIBLE, '\u{200B}', &metrics, 2.0)
-            .is_none());
+        assert!(
+            FontFace::prepare_glyph_metrics(GlyphInfo::INVISIBLE, '\u{200B}', &metrics, 2.0)
+                .is_none()
+        );
     }
 
     #[test]
@@ -925,12 +928,17 @@ mod tests {
         let mut atlas = TextureAtlas::new([1024, 1024], TextOptions::default());
 
         for (chr, h_pos) in [('A', -0.2), ('\t', 1.3), ('\u{2009}', 2.7)] {
-            let info = face.glyph_info(chr).expect("fixture character has glyph info");
+            let info = face
+                .glyph_info(chr)
+                .expect("fixture character has glyph info");
             let expected = FontFace::prepare_glyph_metrics(info, chr, &metrics, h_pos)
                 .expect("visible fixture character has a glyph id");
             let (cold, cold_x) = face.allocate_glyph(&mut atlas, &metrics, info, chr, h_pos);
             let (warm, warm_x) = face.allocate_glyph(&mut atlas, &metrics, info, chr, h_pos);
-            assert_eq!(cold, warm, "allocation changed between cold and warm for {chr:?}");
+            assert_eq!(
+                cold, warm,
+                "allocation changed between cold and warm for {chr:?}"
+            );
             assert_eq!(cold_x, warm_x);
             assert_eq!(cold.id, expected.glyph_id);
             assert_eq!(cold.advance_width_px, expected.advance_width_px);

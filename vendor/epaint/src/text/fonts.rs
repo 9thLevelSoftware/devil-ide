@@ -3,7 +3,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -18,6 +18,19 @@ use crate::{
     },
 };
 use emath::{NumExt as _, OrderedFloat};
+
+/// Monotonic identity for atlas-backed layout data. Bare pointer addresses are
+/// unsuitable here because an allocator may reuse an old atlas address while
+/// render caches still retain its epoch.
+static NEXT_LAYOUT_EPOCH: AtomicUsize = AtomicUsize::new(1);
+
+fn next_layout_epoch() -> usize {
+    NEXT_LAYOUT_EPOCH
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |epoch| {
+            epoch.checked_add(1)
+        })
+        .unwrap_or_else(|_| panic!("font layout epoch exhausted"))
+}
 
 #[cfg(feature = "default_fonts")]
 use epaint_default_fonts::{EMOJI_ICON, HACK_REGULAR, NOTO_EMOJI_REGULAR, UBUNTU_LIGHT};
@@ -633,6 +646,16 @@ impl FontsView<'_> {
         &self.fonts.definitions
     }
 
+    /// Capture the immutable font state needed by a background metric worker.
+    ///
+    /// The snapshot owns the font definitions (whose font bytes are shared by
+    /// `Arc`) and never borrows this view or its atlas. It deliberately does
+    /// not capture source text; callers must continue to provide bounded
+    /// chunks to the resulting engine.
+    pub fn metric_snapshot(&self) -> MetricFontSnapshot {
+        MetricFontSnapshot::from_view(self)
+    }
+
     /// The full font atlas image.
     #[inline]
     pub fn image(&self) -> crate::ColorImage {
@@ -643,6 +666,14 @@ impl FontsView<'_> {
     /// Pass this to [`crate::Tessellator`].
     pub fn font_image_size(&self) -> [usize; 2] {
         self.fonts.atlas.size()
+    }
+
+    /// Stable epoch for atlas-backed layout data.
+    ///
+    /// The epoch changes when the font implementation and atlas are recreated,
+    /// so renderer caches must discard glyph UVs from the previous epoch.
+    pub fn layout_identity_epoch(&self) -> usize {
+        self.fonts.layout_epoch
     }
 
     /// Width of this character in points.
@@ -870,11 +901,131 @@ impl FontsView<'_> {
 
 // ----------------------------------------------------------------------------
 
+/// Owned, atlas-independent font state for background text measurement.
+///
+/// Cloning a snapshot shares the metric identity and the font byte storage,
+/// while retaining the exact text options and scale captured from the view.
+/// The snapshot contains no source text and no live atlas borrow.
+#[derive(Clone)]
+pub struct MetricFontSnapshot {
+    options: TextOptions,
+    definitions: FontDefinitions,
+    pixels_per_point: f32,
+    metric_identity: Arc<()>,
+}
+
+impl MetricFontSnapshot {
+    /// Capture the metric state of a UI font view without borrowing it.
+    pub fn from_view(view: &FontsView<'_>) -> Self {
+        Self {
+            options: *view.options(),
+            definitions: view.definitions().clone(),
+            pixels_per_point: view.pixels_per_point,
+            metric_identity: view.fonts.metric_identity(),
+        }
+    }
+
+    /// Recreate a private metric engine with the same font and metric identity.
+    ///
+    /// The engine owns an internal atlas because `FontsImpl` also owns the
+    /// font-face cache, but exposes only the atlas-independent layout kernels.
+    pub fn create_engine(&self) -> MetricFontEngine {
+        MetricFontEngine {
+            fonts: FontsImpl::new_with_metric_identity(
+                self.options,
+                self.definitions.clone(),
+                Some(Arc::clone(&self.metric_identity)),
+            ),
+            pixels_per_point: self.pixels_per_point,
+        }
+    }
+
+    /// The scale captured by this snapshot.
+    pub fn pixels_per_point(&self) -> f32 {
+        self.pixels_per_point
+    }
+}
+
+/// Private-font-cache engine exposing only bounded, atlas-independent layout.
+///
+/// The engine is intended to be moved to a worker thread. Its atlas and font
+/// cache are private implementation details; atlas replay remains an operation
+/// on the live [`FontsView`].
+pub struct MetricFontEngine {
+    fonts: FontsImpl,
+    pixels_per_point: f32,
+}
+
+impl MetricFontEngine {
+    /// Scan a bounded unwrapped chunk for exact glyph metrics.
+    pub fn layout_unwrapped_metrics_chunk(
+        &mut self,
+        format: TextFormat,
+        source_key: u128,
+        chunk_start_byte: u64,
+        chunk: &str,
+        is_final_chunk: bool,
+        continuation: Option<MetricLayoutContinuation>,
+        max_output_glyphs: usize,
+    ) -> Result<MetricGlyphBatch, MetricLayoutError> {
+        let identity = self.fonts.metric_identity();
+        super::text_layout::layout_unwrapped_metrics_chunk(
+            &mut self.fonts,
+            self.pixels_per_point,
+            identity,
+            format,
+            source_key,
+            chunk_start_byte,
+            chunk,
+            is_final_chunk,
+            continuation,
+            max_output_glyphs,
+        )
+    }
+
+    /// Discover bounded wrapped row descriptors from a completed metric pass.
+    pub fn layout_wrapped_row_chunk(
+        &mut self,
+        format: TextFormat,
+        source_key: u128,
+        chunk_start_byte: u64,
+        chunk: &str,
+        is_final_chunk: bool,
+        paragraph_span: std::ops::Range<u64>,
+        metric_summary: super::text_layout::MetricLayoutSummary,
+        wrap_width: f32,
+        break_anywhere: bool,
+        continuation: Option<WrappedRowContinuation>,
+        max_output_rows: usize,
+    ) -> Result<WrappedRowBatch, WrappedRowError> {
+        let identity = self.fonts.metric_identity();
+        super::text_layout::layout_wrapped_row_chunk(
+            &mut self.fonts,
+            self.pixels_per_point,
+            identity,
+            format,
+            source_key,
+            chunk_start_byte,
+            chunk,
+            is_final_chunk,
+            paragraph_span,
+            metric_summary,
+            wrap_width,
+            break_anywhere,
+            continuation,
+            max_output_rows,
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+
 /// The collection of fonts used by `epaint`.
 ///
 /// Required in order to paint text.
 pub struct FontsImpl {
     identity: Arc<()>,
+    layout_epoch: usize,
     metric_identity: Arc<()>,
     definitions: FontDefinitions,
     atlas: TextureAtlas,
@@ -918,6 +1069,7 @@ impl FontsImpl {
 
         Self {
             identity: Arc::new(()),
+            layout_epoch: next_layout_epoch(),
             metric_identity: metric_identity.unwrap_or_else(|| Arc::new(())),
             definitions,
             atlas,
@@ -1441,5 +1593,227 @@ mod tests {
 
         let width = view.glyph_width(&FontId::new(12.0, FontFamily::Proportional), ' ');
         assert_eq!(width, 0.0);
+    }
+
+    #[test]
+    fn layout_identity_epoch_is_unique_across_recreation() {
+        let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let mut previous = fonts.with_pixels_per_point(1.0).layout_identity_epoch();
+
+        for index in 0..8 {
+            let mut options = TextOptions::default();
+            options.max_texture_side += index + 1;
+            fonts.begin_pass(options);
+            let current = fonts.with_pixels_per_point(1.0).layout_identity_epoch();
+            assert!(
+                current > previous,
+                "atlas recreation must receive a fresh monotonic epoch"
+            );
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn metric_snapshot_is_send_and_preserves_metric_geometry_on_worker() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<MetricFontSnapshot>();
+        assert_send_sync::<MetricFontEngine>();
+        assert_send_sync::<MetricGlyphBatch>();
+        assert_send_sync::<WrappedRowBatch>();
+
+        let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let pixels_per_point = 1.3;
+        let mut view = fonts.with_pixels_per_point(pixels_per_point);
+        let format = TextFormat {
+            font_id: FontId::proportional(14.0),
+            extra_letter_spacing: -0.2,
+            ..TextFormat::default()
+        };
+        let source = "AV e\u{301}🙂 fallback words";
+        let first_split = source.find('🙂').expect("unicode split") as u64;
+        let second_split = source.find(" fallback").expect("word split") as u64;
+        let chunks = vec![
+            (0_u64, source[..first_split as usize].to_owned()),
+            (
+                first_split,
+                source[first_split as usize..second_split as usize].to_owned(),
+            ),
+            (second_split, source[second_split as usize..].to_owned()),
+        ];
+        let snapshot = view.metric_snapshot();
+        let worker_format = format.clone();
+        let worker = std::thread::spawn(move || {
+            let mut engine = snapshot.create_engine();
+            let mut metric_continuation = None;
+            let mut metric_glyphs = Vec::new();
+            let mut metric_summary = None;
+            for (index, (start, chunk)) in chunks.iter().enumerate() {
+                let batch = engine
+                    .layout_unwrapped_metrics_chunk(
+                        worker_format.clone(),
+                        17,
+                        *start,
+                        chunk,
+                        index + 1 == chunks.len(),
+                        metric_continuation,
+                        96,
+                    )
+                    .expect("worker metric scan");
+                metric_glyphs.extend(batch.glyphs);
+                metric_continuation = batch.continuation;
+                if index + 1 == chunks.len() {
+                    metric_summary = batch.summary;
+                }
+            }
+            let metric_summary = metric_summary.expect("worker completed metric summary");
+
+            let mut row_continuation = None;
+            let mut rows = Vec::new();
+            for (index, (start, chunk)) in chunks.iter().enumerate() {
+                let mut local_start = *start;
+                let mut local_chunk = chunk.as_str();
+                loop {
+                    let rows_before = rows.len();
+                    let batch = engine
+                        .layout_wrapped_row_chunk(
+                            worker_format.clone(),
+                            17,
+                            local_start,
+                            local_chunk,
+                            index + 1 == chunks.len(),
+                            0..source.len() as u64,
+                            metric_summary.clone(),
+                            40.0,
+                            false,
+                            row_continuation,
+                            1,
+                        )
+                        .expect("worker row scan");
+                    let consumed = batch.consumed_bytes;
+                    rows.extend(batch.rows);
+                    row_continuation = batch.continuation;
+                    if consumed == local_chunk.len()
+                        && !(index + 1 == chunks.len() && row_continuation.is_some())
+                    {
+                        break;
+                    }
+                    if consumed == 0 {
+                        assert!(
+                            index + 1 == chunks.len() && local_chunk.is_empty(),
+                            "row scan must make progress before EOF"
+                        );
+                        assert!(
+                            rows.len() > rows_before,
+                            "an EOF flush must emit a pending row"
+                        );
+                    } else {
+                        local_start += consumed as u64;
+                    }
+                    local_chunk = &local_chunk[consumed..];
+                }
+            }
+            (metric_glyphs, rows)
+        });
+        let (worker_glyphs, worker_rows) = worker.join().expect("worker thread");
+
+        let ui_metric_batch = view
+            .layout_unwrapped_metrics_chunk(format.clone(), 17, 0, source, true, None, 96)
+            .expect("UI metric scan");
+        assert_eq!(worker_glyphs, ui_metric_batch.glyphs);
+
+        let ui_rows = view
+            .layout_wrapped_row_chunk(
+                format.clone(),
+                17,
+                0,
+                source,
+                true,
+                0..source.len() as u64,
+                ui_metric_batch.summary.expect("UI metric summary"),
+                40.0,
+                false,
+                None,
+                96,
+            )
+            .expect("UI row scan")
+            .rows;
+        assert_eq!(worker_rows.len(), ui_rows.len());
+        for (worker, ui) in worker_rows.iter().zip(&ui_rows) {
+            assert_eq!(worker.source_byte_range(), ui.source_byte_range());
+            assert_eq!(worker.row_start_x().to_bits(), ui.row_start_x().to_bits());
+            assert_eq!(worker.width().to_bits(), ui.width().to_bits());
+        }
+
+        let mut ordinary_job = LayoutJob::default();
+        ordinary_job.wrap = TextWrapping::wrap_at_width(40.0);
+        ordinary_job.round_output_to_gui = false;
+        ordinary_job.append(source, 0.0, format);
+        let ordinary = view.layout_job(ordinary_job);
+        assert_eq!(worker_rows.len(), ordinary.rows.len());
+
+        for (row_index, descriptor) in worker_rows.iter().enumerate() {
+            let span = descriptor.source_byte_range();
+            let replay = view
+                .replay_wrapped_row_chunk(
+                    descriptor,
+                    span.start,
+                    &source[span.start as usize..span.end as usize],
+                    true,
+                    None,
+                    96,
+                )
+                .expect("UI atlas replay");
+            let expected = &ordinary.rows[row_index].row.glyphs;
+            assert_eq!(replay.glyphs.len(), expected.len(), "row {row_index}");
+            assert_eq!(
+                descriptor.width().to_bits(),
+                ordinary.rows[row_index].row.size.x.to_bits()
+            );
+            for (actual, expected) in replay.glyphs.iter().zip(expected) {
+                assert_eq!(actual.chr, expected.chr);
+                assert_eq!(actual.pos.x.to_bits(), expected.pos.x.to_bits());
+                assert_eq!(
+                    actual.advance_width.to_bits(),
+                    expected.advance_width.to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn metric_snapshot_rejects_a_continuation_from_another_identity() {
+        let mut first = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let mut first_view = first.with_pixels_per_point(1.0);
+        let first_batch = first_view
+            .layout_unwrapped_metrics_chunk(
+                TextFormat::default(),
+                23,
+                0,
+                "identity",
+                false,
+                None,
+                1,
+            )
+            .expect("initial metric chunk");
+        let continuation = first_batch.continuation.expect("bounded continuation");
+
+        let mut second = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let snapshot = second.with_pixels_per_point(1.0).metric_snapshot();
+        let mut engine = snapshot.create_engine();
+        let result = engine.layout_unwrapped_metrics_chunk(
+            TextFormat::default(),
+            23,
+            first_batch.consumed_bytes as u64,
+            "dentity",
+            true,
+            Some(continuation),
+            64,
+        );
+        assert_eq!(
+            result.err(),
+            Some(MetricLayoutError::ChangedLayoutKey),
+            "a continuation is bound to its originating metric identity"
+        );
     }
 }

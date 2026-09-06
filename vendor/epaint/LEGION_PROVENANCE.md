@@ -26,16 +26,20 @@ The active Legion patch changes exactly these source files relative to the
 archive:
 
 * `src/text/fonts.rs` — exposes bounded unwrapped chunk layout, atlas-independent
-  metric chunks, and separate layout/metric identities. SHA-256:
-  `5c0c11c053e362af2aadc3d788c6c2aa1662ee217c01f3ea115f7f00f9824361`.
+  metric chunks, separate layout/metric identities, and owned background metric
+  snapshots/engines. SHA-256:
+  `4b0465ff03bc5e174716d9c1eed6053e15ad6434b3e9f4736c36be81b3150c92`.
+* `src/text/mod.rs` — re-exports the background metric snapshot and engine
+  types. SHA-256:
+  `7e15e03a6531f553dfdfb41435446eca84cd522dbf57d1ceddfd8125dc082dfa`.
 * `src/text/text_layout.rs` — adds bounded continuation state, glyph-free
   checkpoint cloning, completed-pass precise summaries, atlas-independent
   metric and wrapped-row descriptors, shared shaping arithmetic, validation,
   and regression tests. SHA-256:
-  `042f737d4aa44255300771ff9371ba7645d88939c82c6b5e5e7c2cd403e16182`.
+  `600bf948055946162b51561c57f4387900d4938078d7c264f20e4c7781679afc`.
 * `src/text/font.rs` — factors atlas-independent glyph metrics and preserves
   resolved ID/advance with empty UVs when rasterization fails. SHA-256:
-  `b308014c5c15d1196d3ca1dafc57847e22acb55188ca0413ce9f90804a43f151`.
+  `5ee64f7068cca4905b9740e63297f8170a7ab6c6fdf4139cff97dfef3bb06582`.
 
 The upstream SHA-256 values for those same files are:
 

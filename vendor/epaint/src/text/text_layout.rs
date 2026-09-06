@@ -460,14 +460,13 @@ pub(crate) fn replay_wrapped_row_chunk(
 ) -> Result<UnwrappedGlyphBatch, UnwrappedLayoutError> {
     let identity = fonts.layout_identity();
     let metric_identity = fonts.metric_identity();
-    let chunk_end = chunk_start_byte.saturating_add(chunk.len() as u64);
-    let valid_range = if continuation.is_some() {
-        chunk_start_byte >= descriptor.source_byte_range.start
-            && chunk_end <= descriptor.source_byte_range.end
-    } else {
-        chunk_start_byte == descriptor.source_byte_range.start
-            && chunk_end == descriptor.source_byte_range.end
+    let Some(chunk_end) = chunk_start_byte.checked_add(chunk.len() as u64) else {
+        return Err(UnwrappedLayoutError::OffsetOverflow);
     };
+    let valid_range = chunk_start_byte >= descriptor.source_byte_range.start
+        && chunk_end <= descriptor.source_byte_range.end
+        && (!is_final_chunk || chunk_end == descriptor.source_byte_range.end)
+        && (continuation.is_some() || chunk_start_byte == descriptor.source_byte_range.start);
     if pixels_per_point != descriptor.pixels_per_point
         || !valid_range
         || !Arc::ptr_eq(&metric_identity, &descriptor.metric_identity)
@@ -780,7 +779,8 @@ pub(crate) fn layout_wrapped_row_chunk(
     if !(1..=4096).contains(&max_output_rows)
         || !pixels_per_point.is_finite()
         || pixels_per_point <= 0.0
-        || !wrap_width.is_finite()
+        || wrap_width.is_nan()
+        || wrap_width == f32::NEG_INFINITY
         || wrap_width < 0.0
         || !format.font_id.size.is_finite()
         || format.font_id.size <= 0.0
@@ -3696,6 +3696,41 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(feature = "default_fonts")]
+    fn wrapped_rows_positive_infinity_is_explicit_no_wrap() {
+        let text = "a middle row that must remain one descriptor";
+        let format = TextFormat::default();
+        let mut owner = Fonts::new(TextOptions::default(), FontDefinitions::default());
+        let metric_summary = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_unwrapped_metrics_chunk(format.clone(), 906, 0, text, true, None, 4096)
+                .expect("no-wrap metrics")
+                .summary
+                .expect("complete no-wrap metrics")
+        };
+        let batch = {
+            let mut view = owner.with_pixels_per_point(1.0);
+            view.layout_wrapped_row_chunk(
+                format,
+                906,
+                0,
+                text,
+                true,
+                0..text.len() as u64,
+                metric_summary,
+                f32::INFINITY,
+                false,
+                None,
+                64,
+            )
+            .expect("positive infinity selects no-wrap descriptor")
+        };
+        assert_eq!(batch.status, WrappedRowStatus::Complete);
+        assert_eq!(batch.rows.len(), 1);
+        assert_eq!(batch.rows[0].source_byte_range, 0..text.len() as u64);
+    }
+
     fn wrapped_scan_for_test(
         text: &str,
         wrap_width: f32,
@@ -4275,6 +4310,34 @@ mod tests {
             .rows
             .pop()
             .expect("row descriptor");
+
+        let partial = owner
+            .with_pixels_per_point(1.0)
+            .replay_wrapped_row_chunk(&descriptor, 0, &text[..1], false, None, 1)
+            .expect("initial non-final replay chunk");
+        assert!(partial.continuation.is_some());
+        assert!(matches!(
+            owner.with_pixels_per_point(1.0).replay_wrapped_row_chunk(
+                &descriptor,
+                0,
+                &(text.to_owned() + "x"),
+                false,
+                None,
+                1,
+            ),
+            Err(UnwrappedLayoutError::ChangedLayoutKey)
+        ));
+        assert!(matches!(
+            owner.with_pixels_per_point(1.0).replay_wrapped_row_chunk(
+                &descriptor,
+                0,
+                &text[..1],
+                true,
+                None,
+                1,
+            ),
+            Err(UnwrappedLayoutError::ChangedLayoutKey)
+        ));
 
         let fill = {
             let mut font = owner.fonts.font(&FontFamily::Monospace);
