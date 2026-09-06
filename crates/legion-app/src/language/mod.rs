@@ -5,6 +5,12 @@
 //! launch/handshake.
 
 mod download;
+mod runtime;
+pub use runtime::{
+    approve_node_runtime, ApprovedNodeRuntime, NodeRuntimeApprovalError,
+    NodeRuntimeApprovalRequest, NODE_RUNTIME_PROBE_CAPABILITY, NODE_RUNTIME_PROBE_STREAM_LIMIT,
+    NODE_RUNTIME_PROBE_TIMEOUT, NODE_RUNTIME_FINGERPRINT_MAX_BYTES,
+};
 mod materialize;
 pub use download::{
     DownloadDecision, RustAnalyzerDownloadRequest, evaluate_rust_analyzer_download,
