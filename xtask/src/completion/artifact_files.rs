@@ -141,7 +141,8 @@ pub fn validate_declared_artifact(
         }
         Err(error) => return Err(error),
     };
-    if !path_is_within(&evidence, &repository) {
+    // Path::starts_with is component-wise: `/srv/evidence-other` is not under `/srv/evidence`.
+    if !evidence.starts_with(&repository) {
         return Ok(ArtifactValidation::Invalid(
             ArtifactInvalidReason::OutsideEvidenceSubtree,
         ));
@@ -159,7 +160,8 @@ pub fn validate_declared_artifact(
         }
         Err(error) => return Err(error),
     };
-    if !path_is_within(&canonical, &evidence) {
+    // Path::starts_with is component-wise; a sibling string-prefix is not a child.
+    if !canonical.starts_with(&evidence) {
         return Ok(ArtifactValidation::Invalid(
             ArtifactInvalidReason::OutsideEvidenceSubtree,
         ));
@@ -182,12 +184,6 @@ pub fn validate_declared_artifact(
 
 fn is_sha256(value: &str) -> bool {
     crate::completion::hash::is_sha256_lowercase(value)
-}
-
-/// Component-wise containment. Rust's `Path::starts_with` does not treat
-/// `/srv/evidence-other` as a child of `/srv/evidence`.
-fn path_is_within(child: &Path, parent: &Path) -> bool {
-    child.starts_with(parent)
 }
 
 fn reject_artifact_path(value: &str) -> Option<String> {
@@ -222,18 +218,11 @@ fn digest_file(path: &Path) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::path_is_within;
     use std::path::Path;
 
     #[test]
     fn sibling_directory_with_shared_string_prefix_is_outside() {
-        assert!(!path_is_within(
-            Path::new("/srv/evidence-other"),
-            Path::new("/srv/evidence")
-        ));
-        assert!(path_is_within(
-            Path::new("/srv/evidence/nested"),
-            Path::new("/srv/evidence")
-        ));
+        assert!(!Path::new("/srv/evidence-other").starts_with(Path::new("/srv/evidence")));
+        assert!(Path::new("/srv/evidence/nested").starts_with(Path::new("/srv/evidence")));
     }
 }

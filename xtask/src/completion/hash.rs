@@ -9,7 +9,7 @@
 /// with `eq_ignore_ascii_case`. Evidence files use
 /// [`is_sha256_lowercase`].
 pub(crate) fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.is_ascii() && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Return whether `value` is a 64-character lowercase hexadecimal SHA-256.

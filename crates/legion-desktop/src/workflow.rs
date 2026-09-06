@@ -2968,7 +2968,7 @@ impl DesktopRuntime {
     }
 
     /// Persist the selected bottom-panel tab for the next frame and session.
-    pub fn persist_bottom_panel_selection(&mut self, selected: BottomPanelTab) {
+    fn persist_bottom_panel_selection(&mut self, selected: BottomPanelTab) {
         if self.selected_bottom_panel == selected {
             return;
         }
@@ -2978,6 +2978,15 @@ impl DesktopRuntime {
             self.panel_state.active_panel = Some(active_panel);
             self.persist_session_if_configured();
         }
+    }
+
+    /// Test hatch: select a bottom-panel tab the way a user click would.
+    ///
+    /// Integration tests live in a separate crate, so this cannot be
+    /// `pub(crate)`. It is not part of the desktop runtime product API.
+    #[doc(hidden)]
+    pub fn set_bottom_panel_selection_for_test(&mut self, selected: BottomPanelTab) {
+        self.persist_bottom_panel_selection(selected);
     }
 
     /// Navigate to a specific definition location by zero-based index (T7).

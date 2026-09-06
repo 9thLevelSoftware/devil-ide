@@ -1485,6 +1485,15 @@ impl StreamedScanState {
                     self.navigation_target_index = Some(index);
                     if let Some((pred_index, pred)) = self.navigation_predecessor.take() {
                         if pred_index + 1 == index {
+                            // Navigation rows are the primary intent. If this
+                            // frame has no remaining row budget, put the
+                            // predecessor back so a later pass can admit it
+                            // instead of dropping it and then overwriting the
+                            // slot with a later generated descriptor.
+                            if *row_budget == 0 {
+                                self.navigation_predecessor = Some((pred_index, pred));
+                                break;
+                            }
                             self.charge_and_admit_scan_row(row_budget, pred_index, pred);
                         }
                     }

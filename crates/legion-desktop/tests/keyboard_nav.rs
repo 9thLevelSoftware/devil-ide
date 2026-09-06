@@ -1164,7 +1164,7 @@ fn t4_problem_key_dispatch_via_egui() {
     runtime
         .handle_action(DesktopAction::ProblemPrev)
         .expect("ProblemPrev to reset index to 0");
-    runtime.persist_bottom_panel_selection(BottomPanelTab::Problems);
+    runtime.set_bottom_panel_selection_for_test(BottomPanelTab::Problems);
 
     let mut app = DesktopEframeApp::new(runtime);
     assert_eq!(
@@ -1241,7 +1241,7 @@ fn editor_arrows_stay_with_the_editor_when_problems_exist_but_are_not_selected()
     runtime
         .handle_action(DesktopAction::ProblemPrev)
         .expect("ProblemPrev to reset index to 0");
-    runtime.persist_bottom_panel_selection(BottomPanelTab::Terminal);
+    runtime.set_bottom_panel_selection_for_test(BottomPanelTab::Terminal);
 
     let mut app = DesktopEframeApp::new(runtime);
     let raw_input = egui::RawInput {
