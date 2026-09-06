@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -3239,12 +3239,23 @@ pub fn lsp_diagnostic_uri_fingerprint(uri: &str) -> FileFingerprint {
 // Process-backed stdio transport (WS03.T1).
 // -----------------------------------------------------------------------------
 
-/// Bound on parsed JSON-RPC envelopes waiting between the stdout reader
-/// thread and the session. The per-frame payload cap is 64 MiB, so an
-/// unbounded mailbox can retain gigabytes while `workspace/applyEdit` waits
-/// up to 120 seconds. A `sync_channel` of this depth applies backpressure
-/// into the server pipe instead.
-const STDOUT_READER_QUEUE_CAP: usize = 16;
+/// Count cap on parsed envelopes waiting between the stdout reader and the
+/// session. Memory is bounded separately by
+/// [`STDOUT_READER_QUEUED_BYTE_BUDGET`].
+pub const STDOUT_READER_QUEUE_CAP: usize = 8;
+
+/// Maximum parsed payload bytes retained in the stdout mailbox.
+///
+/// One in-flight frame may exceed this when the mailbox is empty so a single
+/// large response (up to [`LspFramer::MAX_FRAME_PAYLOAD_BYTES`]) can still
+/// be delivered. Combined with the count cap this replaces an unbounded
+/// `mpsc` that could retain every boxed 64 MiB envelope.
+pub const STDOUT_READER_QUEUED_BYTE_BUDGET: usize = 2 * 1024 * 1024;
+
+/// How long teardown waits for the stdout reader after dropping the mailbox
+/// and signalling the process tree. A grandchild that still holds stdout
+/// after a failed tree kill must not hang session reset forever.
+const STDOUT_READER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Message produced by the background stdout reader thread and consumed by
 /// the session on the request-driving thread. Carrying parsed frames over a
@@ -3253,11 +3264,66 @@ const STDOUT_READER_QUEUE_CAP: usize = 16;
 /// blocking a pipe read that `std` cannot time out.
 enum StdoutReaderEvent {
     /// A successfully framed and parsed JSON-RPC envelope.
-    Frame(Box<JsonRpcEnvelope>),
+    Frame {
+        envelope: Box<JsonRpcEnvelope>,
+        payload_bytes: usize,
+    },
     /// The peer closed stdout cleanly (clean EOF between frames).
     Eof,
     /// A framing or parse error terminated the reader.
     Err(Box<LspRuntimeError>),
+}
+
+/// Credits for parsed payload sitting in the stdout mailbox.
+struct MailboxBudget {
+    queued_bytes: Mutex<usize>,
+    cv: Condvar,
+}
+
+impl MailboxBudget {
+    fn new() -> Self {
+        Self {
+            queued_bytes: Mutex::new(0),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn lock_queued_bytes(&self) -> std::sync::MutexGuard<'_, usize> {
+        self.queued_bytes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Reserve `n` bytes. An empty mailbox always accepts one frame so a
+    /// single large response can still be delivered. Returns `false` when
+    /// teardown has asked the reader to stop.
+    fn acquire(&self, n: usize, stop: &AtomicBool) -> bool {
+        let mut guard = self.lock_queued_bytes();
+        loop {
+            if stop.load(Ordering::Acquire) {
+                return false;
+            }
+            if *guard == 0 || *guard + n <= STDOUT_READER_QUEUED_BYTE_BUDGET {
+                *guard = guard.saturating_add(n);
+                return true;
+            }
+            let (next, _) = self
+                .cv
+                .wait_timeout(guard, Duration::from_millis(50))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard = next;
+        }
+    }
+
+    fn release(&self, n: usize) {
+        let mut guard = self.lock_queued_bytes();
+        *guard = guard.saturating_sub(n);
+        self.cv.notify_all();
+    }
+
+    fn wake(&self) {
+        self.cv.notify_all();
+    }
 }
 
 /// Background reader that owns the child's stdout pipe and forwards parsed
@@ -3350,12 +3416,30 @@ pub struct LspStdioProcess {
     stderr: Option<ChildStderr>,
     reader: Option<StdoutReader>,
     reader_stats: Arc<ReaderStatsShared>,
+    mailbox_budget: Arc<MailboxBudget>,
+    reader_stop: Arc<AtomicBool>,
+    /// `true` only when this handle spawned the child in its own process
+    /// group via [`spawn_stdio_child`]. [`Self::new`] wraps an arbitrary
+    /// `Child` and must not SIGKILL `-pid` as if it were a group leader.
+    owns_process_group: bool,
     killed: bool,
 }
 
 impl LspStdioProcess {
     /// Wraps an already-spawned child with captured pipes.
+    ///
+    /// This constructor does **not** put the child in its own process group.
+    /// Teardown therefore kills only the direct child on Unix. Prefer
+    /// [`LspStdioLauncher`] when the handle should own the descendant tree.
     pub fn new(child: Child) -> LspRuntimeResult<Self> {
+        Self::from_child(child, false)
+    }
+
+    fn from_supervised_child(child: Child) -> LspRuntimeResult<Self> {
+        Self::from_child(child, true)
+    }
+
+    fn from_child(child: Child, owns_process_group: bool) -> LspRuntimeResult<Self> {
         let mut child = child;
         let stdin = child.stdin.take().ok_or(LspRuntimeError::StdioIo {
             message: "child stdin unavailable".to_string(),
@@ -3365,15 +3449,31 @@ impl LspStdioProcess {
         })?;
         let stderr = child.stderr.take();
         let reader_stats = Arc::new(ReaderStatsShared::default());
-        let reader = StdoutReader::spawn(stdout, Arc::clone(&reader_stats))?;
+        let mailbox_budget = Arc::new(MailboxBudget::new());
+        let reader_stop = Arc::new(AtomicBool::new(false));
+        let reader = StdoutReader::spawn(
+            stdout,
+            Arc::clone(&reader_stats),
+            Arc::clone(&mailbox_budget),
+            Arc::clone(&reader_stop),
+        )?;
         Ok(Self {
             child: Some(child),
             stdin: Some(stdin),
             stderr,
             reader: Some(reader),
             reader_stats,
+            mailbox_budget,
+            reader_stop,
+            owns_process_group,
             killed: false,
         })
+    }
+
+    fn release_mailbox(&self, event: &StdoutReaderEvent) {
+        if let StdoutReaderEvent::Frame { payload_bytes, .. } = event {
+            self.mailbox_budget.release(*payload_bytes);
+        }
     }
 
     /// Snapshot of the stdout reader thread's counters (frames forwarded,
@@ -3424,17 +3524,23 @@ impl LspStdioProcess {
     /// [`Self::read_envelope_until`] when an unresponsive server must be
     /// bounded by a deadline.
     pub fn read_envelope(&mut self) -> LspRuntimeResult<Option<JsonRpcEnvelope>> {
-        let reader = self
-            .reader
-            .as_ref()
-            .ok_or(LspRuntimeError::SessionNotRunning)?;
-        match reader.rx.recv() {
-            Ok(StdoutReaderEvent::Frame(envelope)) => Ok(Some(*envelope)),
-            Ok(StdoutReaderEvent::Eof) => Ok(None),
-            Ok(StdoutReaderEvent::Err(err)) => Err(*err),
-            // The reader thread ended without a terminal message we observed
-            // (e.g. it was already drained); treat a closed channel as EOF.
-            Err(_) => Ok(None),
+        let event = {
+            let reader = self
+                .reader
+                .as_ref()
+                .ok_or(LspRuntimeError::SessionNotRunning)?;
+            match reader.rx.recv() {
+                Ok(event) => event,
+                // The reader thread ended without a terminal message we observed
+                // (e.g. it was already drained); treat a closed channel as EOF.
+                Err(_) => return Ok(None),
+            }
+        };
+        self.release_mailbox(&event);
+        match event {
+            StdoutReaderEvent::Frame { envelope, .. } => Ok(Some(*envelope)),
+            StdoutReaderEvent::Eof => Ok(None),
+            StdoutReaderEvent::Err(err) => Err(*err),
         }
     }
 
@@ -3444,18 +3550,24 @@ impl LspStdioProcess {
     /// when the server goes fully silent, because the actual blocking pipe
     /// read happens on a background thread and this only waits on a channel.
     pub fn read_envelope_until(&mut self, deadline: Instant) -> LspRuntimeResult<LspReadOutcome> {
-        let reader = self
-            .reader
-            .as_ref()
-            .ok_or(LspRuntimeError::SessionNotRunning)?;
         let remaining = deadline.saturating_duration_since(Instant::now());
-        match reader.rx.recv_timeout(remaining) {
-            Ok(StdoutReaderEvent::Frame(envelope)) => Ok(LspReadOutcome::Envelope(*envelope)),
-            Ok(StdoutReaderEvent::Eof) => Ok(LspReadOutcome::Eof),
-            Ok(StdoutReaderEvent::Err(err)) => Err(*err),
-            Err(RecvTimeoutError::Timeout) => Ok(LspReadOutcome::TimedOut),
-            // Reader thread ended; treat a closed channel as EOF.
-            Err(RecvTimeoutError::Disconnected) => Ok(LspReadOutcome::Eof),
+        let event = {
+            let reader = self
+                .reader
+                .as_ref()
+                .ok_or(LspRuntimeError::SessionNotRunning)?;
+            match reader.rx.recv_timeout(remaining) {
+                Ok(event) => event,
+                Err(RecvTimeoutError::Timeout) => return Ok(LspReadOutcome::TimedOut),
+                // Reader thread ended; treat a closed channel as EOF.
+                Err(RecvTimeoutError::Disconnected) => return Ok(LspReadOutcome::Eof),
+            }
+        };
+        self.release_mailbox(&event);
+        match event {
+            StdoutReaderEvent::Frame { envelope, .. } => Ok(LspReadOutcome::Envelope(*envelope)),
+            StdoutReaderEvent::Eof => Ok(LspReadOutcome::Eof),
+            StdoutReaderEvent::Err(err) => Err(*err),
         }
     }
 
@@ -3466,13 +3578,20 @@ impl LspStdioProcess {
     /// diagnostic notification draining (e.g. the session worker thread) should
     /// call this in a loop, breaking on `None`.
     pub fn try_recv_envelope(&mut self) -> Option<LspRuntimeResult<JsonRpcEnvelope>> {
-        let reader = self.reader.as_ref()?;
-        match reader.rx.try_recv() {
-            Ok(StdoutReaderEvent::Frame(envelope)) => Some(Ok(*envelope)),
-            Ok(StdoutReaderEvent::Eof) => None,
-            Ok(StdoutReaderEvent::Err(err)) => Some(Err(*err)),
-            Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => None,
+        let event = {
+            let reader = self.reader.as_ref()?;
+            match reader.rx.try_recv() {
+                Ok(event) => event,
+                Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
+                    return None;
+                }
+            }
+        };
+        self.release_mailbox(&event);
+        match event {
+            StdoutReaderEvent::Frame { envelope, .. } => Some(Ok(*envelope)),
+            StdoutReaderEvent::Eof => None,
+            StdoutReaderEvent::Err(err) => Some(Err(*err)),
         }
     }
 
@@ -3499,21 +3618,26 @@ impl LspProcessHandle for LspStdioProcess {
 
     fn kill(&mut self) {
         self.killed = true;
+        self.reader_stop.store(true, Ordering::Release);
+        self.mailbox_budget.wake();
         if let Some(child) = self.child.as_mut() {
-            // Kill the process group (Unix) or process tree (Windows) before
-            // joining the stdout reader. A grandchild that inherited stdout
-            // keeps the pipe open after `Child::kill`, so `read_lsp_frame`
-            // never returns and session reset hangs.
-            terminate_stdio_process_tree(child);
+            // Kill the process group (Unix, when we created it) or process
+            // tree (Windows) before joining the stdout reader. A grandchild
+            // that inherited stdout keeps the pipe open after `Child::kill`,
+            // so `read_lsp_frame` never returns and session reset hangs.
+            terminate_stdio_process_tree(child, self.owns_process_group);
         }
-        // Drop pipes so any blocked writer unblocks. The reader owns stdout
-        // and exits once the tree's write ends close or the mailbox drops.
         self.stdin.take();
         self.stderr.take();
-        if let Some(mut reader) = self.reader.take()
-            && let Some(handle) = reader.handle.take()
-        {
-            let _ = handle.join();
+        // Drop the mailbox *before* joining. A reader parked on `send` after
+        // the count cap is reached is only unblocked when `rx` is dropped.
+        // Joining first deadlocks teardown.
+        if let Some(reader) = self.reader.take() {
+            let StdoutReader { rx, handle } = reader;
+            drop(rx);
+            if let Some(handle) = handle {
+                join_stdout_reader(handle);
+            }
         }
     }
 }
@@ -3524,21 +3648,35 @@ impl StdoutReader {
     /// EOF or a framing/parse error. Counters and the terminal event are
     /// recorded in `stats` so a dead reader is observable after the fact
     /// (PKT-S3-WEDGE-R3).
-    fn spawn(stdout: ChildStdout, stats: Arc<ReaderStatsShared>) -> LspRuntimeResult<Self> {
+    fn spawn(
+        stdout: ChildStdout,
+        stats: Arc<ReaderStatsShared>,
+        budget: Arc<MailboxBudget>,
+        stop: Arc<AtomicBool>,
+    ) -> LspRuntimeResult<Self> {
         let (tx, rx) = mpsc::sync_channel(STDOUT_READER_QUEUE_CAP);
         let handle = std::thread::Builder::new()
             .name("legion-lsp-stdout-reader".to_string())
             .spawn(move || {
                 let mut reader = BufReader::new(stdout);
                 loop {
+                    if stop.load(Ordering::Acquire) {
+                        return;
+                    }
                     let event = match read_lsp_frame(&mut reader) {
                         Ok(Some(payload)) => match serde_json::from_slice(&payload) {
                             Ok(envelope) => {
+                                if !budget.acquire(payload.len(), &stop) {
+                                    return;
+                                }
                                 stats.frames_forwarded.fetch_add(1, Ordering::AcqRel);
                                 stats
                                     .payload_bytes
                                     .fetch_add(payload.len() as u64, Ordering::AcqRel);
-                                StdoutReaderEvent::Frame(Box::new(envelope))
+                                StdoutReaderEvent::Frame {
+                                    envelope: Box::new(envelope),
+                                    payload_bytes: payload.len(),
+                                }
                             }
                             Err(err) => StdoutReaderEvent::Err(Box::new(err.into())),
                         },
@@ -3549,7 +3687,7 @@ impl StdoutReader {
                     // consumer that observes the channel event also observes
                     // the stats.
                     let terminal_event = match &event {
-                        StdoutReaderEvent::Frame(_) => None,
+                        StdoutReaderEvent::Frame { .. } => None,
                         StdoutReaderEvent::Eof => Some(LspReaderTerminal::Eof),
                         StdoutReaderEvent::Err(err) => {
                             Some(LspReaderTerminal::Error(err.to_string()))
@@ -3564,7 +3702,14 @@ impl StdoutReader {
                     // Blocking send applies backpressure when the session is
                     // not draining. Dropping the receiver (session kill)
                     // unblocks this with an error so the thread can exit.
+                    let payload_bytes = match &event {
+                        StdoutReaderEvent::Frame { payload_bytes, .. } => Some(*payload_bytes),
+                        _ => None,
+                    };
                     if tx.send(event).is_err() || terminal {
+                        if let Some(payload_bytes) = payload_bytes {
+                            budget.release(payload_bytes);
+                        }
                         return;
                     }
                 }
@@ -3624,7 +3769,7 @@ impl LspStdioSpawner for LspStdioLauncher {
         config: &LspServerProcessConfig,
     ) -> LspRuntimeResult<LspStdioProcess> {
         let child = spawn_stdio_child(config)?;
-        LspStdioProcess::new(child)
+        LspStdioProcess::from_supervised_child(child)
     }
 }
 
@@ -3666,10 +3811,15 @@ fn spawn_stdio_child(config: &LspServerProcessConfig) -> LspRuntimeResult<Child>
 
 /// Forcibly terminates the stdio child and any descendants that still hold
 /// the inherited stdout write end, then reaps the direct child.
-fn terminate_stdio_process_tree(child: &mut Child) {
+fn terminate_stdio_process_tree(
+    child: &mut Child,
+    #[cfg_attr(not(unix), allow(unused_variables))] owns_process_group: bool,
+) {
     #[cfg(unix)]
-    {
-        // The child is its own process-group leader (see `spawn_stdio_child`).
+    if owns_process_group {
+        // Negative pid addresses the group this handle created in
+        // `spawn_stdio_child`. Do not signal `-pid` for a `Child` wrapped
+        // by [`LspStdioProcess::new`]; that process is not a group leader.
         let pid = child.id() as i32;
         let _ = nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(-pid),
@@ -3678,12 +3828,36 @@ fn terminate_stdio_process_tree(child: &mut Child) {
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .status();
+        let _ = terminate_windows_process_tree(child.id());
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Joins the stdout reader, giving up after [`STDOUT_READER_JOIN_TIMEOUT`]
+/// so a failed tree-kill cannot hang session reset.
+fn join_stdout_reader(handle: JoinHandle<()>) {
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = handle.join();
+        let _ = done_tx.send(());
+    });
+    let _ = done_rx.recv_timeout(STDOUT_READER_JOIN_TIMEOUT);
+}
+
+#[cfg(windows)]
+fn terminate_windows_process_tree(pid: u32) -> bool {
+    let taskkill = std::env::var_os("SYSTEMROOT")
+        .or_else(|| std::env::var_os("SystemRoot"))
+        .map(|root| PathBuf::from(root).join("System32").join("taskkill.exe"));
+    let Some(taskkill) = taskkill.filter(|path| path.is_file()) else {
+        return false;
+    };
+    Command::new(taskkill)
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Metadata-only progress notification observed while reading LSP frames.
