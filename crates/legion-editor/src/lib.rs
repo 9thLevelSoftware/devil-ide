@@ -2626,6 +2626,35 @@ impl EditorEngine {
             .expect("BufferState is constructed with one cursor and never empties them"))
     }
 
+    /// Resolve an LSP UTF-16 line/character coordinate to the editor's byte
+    /// column without materializing the buffer text.
+    pub fn protocol_position(
+        &self,
+        buffer_id: BufferId,
+        line: u32,
+        character: u32,
+    ) -> Result<TextPosition, EditorError> {
+        let state = self
+            .buffers
+            .get(&buffer_id)
+            .ok_or(EditorError::BufferNotFound(buffer_id))?;
+        let line =
+            usize::try_from(line).map_err(|_| EditorError::InvalidEdit("invalid protocol line"))?;
+        let character = usize::try_from(character)
+            .map_err(|_| EditorError::InvalidEdit("invalid protocol character"))?;
+        let absolute_byte = state
+            .buffer
+            .byte_offset_from_utf16(Utf16Position::new(line, character))?;
+        let line_start = state
+            .buffer
+            .line_index()
+            .byte_offset(TextPosition::new(line, 0))?;
+        let byte_column = absolute_byte
+            .checked_sub(line_start)
+            .ok_or(EditorError::InvalidEdit("invalid protocol coordinate"))?;
+        Ok(TextPosition::new(line, byte_column))
+    }
+
     /// Whether a buffer's text was streamed from disk.
     ///
     /// Exposed separately from the viewport because a caller deciding what to
@@ -4310,6 +4339,42 @@ mod tests {
             engine.text(a),
             Err(EditorError::BufferNotFound(_))
         ));
+    }
+
+    #[test]
+    fn protocol_position_resolves_utf16_without_materializing_text() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(
+                WorkspaceId(1),
+                FileId(12),
+                "src/unicode.rs",
+                "head\n😀tail\n",
+            )
+            .unwrap();
+        let position = engine.protocol_position(buffer, 1, 2).unwrap();
+        assert_eq!(position.line, 1);
+        assert_eq!(position.column, 4);
+        assert!(engine.protocol_position(buffer, 1, 1).is_err());
+        assert!(engine.protocol_position(buffer, 99, 0).is_err());
+        assert!(engine.protocol_position(buffer, 1, 99).is_err());
+    }
+
+    #[test]
+    fn protocol_position_handles_crlf_and_large_buffer() {
+        let mut engine = EditorEngine::new();
+        let buffer = engine
+            .open_buffer(
+                WorkspaceId(1),
+                FileId(13),
+                "src/large.rs",
+                &format!("first\r\n😀{}\r\n", "x".repeat(5 * 1024 * 1024)),
+            )
+            .unwrap();
+        let position = engine.protocol_position(buffer, 1, 2).unwrap();
+        assert_eq!(position.line, 1);
+        assert_eq!(position.column, 4);
+        assert!(engine.protocol_position(buffer, 1, 1).is_err());
     }
 
     #[test]
