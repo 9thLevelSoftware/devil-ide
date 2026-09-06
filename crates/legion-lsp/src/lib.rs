@@ -3430,9 +3430,8 @@ pub struct LspStdioProcess {
     /// `true` only when this handle spawned the child in its own process
     /// group via [`spawn_stdio_child`]. [`Self::new`] wraps an arbitrary
     /// `Child` and must not SIGKILL `-pid` as if it were a group leader.
-    /// On Windows the same flag decides whether a Job Object is assigned at
-    /// spawn; teardown then owns `windows_job` instead of rereading this.
-    #[cfg_attr(windows, allow(dead_code))]
+    /// Windows stores that ownership on `windows_job` instead.
+    #[cfg(unix)]
     owns_process_group: bool,
     #[cfg(windows)]
     windows_job: Option<WindowsStdioJob>,
@@ -3485,6 +3484,7 @@ impl LspStdioProcess {
             reader_stats,
             mailbox_budget,
             reader_stop,
+            #[cfg(unix)]
             owns_process_group,
             #[cfg(windows)]
             windows_job,
@@ -3649,7 +3649,7 @@ impl LspProcessHandle for LspStdioProcess {
             // after `Child::kill`, so `read_lsp_frame` never returns.
             #[cfg(windows)]
             terminate_stdio_process_tree(child, self.windows_job.take(), &self.reader_stats);
-            #[cfg(not(windows))]
+            #[cfg(unix)]
             terminate_stdio_process_tree(child, self.owns_process_group);
         }
         self.stdin.take();
@@ -3836,20 +3836,17 @@ fn spawn_stdio_child(config: &LspServerProcessConfig) -> LspRuntimeResult<Child>
 
 /// Forcibly terminates the stdio child and any descendants that still hold
 /// the inherited stdout write end, then reaps the direct child.
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn terminate_stdio_process_tree(child: &mut Child, owns_process_group: bool) {
     if owns_process_group {
         // Negative pid addresses the group this handle created in
         // `spawn_stdio_child`. Do not signal `-pid` for a `Child` wrapped
         // by [`LspStdioProcess::new`]; that process is not a group leader.
-        #[cfg(unix)]
-        {
-            let pid = child.id() as i32;
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(-pid),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-        }
+        let pid = child.id() as i32;
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(-pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -3869,9 +3866,7 @@ fn terminate_stdio_process_tree(
         // taskkill.exe missing, spawn denied, or non-zero exit: last-resort
         // Job Object covers the direct child only. Existing grandchildren
         // are not pulled in, so the tree kill stays unconfirmed.
-        if let Some(fallback) = assign_windows_stdio_job(child) {
-            drop(fallback);
-        }
+        drop(assign_windows_stdio_job(child));
         stats.record_tree_kill_failure();
     }
     let _ = child.kill();
@@ -3950,21 +3945,15 @@ fn assign_windows_stdio_job(child: &Child) -> Option<WindowsStdioJob> {
             let _ = CloseHandle(job);
             return None;
         }
-        let process = windows_stdio_process_handle(child);
+        // windows 0.62 `HANDLE` is a `*mut c_void` newtype; `as _` also
+        // covers the `isize` spelling used by some crate revisions.
+        let process = HANDLE(child.as_raw_handle() as _);
         if AssignProcessToJobObject(job, process).is_err() {
             let _ = CloseHandle(job);
             return None;
         }
         Some(WindowsStdioJob(job))
     }
-}
-
-#[cfg(windows)]
-fn windows_stdio_process_handle(child: &Child) -> ::windows::Win32::Foundation::HANDLE {
-    use std::os::windows::io::AsRawHandle;
-    // windows 0.62 `HANDLE` is a `*mut c_void` newtype; `as _` also covers
-    // the `isize` spelling used by some crate revisions.
-    ::windows::Win32::Foundation::HANDLE(child.as_raw_handle() as _)
 }
 
 /// Metadata-only progress notification observed while reading LSP frames.
