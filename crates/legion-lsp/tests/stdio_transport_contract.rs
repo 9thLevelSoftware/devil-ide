@@ -1133,6 +1133,12 @@ fn stdio_process_kill_joins_while_grandchild_holds_stdout() {
         !process.is_running(),
         "direct child must be reaped after process-tree kill"
     );
+    let stats = process.reader_stats();
+    assert!(
+        !stats.tree_kill_failed,
+        "supervised spawn must confirm descendant teardown, terminal={:?}",
+        stats.terminal
+    );
 }
 
 #[test]

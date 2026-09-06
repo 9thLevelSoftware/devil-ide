@@ -3364,6 +3364,8 @@ pub struct LspReaderStatsSnapshot {
     pub payload_bytes: u64,
     /// Terminal event that ended the reader thread, if it has ended.
     pub terminal: Option<LspReaderTerminal>,
+    /// Teardown could not confirm that descendants holding stdout were killed.
+    pub tree_kill_failed: bool,
 }
 
 /// Shared counters written by the reader thread and snapshot by the session.
@@ -3374,6 +3376,7 @@ struct ReaderStatsShared {
     frames_forwarded: AtomicU64,
     payload_bytes: AtomicU64,
     terminal: Mutex<Option<LspReaderTerminal>>,
+    tree_kill_failed: AtomicBool,
 }
 
 impl ReaderStatsShared {
@@ -3382,7 +3385,13 @@ impl ReaderStatsShared {
             frames_forwarded: self.frames_forwarded.load(Ordering::Acquire),
             payload_bytes: self.payload_bytes.load(Ordering::Acquire),
             terminal: self.terminal.lock().map_or(None, |slot| slot.clone()),
+            tree_kill_failed: self.tree_kill_failed.load(Ordering::Acquire),
         }
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn record_tree_kill_failure(&self) {
+        self.tree_kill_failed.store(true, Ordering::Release);
     }
 }
 
@@ -3421,7 +3430,12 @@ pub struct LspStdioProcess {
     /// `true` only when this handle spawned the child in its own process
     /// group via [`spawn_stdio_child`]. [`Self::new`] wraps an arbitrary
     /// `Child` and must not SIGKILL `-pid` as if it were a group leader.
+    /// On Windows the same flag decides whether a Job Object is assigned at
+    /// spawn; teardown then owns `windows_job` instead of rereading this.
+    #[cfg_attr(windows, allow(dead_code))]
     owns_process_group: bool,
+    #[cfg(windows)]
+    windows_job: Option<WindowsStdioJob>,
     killed: bool,
 }
 
@@ -3457,6 +3471,12 @@ impl LspStdioProcess {
             Arc::clone(&mailbox_budget),
             Arc::clone(&reader_stop),
         )?;
+        #[cfg(windows)]
+        let windows_job = if owns_process_group {
+            assign_windows_stdio_job(&child)
+        } else {
+            None
+        };
         Ok(Self {
             child: Some(child),
             stdin: Some(stdin),
@@ -3466,6 +3486,8 @@ impl LspStdioProcess {
             mailbox_budget,
             reader_stop,
             owns_process_group,
+            #[cfg(windows)]
+            windows_job,
             killed: false,
         })
     }
@@ -3621,10 +3643,13 @@ impl LspProcessHandle for LspStdioProcess {
         self.reader_stop.store(true, Ordering::Release);
         self.mailbox_budget.wake();
         if let Some(child) = self.child.as_mut() {
-            // Kill the process group (Unix, when we created it) or process
-            // tree (Windows) before joining the stdout reader. A grandchild
-            // that inherited stdout keeps the pipe open after `Child::kill`,
-            // so `read_lsp_frame` never returns and session reset hangs.
+            // Kill the process group (Unix, when we created it) or the Job
+            // Object / process tree (Windows) before joining the stdout
+            // reader. A grandchild that inherited stdout keeps the pipe open
+            // after `Child::kill`, so `read_lsp_frame` never returns.
+            #[cfg(windows)]
+            terminate_stdio_process_tree(child, self.windows_job.take(), &self.reader_stats);
+            #[cfg(not(windows))]
             terminate_stdio_process_tree(child, self.owns_process_group);
         }
         self.stdin.take();
@@ -3636,7 +3661,7 @@ impl LspProcessHandle for LspStdioProcess {
             let StdoutReader { rx, handle } = reader;
             drop(rx);
             if let Some(handle) = handle {
-                join_stdout_reader(handle);
+                join_stdout_reader(handle, &self.reader_stats);
             }
         }
     }
@@ -3811,24 +3836,43 @@ fn spawn_stdio_child(config: &LspServerProcessConfig) -> LspRuntimeResult<Child>
 
 /// Forcibly terminates the stdio child and any descendants that still hold
 /// the inherited stdout write end, then reaps the direct child.
-fn terminate_stdio_process_tree(
-    child: &mut Child,
-    #[cfg_attr(not(unix), allow(unused_variables))] owns_process_group: bool,
-) {
-    #[cfg(unix)]
+#[cfg(not(windows))]
+fn terminate_stdio_process_tree(child: &mut Child, owns_process_group: bool) {
     if owns_process_group {
         // Negative pid addresses the group this handle created in
         // `spawn_stdio_child`. Do not signal `-pid` for a `Child` wrapped
         // by [`LspStdioProcess::new`]; that process is not a group leader.
-        let pid = child.id() as i32;
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(-pid),
-            nix::sys::signal::Signal::SIGKILL,
-        );
+        #[cfg(unix)]
+        {
+            let pid = child.id() as i32;
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(-pid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
     }
-    #[cfg(windows)]
-    {
-        let _ = terminate_windows_process_tree(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(windows)]
+fn terminate_stdio_process_tree(
+    child: &mut Child,
+    job: Option<WindowsStdioJob>,
+    stats: &ReaderStatsShared,
+) {
+    let had_spawn_job = job.is_some();
+    // Closing a KILL_ON_JOB_CLOSE job takes down every descendant that
+    // inherited membership from the supervised spawn.
+    drop(job);
+    if !had_spawn_job && !terminate_windows_process_tree(child.id()) {
+        // taskkill.exe missing, spawn denied, or non-zero exit: last-resort
+        // Job Object covers the direct child only. Existing grandchildren
+        // are not pulled in, so the tree kill stays unconfirmed.
+        if let Some(fallback) = assign_windows_stdio_job(child) {
+            drop(fallback);
+        }
+        stats.record_tree_kill_failure();
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -3836,13 +3880,21 @@ fn terminate_stdio_process_tree(
 
 /// Joins the stdout reader, giving up after [`STDOUT_READER_JOIN_TIMEOUT`]
 /// so a failed tree-kill cannot hang session reset.
-fn join_stdout_reader(handle: JoinHandle<()>) {
+fn join_stdout_reader(handle: JoinHandle<()>, stats: &ReaderStatsShared) {
     let (done_tx, done_rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = handle.join();
         let _ = done_tx.send(());
     });
-    let _ = done_rx.recv_timeout(STDOUT_READER_JOIN_TIMEOUT);
+    if done_rx.recv_timeout(STDOUT_READER_JOIN_TIMEOUT).is_err()
+        && stats.tree_kill_failed.load(Ordering::Acquire)
+        && let Ok(mut slot) = stats.terminal.lock()
+        && slot.is_none()
+    {
+        *slot = Some(LspReaderTerminal::Error(
+            "stdout reader join timed out after unconfirmed process-tree kill".to_string(),
+        ));
+    }
 }
 
 #[cfg(windows)]
@@ -3858,6 +3910,61 @@ fn terminate_windows_process_tree(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(windows)]
+struct WindowsStdioJob(::windows::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for WindowsStdioJob {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = ::windows::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn assign_windows_stdio_job(child: &Child) -> Option<WindowsStdioJob> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows::core::PCWSTR;
+
+    unsafe {
+        let job = CreateJobObjectW(None, PCWSTR::null()).ok()?;
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&limits).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .is_err()
+        {
+            let _ = CloseHandle(job);
+            return None;
+        }
+        let process = windows_stdio_process_handle(child);
+        if AssignProcessToJobObject(job, process).is_err() {
+            let _ = CloseHandle(job);
+            return None;
+        }
+        Some(WindowsStdioJob(job))
+    }
+}
+
+#[cfg(windows)]
+fn windows_stdio_process_handle(child: &Child) -> ::windows::Win32::Foundation::HANDLE {
+    use std::os::windows::io::AsRawHandle;
+    // windows 0.62 `HANDLE` is a `*mut c_void` newtype; `as _` also covers
+    // the `isize` spelling used by some crate revisions.
+    ::windows::Win32::Foundation::HANDLE(child.as_raw_handle() as _)
 }
 
 /// Metadata-only progress notification observed while reading LSP frames.
@@ -4799,4 +4906,36 @@ fn read_lsp_frame<R: BufRead>(reader: &mut R) -> LspRuntimeResult<Option<Vec<u8>
         }
     })?;
     Ok(Some(payload))
+}
+
+#[cfg(test)]
+mod stdout_teardown_tests {
+    use super::{
+        LspReaderTerminal, ReaderStatsShared, STDOUT_READER_JOIN_TIMEOUT, join_stdout_reader,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn join_timeout_after_unconfirmed_tree_kill_records_terminal() {
+        let stats = ReaderStatsShared::default();
+        stats.record_tree_kill_failure();
+        let handle = std::thread::spawn(|| {
+            std::thread::sleep(STDOUT_READER_JOIN_TIMEOUT + Duration::from_secs(8));
+        });
+        join_stdout_reader(handle, &stats);
+        let snapshot = stats.snapshot();
+        assert!(
+            snapshot.tree_kill_failed,
+            "forced tree-kill failure must remain visible on the snapshot"
+        );
+        match snapshot.terminal {
+            Some(LspReaderTerminal::Error(message)) => {
+                assert!(
+                    message.contains("unconfirmed process-tree kill"),
+                    "join timeout after a failed tree kill must not look like a clean reader death, got {message}"
+                );
+            }
+            other => panic!("expected unconfirmed-kill terminal error, got {other:?}"),
+        }
+    }
 }

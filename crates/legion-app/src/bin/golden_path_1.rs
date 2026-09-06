@@ -917,10 +917,11 @@ fn dump_s3_post_mortem(
     // reader died" (see the table above).
     let stats = session.reader_stats();
     eprintln!(
-        "[s3] reader stats: frames_forwarded={} payload_bytes={} terminal={:?} child_running={} exit_status={:?}",
+        "[s3] reader stats: frames_forwarded={} payload_bytes={} terminal={:?} tree_kill_failed={} child_running={} exit_status={:?}",
         stats.frames_forwarded,
         stats.payload_bytes,
         stats.terminal,
+        stats.tree_kill_failed,
         session.is_running(),
         session.exit_status_string()
     );
