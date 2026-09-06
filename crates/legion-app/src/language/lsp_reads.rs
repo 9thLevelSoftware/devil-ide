@@ -588,24 +588,18 @@ impl AppComposition {
                 );
                 if let Some((response_id, action_id)) =
                     self.code_action_authority.sole_organize_edit_candidate()
-                {
-                    if let Err(error) =
+                    && let Err(error) =
                         self.select_code_action_and_propose(&response_id, &action_id)
-                    {
-                        if let Some(buffer_id) = self
-                            .code_action_authority
-                            .candidate_buffer_id(&response_id, &action_id)
-                        {
-                            if let Some(input) = self.language_request_input_for_failure(buffer_id)
-                            {
-                                let _ = self.language_tooling.record_proposal_failure(
-                                    &input,
-                                    LanguageProposalKind::OrganizeImports,
-                                    format!("organize imports selection refused: {error}"),
-                                );
-                            }
-                        }
-                    }
+                    && let Some(buffer_id) = self
+                        .code_action_authority
+                        .candidate_buffer_id(&response_id, &action_id)
+                    && let Some(input) = self.language_request_input_for_failure(buffer_id)
+                {
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        LanguageProposalKind::OrganizeImports,
+                        format!("organize imports selection refused: {error}"),
+                    );
                 }
             }
             LspReadKind::CodeActionResolve {
@@ -945,6 +939,7 @@ impl AppComposition {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn issue_code_action_command(
         &mut self,
         buffer_id: BufferId,
@@ -2787,6 +2782,7 @@ impl AppComposition {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn defer_lsp_write_request(
         &mut self,
         buffer_id: BufferId,
@@ -2811,6 +2807,7 @@ impl AppComposition {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn defer_lsp_write_request_with_id(
         &mut self,
         operation_id: String,

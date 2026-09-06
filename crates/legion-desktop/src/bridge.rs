@@ -1819,7 +1819,7 @@ pub(crate) fn code_action_range(viewport: &ViewportProjection) -> Option<Protoco
         .selections
         .first()
         .cloned()
-        .unwrap_or_else(|| ProtocolTextRange {
+        .unwrap_or(ProtocolTextRange {
             start: viewport.cursor,
             end: viewport.cursor,
         });

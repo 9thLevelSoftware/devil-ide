@@ -1909,10 +1909,10 @@ impl EditorEngine {
             let coalesce = undo_group_id.is_some()
                 && state.active_undo_group == undo_group_id
                 && !state.active_group_evicted;
-            let history_anchor_added = !coalesce
-                && !(undo_group_id.is_some()
+            let history_anchor_added = !(coalesce
+                || (undo_group_id.is_some()
                     && state.active_group_evicted
-                    && state.active_undo_group == undo_group_id);
+                    && state.active_undo_group == undo_group_id));
             if history_anchor_added {
                 state.undo_stack.push(UndoEntry {
                     snapshot: plan.pre_snapshot.clone(),
@@ -4434,7 +4434,7 @@ mod tests {
                 WorkspaceId(1),
                 FileId(13),
                 "src/large.rs",
-                &format!("first\r\n😀{}\r\n", "x".repeat(5 * 1024 * 1024)),
+                format!("first\r\n😀{}\r\n", "x".repeat(5 * 1024 * 1024)),
             )
             .unwrap();
         let position = engine.protocol_position(buffer, 1, 2).unwrap();

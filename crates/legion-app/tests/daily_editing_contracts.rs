@@ -427,14 +427,10 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
         let request = recv_did_change(&request_rx);
         let canonical_file = std::fs::canonicalize(&file).expect("canonical file path");
         let normalized_file = canonical_file.to_string_lossy().replace('\\', "/");
-        let normalized_file = normalized_file.strip_prefix("//?/UNC/").map_or_else(
-            || {
-                normalized_file
-                    .strip_prefix("//?/")
-                    .unwrap_or(&normalized_file)
-            },
-            |rest| rest,
-        );
+        let normalized_file = normalized_file
+            .strip_prefix("//?/UNC/")
+            .or_else(|| normalized_file.strip_prefix("//?/"))
+            .unwrap_or(&normalized_file);
         let normalized_file = if normalized_file.starts_with("server/") {
             format!("//{normalized_file}")
         } else {
@@ -523,14 +519,8 @@ fn daily_editing_contracts_replacement_effects_match_apply_edit_and_queue_did_ch
     let normalized_directed_file = canonical_directed_file.to_string_lossy().replace('\\', "/");
     let normalized_directed_file = normalized_directed_file
         .strip_prefix("//?/UNC/")
-        .map_or_else(
-            || {
-                normalized_directed_file
-                    .strip_prefix("//?/")
-                    .unwrap_or(&normalized_directed_file)
-            },
-            |rest| rest,
-        )
+        .or_else(|| normalized_directed_file.strip_prefix("//?/"))
+        .unwrap_or(&normalized_directed_file)
         .to_string();
     let directed_expected_uri = if normalized_directed_file.starts_with('/') {
         format!("file://{normalized_directed_file}")

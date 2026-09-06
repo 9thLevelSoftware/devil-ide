@@ -90,10 +90,10 @@ fn wait_for_native_proposal(
                         .is_some_and(|proposal_id| !excluded.contains(&proposal_id))
             })
             .cloned();
-        if let Some(proposal_id) = operation.and_then(|operation| operation.proposal_id) {
-            if let Some(proposal) = app.workspace_proposal_for_id(proposal_id) {
-                return proposal;
-            }
+        if let Some(proposal_id) = operation.and_then(|operation| operation.proposal_id)
+            && let Some(proposal) = app.workspace_proposal_for_id(proposal_id)
+        {
+            return proposal;
         }
         assert!(
             Instant::now() < deadline,

@@ -21079,15 +21079,13 @@ impl AppComposition {
             )),
             AppCommandRequest::RequestCodeActions { buffer_id, range } => {
                 let issued = self.request_code_actions(buffer_id, range);
-                if !issued {
-                    if let Some(input) = self.language_request_input_for_failure(buffer_id) {
-                        let _ = self.language_tooling.record_proposal_failure(
-                            &input,
-                            LanguageProposalKind::CodeAction,
-                            "code actions unavailable until a live capable language server is ready"
-                                .to_string(),
-                        );
-                    }
+                if !issued && let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        LanguageProposalKind::CodeAction,
+                        "code actions unavailable until a live capable language server is ready"
+                            .to_string(),
+                    );
                 }
                 Ok(AppCommandOutcome::language_tooling(
                     self.language_tooling.projection(),
@@ -21110,18 +21108,16 @@ impl AppComposition {
                             LanguageProposalKind::CodeAction
                         }
                     });
-                if let Err(error) = self.select_code_action_and_propose(&response_id, &action_id) {
-                    if let Some(buffer_id) =
+                if let Err(error) = self.select_code_action_and_propose(&response_id, &action_id)
+                    && let Some(buffer_id) =
                         failure_buffer.or(self.active_documents.active_buffer_id)
-                    {
-                        if let Some(input) = self.language_request_input_for_failure(buffer_id) {
-                            let _ = self.language_tooling.record_proposal_failure(
-                                &input,
-                                failure_kind.unwrap_or(LanguageProposalKind::CodeAction),
-                                format!("code action selection refused: {error}"),
-                            );
-                        }
-                    }
+                    && let Some(input) = self.language_request_input_for_failure(buffer_id)
+                {
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        failure_kind.unwrap_or(LanguageProposalKind::CodeAction),
+                        format!("code action selection refused: {error}"),
+                    );
                 }
                 Ok(AppCommandOutcome::language_tooling(
                     self.language_tooling.projection(),
@@ -31507,19 +31503,15 @@ impl AppComposition {
                 }
                 if let (Ok(ProposalResponse::Applied(_)), Some(command)) =
                     (&response, mixed_command)
+                    && let Err(error) = self.issue_code_action_command_sidecar(command)
+                    && let Some(buffer_id) = command_buffer_id
+                    && let Some(input) = self.language_request_input_for_failure(buffer_id)
                 {
-                    if let Err(error) = self.issue_code_action_command_sidecar(command) {
-                        if let Some(buffer_id) = command_buffer_id {
-                            if let Some(input) = self.language_request_input_for_failure(buffer_id)
-                            {
-                                let _ = self.language_tooling.record_proposal_failure(
-                                    &input,
-                                    LanguageProposalKind::CodeAction,
-                                    format!("code-action edit applied but command dispatch failed: {error}"),
-                                );
-                            }
-                        }
-                    }
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        LanguageProposalKind::CodeAction,
+                        format!("code-action edit applied but command dispatch failed: {error}"),
+                    );
                 }
                 response
             }

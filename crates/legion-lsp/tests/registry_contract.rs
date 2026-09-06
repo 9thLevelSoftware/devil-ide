@@ -542,7 +542,10 @@ fn resolver_rejects_symlinked_package_escape_and_non_utf8_runtime_path() {
         Err(error) => {
             // macOS rejects non-UTF-8 filenames at the filesystem, which is a
             // stronger form of the same gate the resolver enforces on Linux.
-            assert!(cfg!(target_os = "macos"), "non-utf8 node: {error:?}");
+            #[cfg(not(target_os = "macos"))]
+            panic!("non-utf8 node: {error:?}");
+            #[cfg(target_os = "macos")]
+            let _ = error;
         }
     }
     std::fs::remove_dir_all(root).expect("cleanup root");

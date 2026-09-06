@@ -204,14 +204,14 @@ fn streamed_large_buffer_deletion_avoids_full_text_cache() {
     assert!(last_chunk.text.ends_with("tail"));
     assert!(!last_chunk.text.contains('🙂'));
     let after_forward = engine.current_snapshot(buffer).unwrap().byte_len;
-    assert_eq!(after_forward as usize, before_len - "🙂".len());
+    assert_eq!(after_forward, before_len - "🙂".len());
 
     engine
         .delete_directed_carets(buffer, DeleteDirection::Backward, None)
         .unwrap();
     assert_eq!(engine.buffer_version(buffer).unwrap().0, 2);
     assert_eq!(
-        engine.current_snapshot(buffer).unwrap().byte_len as usize,
+        engine.current_snapshot(buffer).unwrap().byte_len,
         before_len - "🙂".len() - 1
     );
     assert_eq!(

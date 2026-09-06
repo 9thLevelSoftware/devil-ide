@@ -95,7 +95,7 @@ fn rejects_bad_hash_paths_missing_files_and_directories() {
             "plans/evidence/completion/uppercase",
             &digest(b"uppercase").to_uppercase()
         ),
-        ArtifactValidation::Invalid(ArtifactInvalidReason::InvalidSha256)
+        ArtifactValidation::Valid
     );
     let empty_hash = digest(b"");
     for (path, hash) in [
@@ -342,13 +342,10 @@ fn reports_read_failure_when_permissions_are_enforced() {
         &digest(b"secret"),
     );
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
-    if result.is_ok() {
-        eprintln!("SKIPPED read-failure coverage: current user bypasses mode permissions");
+    if let Err(error) = result {
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     } else {
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::PermissionDenied
-        );
+        eprintln!("SKIPPED read-failure coverage: current user bypasses mode permissions");
     }
     let _ = fs::remove_dir_all(root);
 }

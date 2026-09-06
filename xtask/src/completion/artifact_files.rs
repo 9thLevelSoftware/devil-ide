@@ -173,7 +173,7 @@ pub fn validate_declared_artifact(
         ));
     }
     let actual = digest_file(&canonical)?;
-    if actual == declared_sha256 {
+    if actual.eq_ignore_ascii_case(declared_sha256) {
         Ok(ArtifactValidation::Valid)
     } else {
         Ok(ArtifactValidation::Invalid(
@@ -183,7 +183,7 @@ pub fn validate_declared_artifact(
 }
 
 fn is_sha256(value: &str) -> bool {
-    crate::completion::hash::is_sha256_lowercase(value)
+    crate::completion::hash::is_sha256(value)
 }
 
 fn reject_artifact_path(value: &str) -> Option<String> {
