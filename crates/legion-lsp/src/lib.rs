@@ -398,6 +398,18 @@ pub enum LspDownloadedArtifactResolveError {
         /// Path role using the unsupported namespace.
         field: &'static str,
     },
+    /// Catalog metadata omitted the package name.
+    #[error("downloaded artifact package_name is empty")]
+    EmptyPackageName,
+    /// Catalog metadata omitted the package version.
+    #[error("downloaded artifact version is empty")]
+    EmptyPackageVersion,
+    /// The materializer receipt is not a SHA-256 digest.
+    #[error("verified artifact checksum is not a SHA-256 digest")]
+    InvalidChecksum,
+    /// The materializer receipt does not match the catalog checksum.
+    #[error("verified artifact checksum does not match catalog receipt")]
+    ChecksumMismatch,
 }
 
 fn invalid_runtime_version(value: &str) -> LspDownloadedArtifactResolveError {
@@ -534,18 +546,37 @@ impl LanguageServerAdapterPlan {
     /// Resolves a materialized package into a shell-free Node process config.
     ///
     /// The app-owned materializer must verify the archive and approve the Node
-    /// executable first, then pass its observed `node --version` output here.
-    /// This resolver performs path and compatibility checks only; it does not
-    /// establish artifact provenance or runtime trust.
+    /// executable first, then pass its observed `node --version` output and
+    /// the verified artifact SHA-256 receipt here. Path and compatibility
+    /// checks still run; the receipt binds this resolve to that materializer
+    /// identity rather than trusting an arbitrary directory.
     pub fn resolve_downloaded_process(
         &self,
         artifact_root: &Path,
         approved_node: &Path,
         observed_node_version: &str,
+        verified_artifact_sha256: &str,
     ) -> Result<LspServerProcessConfig, LspDownloadedArtifactResolveError> {
-        let LspServerBinarySource::DownloadedArtifact { metadata, .. } = &self.binary_source else {
+        let LspServerBinarySource::DownloadedArtifact {
+            checksum_sha256,
+            metadata,
+            ..
+        } = &self.binary_source
+        else {
             return Err(LspDownloadedArtifactResolveError::NotDownloadedArtifact);
         };
+        if metadata.package_name.trim().is_empty() {
+            return Err(LspDownloadedArtifactResolveError::EmptyPackageName);
+        }
+        if metadata.version.trim().is_empty() {
+            return Err(LspDownloadedArtifactResolveError::EmptyPackageVersion);
+        }
+        if !is_sha256_digest(verified_artifact_sha256) {
+            return Err(LspDownloadedArtifactResolveError::InvalidChecksum);
+        }
+        if !checksum_sha256.eq_ignore_ascii_case(verified_artifact_sha256) {
+            return Err(LspDownloadedArtifactResolveError::ChecksumMismatch);
+        }
         if !artifact_root.is_absolute() {
             return Err(LspDownloadedArtifactResolveError::RelativePath {
                 field: "artifact_root",
@@ -635,6 +666,13 @@ impl LanguageServerAdapterPlan {
             env: self.process.env.clone(),
         })
     }
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte) || (b'A'..=b'F').contains(&byte)
+        })
 }
 
 /// Serialize a canonical Windows path in the form accepted by Node's module
@@ -4018,14 +4056,6 @@ impl LspStdioSession {
                                         .to_string(),
                                 ),
                             }
-                            } else if context.is_none() {
-                                LspApplyWorkspaceEditResponse {
-                                    applied: false,
-                                    failure_reason: Some(
-                                        "workspace/applyEdit has no active request context"
-                                            .to_string(),
-                                    ),
-                                }
                             } else if let Some(handler) = self.apply_edit_handler.as_mut() {
                                 handler(LspApplyWorkspaceEditRequest {
                                     json_rpc_id: id,

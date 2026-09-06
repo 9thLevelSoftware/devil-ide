@@ -141,7 +141,7 @@ pub fn validate_declared_artifact(
         }
         Err(error) => return Err(error),
     };
-    if !evidence.starts_with(&repository) {
+    if !path_is_within(&evidence, &repository) {
         return Ok(ArtifactValidation::Invalid(
             ArtifactInvalidReason::OutsideEvidenceSubtree,
         ));
@@ -159,7 +159,7 @@ pub fn validate_declared_artifact(
         }
         Err(error) => return Err(error),
     };
-    if !canonical.starts_with(&evidence) {
+    if !path_is_within(&canonical, &evidence) {
         return Ok(ArtifactValidation::Invalid(
             ArtifactInvalidReason::OutsideEvidenceSubtree,
         ));
@@ -181,13 +181,13 @@ pub fn validate_declared_artifact(
 }
 
 fn is_sha256(value: &str) -> bool {
-    // Completion evidence records store lowercase hex. Uppercase or mixed-case
-    // digests are rejected so a case-folded compare cannot silently accept a
-    // differently encoded receipt.
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    crate::completion::hash::is_sha256_lowercase(value)
+}
+
+/// Component-wise containment. Rust's `Path::starts_with` does not treat
+/// `/srv/evidence-other` as a child of `/srv/evidence`.
+fn path_is_within(child: &Path, parent: &Path) -> bool {
+    child.starts_with(parent)
 }
 
 fn reject_artifact_path(value: &str) -> Option<String> {
@@ -218,4 +218,22 @@ fn digest_file(path: &Path) -> io::Result<String> {
         hasher.update(&buffer[..count]);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_is_within;
+    use std::path::Path;
+
+    #[test]
+    fn sibling_directory_with_shared_string_prefix_is_outside() {
+        assert!(!path_is_within(
+            Path::new("/srv/evidence-other"),
+            Path::new("/srv/evidence")
+        ));
+        assert!(path_is_within(
+            Path::new("/srv/evidence/nested"),
+            Path::new("/srv/evidence")
+        ));
+    }
 }

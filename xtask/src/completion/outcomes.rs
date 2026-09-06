@@ -202,5 +202,5 @@ fn validate_times(run: &EvidenceRun, issues: &mut Vec<String>) {
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    crate::completion::hash::is_sha256(value)
 }

@@ -194,51 +194,57 @@ impl AppComposition {
         reply: std::sync::mpsc::SyncSender<legion_lsp::LspApplyWorkspaceEditResponse>,
         decision: crate::language::ApplyEditDecision,
     ) {
-        let Some(context) = request.context else {
-            let _ = reply.try_send(legion_lsp::LspApplyWorkspaceEditResponse {
-                applied: false,
-                failure_reason: Some(
-                    "workspace/applyEdit has no authoritative context".to_string(),
-                ),
-            });
-            return;
-        };
-        let Some(expected_context) = self
-            .pending_code_action_contexts
-            .get(&context.request_id.0.to_string())
+        let had_request_context = request.context.is_some();
+        let Some(context) = request
+            .context
+            .or_else(|| self.context_for_unsolicited_apply_edit(&request.params))
         else {
             let _ = reply.try_send(legion_lsp::LspApplyWorkspaceEditResponse {
                 applied: false,
                 failure_reason: Some(
-                    "workspace/applyEdit context is not an active selected command".to_string(),
+                    "workspace/applyEdit has no open document matching the edit".to_string(),
                 ),
             });
             return;
         };
-        if !same_lsp_operation_context(expected_context, &context)
-            || self.active_documents.workspace_id() != Some(context.workspace_id)
-            || self
-                .active_documents
-                .metadata_for_buffer(context.buffer_id)
-                .is_none()
-            || self
-                .editor
-                .current_snapshot(context.buffer_id)
-                .ok()
-                .is_none_or(|snapshot| snapshot.snapshot_id != context.snapshot_id)
-            || self
-                .editor
-                .buffer_version(context.buffer_id)
-                .ok()
-                .is_none_or(|version| version != context.buffer_version)
-        {
-            let _ = reply.try_send(legion_lsp::LspApplyWorkspaceEditResponse {
-                applied: false,
-                failure_reason: Some(
-                    "workspace/applyEdit context is not an active selected command".to_string(),
-                ),
-            });
-            return;
+        if had_request_context {
+            let Some(expected_context) = self
+                .pending_code_action_contexts
+                .get(&context.request_id.0.to_string())
+            else {
+                let _ = reply.try_send(legion_lsp::LspApplyWorkspaceEditResponse {
+                    applied: false,
+                    failure_reason: Some(
+                        "workspace/applyEdit context is not an active selected command".to_string(),
+                    ),
+                });
+                return;
+            };
+            if !same_lsp_operation_context(expected_context, &context)
+                || self.active_documents.workspace_id() != Some(context.workspace_id)
+                || self
+                    .active_documents
+                    .metadata_for_buffer(context.buffer_id)
+                    .is_none()
+                || self
+                    .editor
+                    .current_snapshot(context.buffer_id)
+                    .ok()
+                    .is_none_or(|snapshot| snapshot.snapshot_id != context.snapshot_id)
+                || self
+                    .editor
+                    .buffer_version(context.buffer_id)
+                    .ok()
+                    .is_none_or(|version| version != context.buffer_version)
+            {
+                let _ = reply.try_send(legion_lsp::LspApplyWorkspaceEditResponse {
+                    applied: false,
+                    failure_reason: Some(
+                        "workspace/applyEdit context is not an active selected command".to_string(),
+                    ),
+                });
+                return;
+            }
         }
         let Some(edit) = request.params.get("edit") else {
             let _ = reply.try_send(legion_lsp::LspApplyWorkspaceEditResponse {
@@ -2477,6 +2483,55 @@ impl AppComposition {
         self.active_documents
             .metadata_for_buffer(buffer_id)
             .map(|meta| canonical_path_to_uri(&meta.identity.canonical_path.0))
+    }
+
+    fn context_for_unsolicited_apply_edit(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> Option<legion_protocol::LspOperationContext> {
+        if self.active_documents.active_workspace_trust
+            != Some(legion_protocol::WorkspaceTrustState::Trusted)
+        {
+            return None;
+        }
+        let edit = params.get("edit")?;
+        let buffer_id = self.buffer_matching_apply_edit(edit)?;
+        let snapshot_id = self.editor.current_snapshot(buffer_id).ok()?.snapshot_id;
+        let event_context = self.next_event_context();
+        self.lsp_operation_context(buffer_id, snapshot_id, event_context)
+    }
+
+    fn buffer_matching_apply_edit(&self, edit: &serde_json::Value) -> Option<BufferId> {
+        let mut uris = Vec::new();
+        if let Some(changes) = edit.get("changes").and_then(serde_json::Value::as_object) {
+            uris.extend(changes.keys().cloned());
+        }
+        if let Some(document_changes) = edit
+            .get("documentChanges")
+            .and_then(serde_json::Value::as_array)
+        {
+            for change in document_changes {
+                if let Some(uri) = change
+                    .get("textDocument")
+                    .and_then(|document| document.get("uri"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    uris.push(uri.to_string());
+                }
+            }
+        }
+        for uri in uris {
+            let Some(normalized) = crate::normalize_lsp_document_uri(&uri) else {
+                continue;
+            };
+            if let Some(buffer_id) = self.active_documents.open_tabs.iter().copied().find(|id| {
+                self.document_uri_for_buffer(*id)
+                    .is_some_and(|document| document == normalized)
+            }) {
+                return Some(buffer_id);
+            }
+        }
+        None
     }
 
     /// A request input built only so a failure can be recorded against it.

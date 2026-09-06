@@ -1397,6 +1397,19 @@ impl StreamedScanState {
         }
     }
 
+    fn charge_and_admit_scan_row(
+        &mut self,
+        row_budget: &mut usize,
+        index: usize,
+        descriptor: WrappedRowDescriptor,
+    ) {
+        if *row_budget == 0 {
+            return;
+        }
+        *row_budget = (*row_budget).saturating_sub(1);
+        self.admit_scan_row(index, descriptor);
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn scan_rows(
         &mut self,
@@ -1415,9 +1428,11 @@ impl StreamedScanState {
             .metric_summary
             .clone()
             .ok_or(StreamedLayoutError::Budget)?;
+        let mut generated = 0usize;
         while (self.row_next_byte < identity.logical_end_byte || self.row_continuation.is_some())
             && *source_budget > 0
             && *row_budget > 0
+            && generated < MAX_FRAME_ROWS
         {
             let limit = SOURCE_CHUNK_BYTES.min(*source_budget).max(1);
             let chunk = source
@@ -1431,6 +1446,7 @@ impl StreamedScanState {
                 Some(identity.logical_end_byte),
             )?;
             let start = chunk.start_byte;
+            let generate_cap = MAX_FRAME_ROWS.saturating_sub(generated).max(1);
             let batch = backend
                 .layout_rows(
                     format.clone(),
@@ -1443,7 +1459,7 @@ impl StreamedScanState {
                     wrap_width,
                     break_anywhere,
                     self.row_continuation.take(),
-                    (*row_budget).min(MAX_FRAME_ROWS),
+                    generate_cap,
                 )
                 .map_err(StreamedLayoutError::Rows)?;
             self.row_next_byte =
@@ -1454,13 +1470,12 @@ impl StreamedScanState {
                 return Err(StreamedLayoutError::InvalidSourceRange);
             }
             for descriptor in batch.rows {
+                if generated >= MAX_FRAME_ROWS {
+                    break;
+                }
+                generated += 1;
                 let index = self.rows_seen;
                 self.rows_seen += 1;
-                // Scanning is bounded by generated-row work, even when the
-                // current viewport retains none of those descriptors. This
-                // lets First/Index/Last requests reach EOF over multiple
-                // frames without exceeding the frame row budget.
-                *row_budget = (*row_budget).saturating_sub(1);
                 let navigation_target = self.navigation_byte_target;
                 let contains_navigation_target = navigation_target.is_some_and(|target| {
                     let range = descriptor.source_byte_range();
@@ -1470,7 +1485,7 @@ impl StreamedScanState {
                     self.navigation_target_index = Some(index);
                     if let Some((pred_index, pred)) = self.navigation_predecessor.take() {
                         if pred_index + 1 == index {
-                            self.admit_scan_row(pred_index, pred);
+                            self.charge_and_admit_scan_row(row_budget, pred_index, pred);
                         }
                     }
                 }
@@ -1486,7 +1501,10 @@ impl StreamedScanState {
                     visible_rows.contains(&index)
                 };
                 if keep {
-                    self.admit_scan_row(index, descriptor);
+                    self.charge_and_admit_scan_row(row_budget, index, descriptor);
+                    if *row_budget == 0 {
+                        break;
+                    }
                 } else if navigation_target.is_some() && self.navigation_target_index.is_none() {
                     self.navigation_predecessor = Some((index, descriptor));
                 }

@@ -2967,7 +2967,8 @@ impl DesktopRuntime {
         }
     }
 
-    fn persist_bottom_panel_selection(&mut self, selected: BottomPanelTab) {
+    /// Persist the selected bottom-panel tab for the next frame and session.
+    pub fn persist_bottom_panel_selection(&mut self, selected: BottomPanelTab) {
         if self.selected_bottom_panel == selected {
             return;
         }
@@ -5473,9 +5474,10 @@ impl DesktopEframeApp {
                 } if !modifiers.alt && !modifiers.command
             )
         });
-        let problems_claim_arrows = !snapshot.language_tooling_projection.problems.is_empty()
-            && !self.runtime.projection_view_state().completion_popup_open
-            && self.runtime.center_surface_is_editor();
+        let problems_claim_arrows = self.runtime.projection_view_state().selected_bottom_panel
+            == crate::view::BottomPanelTab::Problems
+            && !snapshot.language_tooling_projection.problems.is_empty()
+            && !self.runtime.projection_view_state().completion_popup_open;
         if has_visual_arrow
             && editor_input_enabled
             && !problems_claim_arrows
@@ -5882,23 +5884,15 @@ impl DesktopEframeApp {
             {
                 let view_state = self.runtime.projection_view_state();
                 let problems_non_empty = !snapshot.language_tooling_projection.problems.is_empty();
-                // Not while another centre surface owns the keyboard.
-                //
-                // `!editor_input_enabled` was standing in for "the Problems
-                // list has the keyboard", and it is not the same question. The
-                // canvas turns editor input off by design, so Enter on a
-                // focused card also activated whichever diagnostic happened to
-                // be selected -- changing the open file and the cursor behind a
-                // surface the person was arranging. Arrow keys had the same
-                // problem from the other direction: they moved the diagnostic
-                // selection while somebody was moving a card with them.
-                //
-                // There is no panel-focus state in this shell to ask instead,
-                // so this asks the narrower question it can answer honestly:
-                // these are the editor shell's bindings, and they belong to the
-                // editor shell.
-                let editor_shell = self.runtime.center_surface_is_editor();
-                if problems_non_empty && !view_state.completion_popup_open && editor_shell {
+                // Arrows belong to the problems list only while that list is
+                // the selected bottom panel. Existence of a diagnostic is not
+                // a claim — the editor still owns Up/Down for caret movement.
+                let problems_panel_selected =
+                    view_state.selected_bottom_panel == crate::view::BottomPanelTab::Problems;
+                if problems_non_empty
+                    && !view_state.completion_popup_open
+                    && problems_panel_selected
+                {
                     if input.key_pressed(egui::Key::ArrowDown) {
                         actions.push(DesktopAction::ProblemNext);
                     }

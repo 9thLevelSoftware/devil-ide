@@ -255,6 +255,48 @@ fn select_command(fixture: &mut Fixture) -> LspRequestTag {
 }
 
 #[test]
+fn unsolicited_apply_edit_creates_preview_proposal_for_open_document() {
+    let mut fixture = fixture();
+    let before = fixture
+        .app
+        .buffer_text_for_input(fixture.buffer)
+        .expect("text");
+    let uri = fixture.uri.clone();
+    let request = LspApplyWorkspaceEditRequest {
+        json_rpc_id: 88,
+        params: serde_json::json!({
+            "edit": {"changes": {uri: [{
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                "newText": "// server edit\n"
+            }]}}
+        }),
+        context: None,
+        deadline: None,
+    };
+    let response = inject_apply_edit(&mut fixture, request);
+    assert!(
+        response.try_recv().is_err(),
+        "unsolicited applyEdit still requires approval"
+    );
+    assert_eq!(
+        fixture
+            .app
+            .buffer_text_for_input(fixture.buffer)
+            .expect("text"),
+        before
+    );
+    assert!(
+        fixture
+            .app
+            .language_tooling_projection()
+            .operations
+            .iter()
+            .any(|row| row.proposal_id.is_some()),
+        "an open-document server edit must become a preview proposal"
+    );
+}
+
+#[test]
 fn ordinary_hover_context_is_rejected_without_a_proposal() {
     let mut fixture = fixture();
     let tag = request_hover(&mut fixture);

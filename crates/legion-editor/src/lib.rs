@@ -507,6 +507,9 @@ fn carets_match_vertical_source(actual: &[DirectedCaret], expected: &[DirectedCa
         })
 }
 
+/// Map one caret/anchor offset through a batch that is ordered **descending**
+/// by start. Later (lower) insertions still have to shift already-mapped
+/// higher carets, so a zero-width insert must advance `offset > start`.
 fn map_edit_offset(mut offset: usize, head_affinity: bool, edits: &[PreparedBatchEdit]) -> usize {
     for edit in edits {
         if offset < edit.start {
@@ -2096,6 +2099,7 @@ impl EditorEngine {
     }
 
     fn enforce_snapshot_retention_policy(&mut self) {
+        self.sweep_expired_snapshot_leases();
         loop {
             let over_count =
                 self.retained_snapshots.len() > self.snapshot_retention_policy.max_snapshot_count;
@@ -4354,6 +4358,25 @@ mod tests {
         ViewportProjectionMode, ViewportScroll,
     };
     use quickcheck::quickcheck;
+
+    #[test]
+    fn map_edit_offset_keeps_each_zero_width_insert_on_its_own_caret() {
+        let edits = [
+            PreparedBatchEdit {
+                start: 10,
+                end: 10,
+                new_text: "YY".into(),
+            },
+            PreparedBatchEdit {
+                start: 5,
+                end: 5,
+                new_text: "X".into(),
+            },
+        ];
+        assert_eq!(map_edit_offset(5, true, &edits), 6);
+        assert_eq!(map_edit_offset(10, true, &edits), 13);
+        assert_eq!(map_edit_offset(5, false, &edits), 5);
+    }
 
     fn project(file_id: u128) -> ProjectInfo {
         ProjectInfo {

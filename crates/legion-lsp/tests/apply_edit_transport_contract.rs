@@ -80,15 +80,16 @@ fn apply_edit_without_handler_returns_wire_negative_without_callback() {
 }
 
 #[test]
-fn apply_edit_without_active_context_does_not_invoke_installed_handler() {
+fn apply_edit_without_active_context_still_invokes_installed_handler() {
     let (mut session, _context) = initialized(configured(None, false), 803);
     let callback_count = Arc::new(AtomicUsize::new(0));
     let callback_count_for_handler = Arc::clone(&callback_count);
-    session.set_apply_edit_handler(move |_request| {
+    session.set_apply_edit_handler(move |request| {
+        assert!(request.context.is_none());
         callback_count_for_handler.fetch_add(1, Ordering::SeqCst);
         LspApplyWorkspaceEditResponse {
-            applied: true,
-            failure_reason: None,
+            applied: false,
+            failure_reason: Some("preview required".to_string()),
         }
     });
     session
@@ -108,7 +109,7 @@ fn apply_edit_without_active_context_does_not_invoke_installed_handler() {
         )
         .expect("pump should receive post-ack diagnostic");
     assert_eq!(outcome, legion_lsp::PumpOutcome::PredicateMet);
-    assert_eq!(callback_count.load(Ordering::SeqCst), 0);
+    assert_eq!(callback_count.load(Ordering::SeqCst), 1);
 }
 
 #[test]

@@ -384,6 +384,7 @@ impl LanguageStartupAuthority {
                     approved_node.observed_version().minor,
                     approved_node.observed_version().patch
                 ),
+                &artifact.sha256,
             )
             .map_err(|error| invalid(error.to_string()))?;
         if process.cwd.is_none() {

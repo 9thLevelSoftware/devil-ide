@@ -283,14 +283,11 @@ fn parse_receipt_time(
 }
 
 fn is_git_sha(value: &str) -> bool {
-    value.len() == 40
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    crate::completion::hash::is_git_sha(value)
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.is_ascii() && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    crate::completion::hash::is_sha256(value)
 }
 
 fn equal_hex(left: &str, right: &str) -> bool {

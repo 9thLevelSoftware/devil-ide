@@ -13,7 +13,7 @@ use std::{
 
 use legion_desktop::{
     bridge::DesktopAction,
-    view::DesktopProjectionViewModel,
+    view::{BottomPanelTab, DesktopProjectionViewModel},
     workflow::{DesktopEframeApp, DesktopLaunchConfig, DesktopRuntime, DesktopWorkflowOutcome},
 };
 use legion_protocol::{
@@ -1164,6 +1164,7 @@ fn t4_problem_key_dispatch_via_egui() {
     runtime
         .handle_action(DesktopAction::ProblemPrev)
         .expect("ProblemPrev to reset index to 0");
+    runtime.persist_bottom_panel_selection(BottomPanelTab::Problems);
 
     let mut app = DesktopEframeApp::new(runtime);
     assert_eq!(
@@ -1193,6 +1194,72 @@ fn t4_problem_key_dispatch_via_egui() {
         app.problems_selected_index_for_test(),
         1,
         "ArrowDown egui event should dispatch ProblemNext and advance the selected index from 0 to 1"
+    );
+}
+
+#[test]
+fn editor_arrows_stay_with_the_editor_when_problems_exist_but_are_not_selected() {
+    let workspace = TempWorkspace::new();
+    let file = workspace.root.join("key_dispatch.rs");
+    std::fs::write(&file, "fn a() {}\nfn b() {}\n").expect("write key_dispatch.rs");
+    let mut runtime = open_runtime(workspace.path());
+    runtime
+        .app_mut_for_test()
+        .open_file(file.to_string_lossy())
+        .expect("open_file must succeed");
+    let buffer_id = runtime
+        .app_mut_for_test()
+        .active_buffer_id()
+        .expect("active buffer must exist after open_file");
+    let src_file = file.to_string_lossy().to_string();
+    let uri = format!(
+        "file:///{}",
+        src_file.replace('\\', "/").trim_start_matches('/')
+    );
+    let params = serde_json::json!({
+        "uri": uri,
+        "diagnostics": [
+            {
+                "range": { "start": { "line": 0, "character": 0 },
+                           "end":   { "line": 0, "character": 1 } },
+                "severity": 1, "message": "err 0"
+            },
+            {
+                "range": { "start": { "line": 1, "character": 0 },
+                           "end":   { "line": 1, "character": 1 } },
+                "severity": 1, "message": "err 1"
+            }
+        ]
+    });
+    runtime
+        .app_mut_for_test()
+        .ingest_lsp_publish_diagnostics_for_buffer(buffer_id, &params, false, None)
+        .expect("inject diagnostics");
+    runtime
+        .handle_action(DesktopAction::ProblemNext)
+        .expect("ProblemNext to force snapshot refresh");
+    runtime
+        .handle_action(DesktopAction::ProblemPrev)
+        .expect("ProblemPrev to reset index to 0");
+    runtime.persist_bottom_panel_selection(BottomPanelTab::Terminal);
+
+    let mut app = DesktopEframeApp::new(runtime);
+    let raw_input = egui::RawInput {
+        focused: true,
+        events: vec![egui::Event::Key {
+            key: egui::Key::ArrowDown,
+            physical_key: Some(egui::Key::ArrowDown),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        }],
+        ..egui::RawInput::default()
+    };
+    let _ = app.run_headless_input(raw_input);
+    assert_eq!(
+        app.problems_selected_index_for_test(),
+        0,
+        "ArrowDown must not steal editor navigation when the Terminal tab is selected"
     );
 }
 

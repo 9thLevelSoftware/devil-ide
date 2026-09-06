@@ -12,7 +12,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
-    thread,
+    thread::{self, JoinHandle},
     time::Duration,
 };
 
@@ -113,6 +113,7 @@ pub(super) struct StreamedWorkerScheduler {
     registry: Arc<Mutex<WorkerRegistry>>,
     next_slot: AtomicU64,
     stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl fmt::Debug for StreamedWorkerHandle {
@@ -143,7 +144,7 @@ impl StreamedWorkerScheduler {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_registry = Arc::clone(&registry);
         let worker_stop = Arc::clone(&stop);
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("legion-streamed-layout".to_owned())
             .spawn(move || worker_loop(command_rx, worker_registry, worker_stop))
             .expect("streamed layout worker thread must start");
@@ -152,7 +153,13 @@ impl StreamedWorkerScheduler {
             registry,
             next_slot: AtomicU64::new(1),
             stop,
+            worker: Some(worker),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn stop_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop)
     }
 
     pub(super) fn submit(
@@ -250,6 +257,9 @@ impl Drop for StreamedWorkerScheduler {
             }
         }
         let _ = self.command_tx.try_send(WorkerCommand::Shutdown);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -460,6 +470,7 @@ mod tests {
         identity: DesktopSourceIdentity,
         entered: Arc<AtomicBool>,
         release: Arc<AtomicBool>,
+        stop: Arc<AtomicBool>,
     }
 
     impl DesktopLineSource for BlockingWorkerSource {
@@ -474,8 +485,11 @@ mod tests {
             _max_bytes: usize,
         ) -> Result<DesktopLineChunk, String> {
             self.entered.store(true, Ordering::Release);
-            while !self.release.load(Ordering::Acquire) {
+            while !self.release.load(Ordering::Acquire) && !self.stop.load(Ordering::Acquire) {
                 std::thread::yield_now();
+            }
+            if self.stop.load(Ordering::Acquire) && !self.release.load(Ordering::Acquire) {
+                return Err("scheduler stopped".to_owned());
             }
             Ok(DesktopLineChunk {
                 start_byte,
@@ -679,13 +693,14 @@ mod tests {
         let (snapshot, key) = snapshot_and_key(&context, identity);
         let entered = Arc::new(AtomicBool::new(false));
         let release = Arc::new(AtomicBool::new(false));
+        let scheduler = StreamedWorkerScheduler::new();
         let source: Arc<dyn DesktopLineSource + Send + Sync> = Arc::new(BlockingWorkerSource {
             identity,
             entered: Arc::clone(&entered),
             release: Arc::clone(&release),
+            stop: scheduler.stop_flag(),
         });
         let source_weak = Arc::downgrade(&source);
-        let scheduler = StreamedWorkerScheduler::new();
         let mut handles = Vec::new();
         for generation in 0..MAX_ADMITTED_JOBS as u64 {
             handles.push(

@@ -5,6 +5,15 @@ use legion_lsp::{
 };
 use legion_protocol::{LanguageId, WorkspaceId};
 
+fn catalog_checksum(source: &LspServerBinarySource) -> String {
+    match source {
+        LspServerBinarySource::DownloadedArtifact {
+            checksum_sha256, ..
+        } => checksum_sha256.clone(),
+        _ => "0".repeat(64),
+    }
+}
+
 #[test]
 fn registry_rebinds_catalog_to_real_workspace_without_mutating_catalog() {
     let catalog = LanguageServerAdapterRegistry::tier_two();
@@ -242,11 +251,21 @@ fn downloaded_pyright_resolves_to_node_and_absolute_entrypoint() {
     let node = root_path.join("node");
     std::fs::write(&node, b"node").expect("node");
     assert!(matches!(
-        adapter.resolve_downloaded_process(&root_path, &node, "13.9.0"),
+        adapter.resolve_downloaded_process(
+            &root_path,
+            &node,
+            "13.9.0",
+            &catalog_checksum(&adapter.binary_source),
+        ),
         Err(LspDownloadedArtifactResolveError::RuntimeTooOld { .. })
     ));
     let config = adapter
-        .resolve_downloaded_process(&root_path, &node, "v18.20.0")
+        .resolve_downloaded_process(
+            &root_path,
+            &node,
+            "v18.20.0",
+            &catalog_checksum(&adapter.binary_source),
+        )
         .expect("materialized package should resolve");
     let entrypoint_argument = |path: &std::path::Path| {
         let value = path.canonicalize().unwrap().to_string_lossy().into_owned();
@@ -278,6 +297,31 @@ fn downloaded_pyright_resolves_to_node_and_absolute_entrypoint() {
 }
 
 #[test]
+fn downloaded_resolver_rejects_mismatched_materializer_receipt() {
+    let registry = LanguageServerAdapterRegistry::tier_two();
+    let adapter = registry.adapters_for_language(&LanguageId("python".to_string()))[0];
+    let root_path = std::env::temp_dir().join(format!(
+        "legion-lsp-registry-checksum-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root_path);
+    std::fs::create_dir_all(root_path.join("package")).expect("package");
+    std::fs::write(root_path.join("package/langserver.index.js"), b"entry").expect("entrypoint");
+    let node = root_path.join("node");
+    std::fs::write(&node, b"node").expect("node");
+    assert!(matches!(
+        adapter.resolve_downloaded_process(
+            &root_path,
+            &node,
+            "v18.20.0",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ),
+        Err(LspDownloadedArtifactResolveError::ChecksumMismatch)
+    ));
+    std::fs::remove_dir_all(root_path).expect("cleanup");
+}
+
+#[test]
 fn downloaded_resolver_rejects_unmaterialized_and_escaping_paths() {
     let registry = LanguageServerAdapterRegistry::tier_two();
     let adapter = registry.adapters_for_language(&LanguageId("python".to_string()))[0];
@@ -290,7 +334,12 @@ fn downloaded_resolver_rejects_unmaterialized_and_escaping_paths() {
     let node = root_path.join("node");
     std::fs::write(&node, b"node").expect("node");
     assert!(matches!(
-        adapter.resolve_downloaded_process(&root_path, &node, "18.0.0"),
+        adapter.resolve_downloaded_process(
+            &root_path,
+            &node,
+            "18.0.0",
+            &catalog_checksum(&adapter.binary_source),
+        ),
         Err(LspDownloadedArtifactResolveError::MissingPath {
             field: "package_root",
             ..
@@ -299,7 +348,12 @@ fn downloaded_resolver_rejects_unmaterialized_and_escaping_paths() {
     let registry = LanguageServerAdapterRegistry::tier_two();
     let system = registry.adapters_for_language(&LanguageId("rust".to_string()))[0];
     assert!(matches!(
-        system.resolve_downloaded_process(&root_path, &node, "18.0.0"),
+        system.resolve_downloaded_process(
+            &root_path,
+            &node,
+            "18.0.0",
+            &catalog_checksum(&system.binary_source),
+        ),
         Err(LspDownloadedArtifactResolveError::NotDownloadedArtifact)
     ));
     let escaping = legion_lsp::LanguageServerAdapterPlan::downloaded_package_artifact(
@@ -309,7 +363,7 @@ fn downloaded_resolver_rejects_unmaterialized_and_escaping_paths() {
         "escaping",
         "pyright-langserver",
         "https://registry.npmjs.org/pyright/-/pyright-1.1.400.tgz",
-        "hash",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "policy://test",
         LspDownloadedArtifactMetadata {
             package_name: "test".into(),
@@ -329,7 +383,12 @@ fn downloaded_resolver_rejects_unmaterialized_and_escaping_paths() {
         true,
     );
     assert!(matches!(
-        escaping.resolve_downloaded_process(&root_path, &node, "18.0.0"),
+        escaping.resolve_downloaded_process(
+            &root_path,
+            &node,
+            "18.0.0",
+            &catalog_checksum(&escaping.binary_source),
+        ),
         Err(LspDownloadedArtifactResolveError::UnsafePath {
             field: "package_root"
         })
@@ -394,7 +453,7 @@ fn resolver_preserves_extra_arguments_after_entrypoint() {
         "extra-args",
         "pyright-langserver",
         "https://registry.npmjs.org/pyright/-/pyright-1.1.400.tgz",
-        "hash",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "policy://test",
         LspDownloadedArtifactMetadata {
             package_name: "pyright".into(),
@@ -420,7 +479,12 @@ fn resolver_preserves_extra_arguments_after_entrypoint() {
     let node = root.join("node");
     std::fs::write(&node, b"node").expect("node");
     let config = adapter
-        .resolve_downloaded_process(&root, &node, "18.0.0")
+        .resolve_downloaded_process(
+            &root,
+            &node,
+            "18.0.0",
+            &catalog_checksum(&adapter.binary_source),
+        )
         .expect("resolver");
     assert_eq!(config.args[1..], ["--stdio", "--verbose"]);
     std::fs::remove_dir_all(root).expect("cleanup");
@@ -444,7 +508,12 @@ fn resolver_rejects_symlinked_package_escape_and_non_utf8_runtime_path() {
     let registry = LanguageServerAdapterRegistry::tier_two();
     let adapter = registry.adapters_for_language(&LanguageId("python".into()))[0];
     assert!(matches!(
-        adapter.resolve_downloaded_process(&root, &node, "18.0.0"),
+        adapter.resolve_downloaded_process(
+            &root,
+            &node,
+            "18.0.0",
+            &catalog_checksum(&adapter.binary_source),
+        ),
         Err(LspDownloadedArtifactResolveError::WrongPathKind {
             field: "package_root",
             ..
@@ -459,7 +528,12 @@ fn resolver_rejects_symlinked_package_escape_and_non_utf8_runtime_path() {
     match std::fs::write(&non_utf8_node, b"node") {
         Ok(()) => {
             assert!(matches!(
-                adapter.resolve_downloaded_process(&root, &non_utf8_node, "18.0.0"),
+                adapter.resolve_downloaded_process(
+                    &root,
+                    &non_utf8_node,
+                    "18.0.0",
+                    &catalog_checksum(&adapter.binary_source),
+                ),
                 Err(LspDownloadedArtifactResolveError::NonUtf8Path {
                     field: "approved_node"
                 })

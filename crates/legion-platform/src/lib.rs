@@ -1397,6 +1397,58 @@ fn windows_bounded_reader(
     }
 }
 
+fn frozen_executable_roots() -> Vec<PathBuf> {
+    #[cfg(unix)]
+    {
+        vec![PathBuf::from("/usr/bin"), PathBuf::from("/bin")]
+    }
+    #[cfg(windows)]
+    {
+        let mut roots = Vec::new();
+        if let Ok(system_root) = std::env::var("SystemRoot") {
+            roots.push(PathBuf::from(system_root).join("System32"));
+        }
+        roots.push(PathBuf::from(r"C:\Windows\System32"));
+        roots
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Vec::new()
+    }
+}
+
+fn resolve_bounded_executable(command: &str) -> Result<PathBuf, PlatformError> {
+    let path = Path::new(command);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    if command.contains('/') || command.contains('\\') || command.contains(':') {
+        return Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(command),
+            reason: "relative executable paths are not allowed".to_string(),
+        });
+    }
+    for root in frozen_executable_roots() {
+        let candidate = root.join(command);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        #[cfg(windows)]
+        {
+            let exe = root.join(format!("{command}.exe"));
+            if exe.is_file() {
+                return Ok(exe);
+            }
+        }
+    }
+    Err(PlatformError::ProcessSpawnFailure {
+        operation: "bounded process execution".to_string(),
+        command: command.to_string(),
+        message: "command is not in the frozen executable roots".to_string(),
+    })
+}
+
 #[cfg(unix)]
 fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResult, PlatformError> {
     if request.timeout.is_zero() {
@@ -1423,7 +1475,8 @@ fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResu
     let reader_deadline = started
         .checked_add(request.timeout)
         .unwrap_or_else(Instant::now);
-    let mut command = Command::new(&request.process.command);
+    let executable = resolve_bounded_executable(&request.process.command)?;
+    let mut command = Command::new(&executable);
     command.args(&request.process.args);
     command.env_clear();
     if let Some(cwd) = &request.process.cwd {
@@ -1806,7 +1859,10 @@ fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResu
         }
         startup.lpAttributeList = attrs;
 
-        let mut command_line = windows_process_command_line(&request.process);
+        let executable = resolve_bounded_executable(&request.process.command)?;
+        let mut process = request.process.clone();
+        process.command = executable.to_string_lossy().into_owned();
+        let mut command_line = windows_process_command_line(&process);
         let current_dir = request
             .process
             .cwd

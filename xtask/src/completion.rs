@@ -1,5 +1,6 @@
 pub mod artifact_files;
 pub mod candidate;
+pub mod hash;
 pub mod identity_receipts;
 pub mod links;
 pub mod outcomes;
