@@ -80,6 +80,11 @@ fn coordinate_byte_offset(text: &str, position: &TextCoordinate) -> Option<u64> 
         remaining_lines = remaining_lines.checked_sub(1)?;
         offset = offset.checked_add(line.len())?;
     }
+    // A file that ends with `\n` has a trailing empty line. LSP's
+    // `{ line: last+1, character: 0 }` is that line's only valid position.
+    if remaining_lines == 0 && position.character == 0 && text.ends_with('\n') {
+        return Some(offset as u64);
+    }
     None
 }
 
@@ -377,5 +382,27 @@ mod tests {
             utf16_offset: None,
         };
         assert_eq!(coordinate_byte_offset("fn x()\n", &position), None);
+    }
+
+    #[test]
+    fn trailing_empty_line_resolves_to_eof_byte() {
+        let text = "fn x()\n";
+        let position = TextCoordinate {
+            line: 1,
+            character: 0,
+            byte_offset: None,
+            utf16_offset: None,
+        };
+        assert_eq!(
+            coordinate_byte_offset(text, &position),
+            Some(text.len() as u64)
+        );
+        let without_newline = TextCoordinate {
+            line: 1,
+            character: 0,
+            byte_offset: None,
+            utf16_offset: None,
+        };
+        assert_eq!(coordinate_byte_offset("fn x()", &without_newline), None);
     }
 }
