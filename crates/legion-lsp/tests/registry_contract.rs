@@ -26,6 +26,17 @@ fn registry_rebinds_catalog_to_real_workspace_without_mutating_catalog() {
     assert!(typescript[0].is_primary);
     assert!(!typescript[1].is_primary);
 
+    let javascript = bound
+        .adapters_for_workspace_language(WorkspaceId(77), &LanguageId("javascript".to_string()))
+        .expect("bound JavaScript plan should be selectable");
+    assert_eq!(javascript.len(), 1);
+    assert!(javascript[0].is_primary);
+    assert_eq!(javascript[0].server_id.0, 106);
+    assert_eq!(
+        javascript[0].language_id,
+        LanguageId("javascript".to_string())
+    );
+
     let original = catalog
         .adapters_for_language(&LanguageId("python".to_string()))
         .into_iter()
@@ -63,6 +74,29 @@ fn tier_two_registry_covers_the_expected_language_smoke_set() {
     assert_eq!(typescript[0].args, vec!["--stdio".to_string()]);
     assert_eq!(typescript[1].command, "tailwindcss-language-server");
     assert_eq!(typescript[1].args, vec!["--stdio".to_string()]);
+
+    let javascript = registry
+        .process_configs_for_workspace_language(workspace_id, &LanguageId("javascript".to_string()))
+        .expect("JavaScript should reuse the TypeScript server command");
+    assert_eq!(javascript.len(), 1);
+    assert_eq!(javascript[0].command, "typescript-language-server");
+    assert_eq!(javascript[0].args, vec!["--stdio".to_string()]);
+    let javascript_react = registry
+        .process_configs_for_workspace_language(
+            workspace_id,
+            &LanguageId("javascriptreact".to_string()),
+        )
+        .expect("JSX should reuse the TypeScript server command");
+    assert_eq!(javascript_react.len(), 1);
+    assert_eq!(javascript_react[0].command, "typescript-language-server");
+    let typescript_react = registry
+        .process_configs_for_workspace_language(
+            workspace_id,
+            &LanguageId("typescriptreact".to_string()),
+        )
+        .expect("TSX should reuse the TypeScript server command");
+    assert_eq!(typescript_react.len(), 1);
+    assert_eq!(typescript_react[0].command, "typescript-language-server");
 
     let python = registry
         .process_configs_for_workspace_language(workspace_id, &LanguageId("python".to_string()));
@@ -216,15 +250,18 @@ fn downloaded_pyright_resolves_to_node_and_absolute_entrypoint() {
         .expect("materialized package should resolve");
     let entrypoint_argument = |path: &std::path::Path| {
         let value = path.canonicalize().unwrap().to_string_lossy().into_owned();
-        if cfg!(windows) {
-            if let Some(rest) = value.strip_prefix("\\\\?\\") {
-                if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
-                    return rest.to_string();
-                }
-                if let Some(unc) = rest.strip_prefix("UNC\\") {
-                    return format!("\\\\{unc}");
-                }
-            }
+        if cfg!(windows)
+            && let Some(rest) = value.strip_prefix("\\\\?\\")
+            && rest.len() >= 2
+            && rest.as_bytes()[1] == b':'
+        {
+            return rest.to_string();
+        }
+        if cfg!(windows)
+            && let Some(rest) = value.strip_prefix("\\\\?\\")
+            && let Some(unc) = rest.strip_prefix("UNC\\")
+        {
+            return format!("\\\\{unc}");
         }
         value
     };

@@ -1006,6 +1006,36 @@ impl LanguageServerAdapterRegistry {
             vec!["--stdio".to_string()],
             false,
         ));
+        // The TypeScript language server also serves JavaScript/JSX. Keep a
+        // distinct language identity so initialize/text-document language IDs
+        // are advertised correctly while reusing the same explicit command.
+        registry.register(LanguageServerAdapterPlan::system_path(
+            legion_protocol::LanguageServerId(106),
+            workspace_id,
+            legion_protocol::LanguageId("javascript".to_string()),
+            "typescript-language-server (JavaScript)",
+            "typescript-language-server",
+            vec!["--stdio".to_string()],
+            true,
+        ));
+        registry.register(LanguageServerAdapterPlan::system_path(
+            legion_protocol::LanguageServerId(107),
+            workspace_id,
+            legion_protocol::LanguageId("javascriptreact".to_string()),
+            "typescript-language-server (JSX)",
+            "typescript-language-server",
+            vec!["--stdio".to_string()],
+            true,
+        ));
+        registry.register(LanguageServerAdapterPlan::system_path(
+            legion_protocol::LanguageServerId(108),
+            workspace_id,
+            legion_protocol::LanguageId("typescriptreact".to_string()),
+            "typescript-language-server (TSX)",
+            "typescript-language-server",
+            vec!["--stdio".to_string()],
+            true,
+        ));
         registry.register(LanguageServerAdapterPlan::downloaded_package_artifact(
             legion_protocol::LanguageServerId(104),
             workspace_id,

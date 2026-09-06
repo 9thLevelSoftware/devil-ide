@@ -8697,9 +8697,13 @@ fn language_id_for_path(path: &CanonicalPath) -> LanguageId {
     let lower = path.0.to_ascii_lowercase();
     let language = if lower.ends_with(".rs") {
         "rust"
-    } else if lower.ends_with(".ts") || lower.ends_with(".tsx") {
+    } else if lower.ends_with(".tsx") {
+        "typescriptreact"
+    } else if lower.ends_with(".ts") {
         "typescript"
-    } else if lower.ends_with(".js") || lower.ends_with(".jsx") {
+    } else if lower.ends_with(".jsx") {
+        "javascriptreact"
+    } else if lower.ends_with(".js") {
         "javascript"
     } else if lower.ends_with(".md") {
         "markdown"
@@ -8738,6 +8742,22 @@ mod language_id_for_path_tests {
         assert_eq!(
             language_id_for_path(&CanonicalPath("src/main.unknown".to_string())),
             LanguageId("text".to_string())
+        );
+    }
+
+    #[test]
+    fn distinguishes_javascript_and_jsx_language_ids() {
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/main.js".to_string())),
+            LanguageId("javascript".to_string())
+        );
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/view.jsx".to_string())),
+            LanguageId("javascriptreact".to_string())
+        );
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/view.tsx".to_string())),
+            LanguageId("typescriptreact".to_string())
         );
     }
 }
