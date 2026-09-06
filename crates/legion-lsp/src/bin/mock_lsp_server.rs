@@ -96,6 +96,15 @@ fn main() {
         let _ = output.flush();
     }
 
+    // Deterministic handshake-failure fixture: emit only a diagnostic on
+    // stderr and close stdout before answering initialize.  This exercises
+    // the app startup path's early stderr drain without relying on a broken
+    // framing implementation or process-global test state.
+    if std::env::var("MOCK_LSP_FAIL_INITIALIZE").as_deref() == Ok("1") {
+        eprintln!("mock_lsp_server: initialize fixture failure");
+        return;
+    }
+
     loop {
         let frame = match read_frame(&mut input) {
             Ok(frame) => frame,

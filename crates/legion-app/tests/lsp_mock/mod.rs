@@ -70,7 +70,7 @@ fn posture(trust: WorkspaceTrustState, privacy_scope_allowed: bool) -> LspWorksp
         workspace_trust_state: trust,
         privacy_scope: SemanticPrivacyScope::Workspace,
         privacy_scope_allowed,
-        required_capability: CapabilityId("process.spawn".to_string()),
+        required_capability: CapabilityId("lsp.launch".to_string()),
         decision_id: Some(CapabilityDecisionId(99)),
         diagnostics: Vec::new(),
         schema_version: 1,

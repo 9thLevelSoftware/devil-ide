@@ -388,6 +388,12 @@ pub enum LspDownloadedArtifactResolveError {
         /// Path role containing non-UTF-8 data.
         field: &'static str,
     },
+    /// A canonical path uses an unsupported device namespace for Node.
+    #[error("{field} uses an unsupported Windows device path namespace")]
+    UnsupportedPathNamespace {
+        /// Path role using the unsupported namespace.
+        field: &'static str,
+    },
 }
 
 fn invalid_runtime_version(value: &str) -> LspDownloadedArtifactResolveError {
@@ -612,11 +618,7 @@ impl LanguageServerAdapterPlan {
                 field: "approved_node",
             }
         })?;
-        let entrypoint = entrypoint.into_os_string().into_string().map_err(|_| {
-            LspDownloadedArtifactResolveError::NonUtf8Path {
-                field: "entrypoint",
-            }
-        })?;
+        let entrypoint = node_compatible_path(&entrypoint, "entrypoint")?;
         let mut args = self.process.args.clone();
         args.insert(0, entrypoint);
         if !args.iter().any(|arg| arg == "--stdio") {
@@ -629,6 +631,34 @@ impl LanguageServerAdapterPlan {
             env: self.process.env.clone(),
         })
     }
+}
+
+/// Serialize a canonical Windows path in the form accepted by Node's module
+/// loader. Rust may expose canonical paths with the `\\?\` prefix; retain
+/// drive and UNC identity while rejecting arbitrary device namespaces.
+fn node_compatible_path(
+    path: &Path,
+    field: &'static str,
+) -> Result<String, LspDownloadedArtifactResolveError> {
+    let value = path
+        .to_str()
+        .ok_or(LspDownloadedArtifactResolveError::NonUtf8Path { field })?;
+    #[cfg(windows)]
+    {
+        if let Some(rest) = value.strip_prefix("\\\\?\\") {
+            if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
+                return Ok(rest.to_string());
+            }
+            if let Some(unc) = rest.strip_prefix("UNC\\") {
+                return Ok(format!("\\\\{unc}"));
+            }
+            return Err(LspDownloadedArtifactResolveError::UnsupportedPathNamespace { field });
+        }
+        if value.starts_with("\\\\.\\") {
+            return Err(LspDownloadedArtifactResolveError::UnsupportedPathNamespace { field });
+        }
+    }
+    Ok(value.to_string())
 }
 
 fn validate_relative_artifact_path(

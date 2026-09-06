@@ -26,10 +26,10 @@ use thiserror::Error;
 
 /// Capability used for the local, shell-free runtime probe.
 ///
-/// The normal LSP launch posture also requires `process.spawn`; using that
-/// same capability here makes the probe's authority explicit and avoids
-/// treating a runtime receipt as an independent launch grant.
-pub const NODE_RUNTIME_PROBE_CAPABILITY: &str = "process.spawn";
+/// The normal LSP launch posture also requires `lsp.launch`; using that same
+/// capability here makes the probe's authority explicit and avoids treating a
+/// runtime receipt as an independent launch grant.
+pub const NODE_RUNTIME_PROBE_CAPABILITY: &str = "lsp.launch";
 
 /// Maximum bytes retained from either probe stream.
 pub const NODE_RUNTIME_PROBE_STREAM_LIMIT: usize = 4 * 1024;

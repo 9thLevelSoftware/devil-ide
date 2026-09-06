@@ -262,6 +262,9 @@ pub struct MaterializedArtifact {
     pub correlation_id: CorrelationId,
     /// Current causality identifier.
     pub causality_id: CausalityId,
+    /// Importer-verified manifest retained as opaque launch evidence.
+    #[allow(dead_code)]
+    verified_manifest: Option<Box<CacheManifest>>,
 }
 
 /// Progress or terminal result delivered by the worker.
@@ -286,6 +289,10 @@ impl CancellationToken {
     /// Signal cooperative cancellation to the worker.
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
+    }
+    /// Reuse a startup worker's cancellation flag for bounded revalidation.
+    pub fn from_atomic(flag: Arc<AtomicBool>) -> Self {
+        Self(flag)
     }
     fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
@@ -371,9 +378,46 @@ impl LanguageArtifactMaterializer {
         let token = CancellationToken::new();
         materialize_inner(request, &token, |_| {})
     }
+
+    /// Materialize synchronously while observing the caller's cancellation.
+    pub fn materialize_with_cancellation(
+        request: &MaterializeRequest,
+        cancellation: &CancellationToken,
+    ) -> Result<MaterializedArtifact, MaterializeError> {
+        materialize_inner(request, cancellation, |_| {})
+    }
+
+    /// Revalidate a published cache tree against its pinned descriptor and
+    /// manifest before a later process launch.
+    pub fn revalidate_materialized_artifact(
+        artifact: &MaterializedArtifact,
+        descriptor: &ArtifactDescriptor,
+        cancellation: &CancellationToken,
+    ) -> Result<(), MaterializeError> {
+        let guard = Guard {
+            token: cancellation,
+            deadline: Instant::now() + Duration::from_secs(30),
+        };
+        let expected = artifact
+            .verified_manifest
+            .as_deref()
+            .ok_or(MaterializeError::CacheTampered)?;
+        let checked = validate_cache(&artifact.cache_root, descriptor, &guard, expected)?
+            .ok_or(MaterializeError::CacheTampered)?;
+        if checked.artifact_id != artifact.artifact_id
+            || checked.package_name != artifact.package_name
+            || checked.version != artifact.version
+            || checked.sha256 != artifact.sha256
+            || checked.package_root != artifact.package_root
+            || checked.entrypoint != artifact.entrypoint
+        {
+            return Err(MaterializeError::CacheTampered);
+        }
+        Ok(())
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CacheManifest {
     schema: u32,
     materializer_version: u32,
@@ -389,7 +433,7 @@ struct CacheManifest {
     runtime: String,
     files: Vec<ManifestFile>,
 }
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ManifestFile {
     path: String,
     sha256: String,
@@ -533,6 +577,8 @@ fn materialize_inner(
         )?;
         let artifact = validate_and_manifest(&extracted, &request.descriptor, stats)?;
         let expected_manifest = manifest_for(&extracted, &artifact, &request.descriptor, &guard)?;
+        let mut artifact = artifact;
+        artifact.verified_manifest = Some(Box::new(expected_manifest.clone()));
         if let Some(existing) =
             validate_cache(&final_root, &request.descriptor, &guard, &expected_manifest)?
         {
@@ -1156,6 +1202,7 @@ fn validate_and_manifest(
         operation_id: 0,
         correlation_id: CorrelationId(0),
         causality_id: CausalityId(uuid::Uuid::nil()),
+        verified_manifest: None,
     })
 }
 fn artifact_with_root(mut a: MaterializedArtifact, root: PathBuf) -> MaterializedArtifact {
@@ -1366,6 +1413,7 @@ fn validate_cache(
         operation_id: 0,
         correlation_id: CorrelationId(0),
         causality_id: CausalityId(uuid::Uuid::nil()),
+        verified_manifest: Some(Box::new(expected.clone())),
     }))
 }
 
@@ -1500,6 +1548,65 @@ mod tests {
         );
         request.trusted = true;
         request
+    }
+
+    #[test]
+    fn retained_manifest_rejects_coordinated_cache_tamper_and_honors_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive_path = dir.path().join("artifact.tgz");
+        let bytes = valid_test_archive();
+        std::fs::write(&archive_path, &bytes).unwrap();
+        let hash = hex::encode(Sha256::digest(&bytes));
+        let request = test_request(&hash, &archive_path, &dir.path().join("cache"));
+        let artifact = LanguageArtifactMaterializer::materialize(&request).unwrap();
+        let token = CancellationToken::new();
+        LanguageArtifactMaterializer::revalidate_materialized_artifact(
+            &artifact,
+            &request.descriptor,
+            &token,
+        )
+        .unwrap();
+        let reused = LanguageArtifactMaterializer::materialize(&request).unwrap();
+        LanguageArtifactMaterializer::revalidate_materialized_artifact(
+            &reused,
+            &request.descriptor,
+            &token,
+        )
+        .unwrap();
+        std::fs::write(
+            reused.cache_root.join("package/langserver.index.js"),
+            b"tampered",
+        )
+        .unwrap();
+        let manifest_path = reused.cache_root.join(".legion-manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        let files = manifest["files"].as_array_mut().unwrap();
+        let tampered_hash = hex::encode(Sha256::digest(b"tampered"));
+        let entry = files
+            .iter_mut()
+            .find(|entry| entry["path"] == "package/langserver.index.js")
+            .unwrap();
+        entry["sha256"] = serde_json::Value::String(tampered_hash);
+        entry["bytes"] = serde_json::Value::from(8u64);
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(matches!(
+            LanguageArtifactMaterializer::revalidate_materialized_artifact(
+                &reused,
+                &request.descriptor,
+                &token,
+            ),
+            Err(MaterializeError::CacheTampered)
+        ));
+        token.cancel();
+        assert_eq!(
+            LanguageArtifactMaterializer::revalidate_materialized_artifact(
+                &reused,
+                &request.descriptor,
+                &token,
+            ),
+            Err(MaterializeError::Cancelled)
+        );
     }
 
     #[test]

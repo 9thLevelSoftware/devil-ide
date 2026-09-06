@@ -434,6 +434,10 @@ fn debug_workflow_live_fake_adapter_sets_live_projection_flag() {
         .expect("open source");
     let buffer_id = app.active_buffer_id().expect("buffer");
     app.enable_debug_live_fake_for_tests();
+    assert!(
+        legion_debug::fake_dap_adapter_path().is_some(),
+        "fake_dap_adapter fixture is required; run `cargo build -p legion-debug --bin fake_dap_adapter` before this test"
+    );
 
     let configs = match app
         .dispatch_ui_intent(CommandDispatchIntent::RefreshDebugConfigurations)

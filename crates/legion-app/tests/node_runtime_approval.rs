@@ -87,7 +87,7 @@ fn granted() -> CapabilityResponse {
     CapabilityResponse::Decision(CapabilityDecision {
         decision_id: legion_protocol::CapabilityDecisionId(9),
         granted: true,
-        capability: CapabilityId("process.spawn".to_string()),
+        capability: CapabilityId("lsp.launch".to_string()),
         reason: None,
     })
 }
@@ -116,7 +116,7 @@ fn denied_runtime_never_spawns() {
             legion_protocol::CapabilityDenial {
                 decision_id: legion_protocol::CapabilityDecisionId(3),
                 principal_id: PrincipalId("operator".to_string()),
-                capability_id: CapabilityId("process.spawn".to_string()),
+                capability_id: CapabilityId("lsp.launch".to_string()),
                 reason: "denied".to_string(),
             },
         ))),
@@ -181,7 +181,7 @@ fn wrong_decision_response_is_rejected_before_spawn() {
         response: Mutex::new(Some(CapabilityResponse::Decision(CapabilityDecision {
             decision_id: legion_protocol::CapabilityDecisionId(8),
             granted: true,
-            capability: CapabilityId("lsp.launch".to_string()),
+            capability: CapabilityId("process.spawn".to_string()),
             reason: None,
         }))),
         request: Mutex::new(None),

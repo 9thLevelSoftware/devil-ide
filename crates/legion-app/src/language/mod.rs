@@ -7,10 +7,12 @@
 mod download;
 mod runtime;
 pub use runtime::{
-    approve_node_runtime, ApprovedNodeRuntime, NodeRuntimeApprovalError,
-    NodeRuntimeApprovalRequest, NODE_RUNTIME_PROBE_CAPABILITY, NODE_RUNTIME_PROBE_STREAM_LIMIT,
-    NODE_RUNTIME_PROBE_TIMEOUT, NODE_RUNTIME_FINGERPRINT_MAX_BYTES,
+    ApprovedNodeRuntime, NODE_RUNTIME_FINGERPRINT_MAX_BYTES, NODE_RUNTIME_PROBE_CAPABILITY,
+    NODE_RUNTIME_PROBE_STREAM_LIMIT, NODE_RUNTIME_PROBE_TIMEOUT, NodeRuntimeApprovalError,
+    NodeRuntimeApprovalRequest, approve_node_runtime,
 };
+mod startup_authority;
+pub use startup_authority::{LanguageStartupAuthority, LanguageStartupContext};
 mod materialize;
 pub use download::{
     DownloadDecision, RustAnalyzerDownloadRequest, evaluate_rust_analyzer_download,
@@ -18,8 +20,7 @@ pub use download::{
 };
 pub use materialize::{
     ArtifactDescriptor, ArtifactSource, CancellationToken, LanguageArtifactMaterializer,
-    MaterializeError, MaterializeEvent, MaterializeHandle, MaterializeProgress,
-    MaterializeRequest,
+    MaterializeError, MaterializeEvent, MaterializeHandle, MaterializeProgress, MaterializeRequest,
     MaterializedArtifact,
 };
 
@@ -57,7 +58,10 @@ pub use call_hierarchy::{
 mod app_lsp;
 #[cfg(any(test, feature = "test-helpers"))]
 pub use app_lsp::LspWorkerRequest;
-pub use app_lsp::{LspReadKind, LspRequestTag, LspSessionHandle, LspWorkerResult};
+pub use app_lsp::{
+    LanguageServerStartConfig, LspReadKind, LspRequestTag, LspSelectedServerMetadata,
+    LspSessionHandle, LspWorkerResult,
+};
 
 // Re-export discovery types consumed by tests and callers.
 pub use legion_lsp::{DiscoveredBinary, RustAnalyzerDiscovery};

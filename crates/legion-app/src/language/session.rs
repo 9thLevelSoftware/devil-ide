@@ -196,14 +196,14 @@ impl LanguageServerSession {
                 "identity and posture workspace_id differ".to_string(),
             ));
         }
-        if posture.required_capability.0 != "process.spawn" {
+        if posture.required_capability.0 != "lsp.launch" {
             return Err(LanguageSessionError::InvalidConfiguration(
-                "launch posture must authorize process.spawn".to_string(),
+                "launch posture must authorize lsp.launch".to_string(),
             ));
         }
         if posture.decision_id.is_none_or(|decision| decision.0 == 0) {
             return Err(LanguageSessionError::InvalidConfiguration(
-                "process.spawn decision_id must be nonzero".to_string(),
+                "lsp.launch decision_id must be nonzero".to_string(),
             ));
         }
         // Re-run the protocol policy derivation instead of approximating its
@@ -1172,7 +1172,7 @@ mod configured_launch_tests {
                 workspace_trust_state: WorkspaceTrustState::Trusted,
                 privacy_scope: SemanticPrivacyScope::Workspace,
                 privacy_scope_allowed: true,
-                required_capability: CapabilityId("process.spawn".to_string()),
+                required_capability: CapabilityId("lsp.launch".to_string()),
                 // Process-spawn approval is distinct from any download
                 // decision carried by the launch metadata below.
                 decision_id: Some(CapabilityDecisionId(2)),
@@ -1208,7 +1208,7 @@ mod configured_launch_tests {
             }),
             version: Some("1.2.3".to_string()),
             // Local verified artifact import has no network/download decision;
-            // the separate process.spawn decision is carried by posture.
+            // the separate lsp.launch decision is carried by posture.
             download_decision_id: None,
         }
     }
@@ -1394,7 +1394,7 @@ mod configured_launch_tests {
         }
 
         // A verified local/offline artifact has no network download decision;
-        // process.spawn approval remains in the posture decision above.
+        // lsp.launch approval remains in the posture decision above.
         let mut launcher = FailsToSpawn;
         let result = LanguageServerSession::launch_configured(local_offline, &mut launcher);
         assert!(matches!(result, Err(LanguageSessionError::Launch(_))));

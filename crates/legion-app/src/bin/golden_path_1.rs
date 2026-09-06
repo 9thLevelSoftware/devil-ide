@@ -260,7 +260,7 @@ fn launch_policy_for_smoke(command: &str) -> LspLaunchPolicyDecision {
             workspace_trust_state: WorkspaceTrustState::Trusted,
             privacy_scope: SemanticPrivacyScope::Workspace,
             privacy_scope_allowed: true,
-            required_capability: CapabilityId("process.spawn".to_string()),
+            required_capability: CapabilityId("lsp.launch".to_string()),
             decision_id: Some(CapabilityDecisionId(9)),
             diagnostics: Vec::new(),
             schema_version: 1,

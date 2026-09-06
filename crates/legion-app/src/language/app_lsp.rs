@@ -21,7 +21,11 @@ use std::{
     collections::VecDeque,
     io::Read,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -38,19 +42,103 @@ use legion_protocol::{
 };
 
 use super::{
-    LanguageSessionError, LspReadOutcome, RustAnalyzerDiscovery, RustAnalyzerLaunchConfig,
-    RustAnalyzerSession,
+    LanguageServerLaunchConfig, LanguageServerSession, LanguageSessionError, LspReadOutcome,
 };
+#[cfg(any(test, feature = "test-helpers"))]
+use super::{RustAnalyzerDiscovery, RustAnalyzerLaunchConfig, RustAnalyzerSession};
 use legion_lsp::{LspServerProcessConfig, LspStdioLauncher, LspSupervisorConfig};
 use legion_protocol::{
     CapabilityDecisionId, CapabilityId, CausalityId, CorrelationId, FileFingerprint,
-    LspConfiguredServerIdentity, LspLaunchPolicyDecision, LspWorkspaceTrustPosture, RedactionHint,
-    SemanticPrivacyScope, WorkspaceId, WorkspaceRootId, WorkspaceTrustState,
+    LspConfiguredServerIdentity, LspLaunchPolicyDecision, LspServerBinaryProvenance,
+    LspWorkspaceTrustPosture, RedactionHint, SemanticPrivacyScope, WorkspaceId, WorkspaceRootId,
+    WorkspaceTrustState,
 };
 use uuid::Uuid;
 
 /// Result type delivered from the background startup thread.
-pub type LspStartResult = Result<RustAnalyzerSession, LanguageSessionError>;
+pub type LspStartResult = Result<LanguageServerSession, LanguageSessionError>;
+
+type LanguageServerPreparation = dyn Fn(Arc<AtomicBool>) -> Result<LanguageServerStartConfig, LanguageSessionError>
+    + Send
+    + Sync
+    + 'static;
+type TransportDeathSignal = Arc<Mutex<Option<String>>>;
+
+/// Fully selected and approved inputs for one language-server startup.
+///
+/// The app owns selection, trust, capability approval, and artifact
+/// validation.  This worker-facing descriptor only carries the resulting
+/// launch metadata and adapter initialization inputs; it performs no PATH
+/// discovery, broker calls, materialization, or runtime probing.
+pub struct LanguageServerStartConfig {
+    /// Workspace root associated with the identity and initialize request.
+    pub workspace_root: PathBuf,
+    /// File URI sent in the LSP `initialize` request.
+    pub root_uri: String,
+    /// Complete, already-approved generic session launch configuration.
+    pub launch_config: LanguageServerLaunchConfig,
+    /// Adapter-specific LSP `initializationOptions`.
+    pub initialization_options: Option<serde_json::Value>,
+    /// Optional adapter/client capability additions.
+    pub client_capabilities: Option<serde_json::Value>,
+}
+
+/// Selected server metadata retained for unavailable health projections while
+/// a prepared launch is refused, backing off, or fails.  The app supplies this
+/// before preparation; the handle never invents a Rust/default identity for a
+/// generic language path.
+#[derive(Debug, Clone)]
+pub struct LspSelectedServerMetadata {
+    /// Selected language-server identity.
+    pub server_id: LanguageServerId,
+    /// Selected language identity.
+    pub language_id: LanguageId,
+    /// Approved binary provenance.
+    pub binary_provenance: LspServerBinaryProvenance,
+    /// Verified artifact fingerprint, when downloaded.
+    pub artifact_hash: Option<FileFingerprint>,
+    /// Observed server/runtime version.
+    pub version: Option<String>,
+    /// Decision authorizing a downloaded artifact, when applicable.
+    pub download_decision_id: Option<CapabilityDecisionId>,
+}
+
+impl From<&LanguageServerLaunchConfig> for LspSelectedServerMetadata {
+    fn from(config: &LanguageServerLaunchConfig) -> Self {
+        Self {
+            server_id: config.server_id,
+            language_id: config.language_id.clone(),
+            binary_provenance: config.binary_provenance,
+            artifact_hash: config.artifact_hash.clone(),
+            version: config.version.clone(),
+            download_decision_id: config.download_decision_id,
+        }
+    }
+}
+
+impl Clone for LanguageServerStartConfig {
+    fn clone(&self) -> Self {
+        Self {
+            workspace_root: self.workspace_root.clone(),
+            root_uri: self.root_uri.clone(),
+            launch_config: clone_launch_config(&self.launch_config),
+            initialization_options: self.initialization_options.clone(),
+            client_capabilities: self.client_capabilities.clone(),
+        }
+    }
+}
+
+fn clone_launch_config(config: &LanguageServerLaunchConfig) -> LanguageServerLaunchConfig {
+    LanguageServerLaunchConfig {
+        supervisor: config.supervisor.clone(),
+        server_id: config.server_id,
+        language_id: config.language_id.clone(),
+        binary_provenance: config.binary_provenance,
+        artifact_hash: config.artifact_hash.clone(),
+        version: config.version.clone(),
+        download_decision_id: config.download_decision_id,
+    }
+}
 
 /// Tag carried with a worker request so the drain side can route the result.
 #[derive(Debug, Clone)]
@@ -189,9 +277,9 @@ struct LspWorkerHandle {
     request_tx: mpsc::SyncSender<LspWorkerRequest>,
     /// Receive results from the worker thread (non-blocking drain each frame).
     result_rx: mpsc::Receiver<LspWorkerResult>,
-    /// Shared ring buffer of redacted stderr lines (PKT-LSP-C T4).
-    /// Populated by the background drain thread spawned in `startup_session`.
-    stderr_ring: Arc<Mutex<VecDeque<String>>>,
+    /// Reliable bounded terminal signal independent of the result queue.  A
+    /// full result queue must never lose a transport-death lifecycle event.
+    transport_dead: TransportDeathSignal,
 }
 
 /// Internal lifecycle state.
@@ -231,6 +319,17 @@ pub struct LspSessionHandle {
     state: LspSessionState,
     /// Workspace root passed at startup time, retained for diagnostics.
     pub workspace_root: Option<PathBuf>,
+    /// App-owned preparation retained for bounded automatic restart.  Each
+    /// invocation must revalidate trust, approval, and artifact/runtime
+    /// identity before returning a fresh descriptor.
+    preparation: Option<Arc<LanguageServerPreparation>>,
+    /// Cancellation for the currently queued startup/preparation generation.
+    startup_cancel: Option<Arc<AtomicBool>>,
+    /// Selected metadata for unavailable health projections.
+    selected_metadata: Option<LspSelectedServerMetadata>,
+    /// Shared bounded, redacted stderr retained across startup failures and
+    /// automatic retries for diagnosis.
+    stderr_ring: Arc<Mutex<VecDeque<String>>>,
     /// Number of automatic restart attempts made since the last explicit start
     /// or explicit restart (PKT-LSP-C T3).
     restart_count: u32,
@@ -257,6 +356,10 @@ impl LspSessionHandle {
         Self {
             state: LspSessionState::Idle,
             workspace_root: None,
+            preparation: None,
+            startup_cancel: None,
+            selected_metadata: None,
+            stderr_ring: Arc::new(Mutex::new(VecDeque::new())),
             restart_count: 0,
             max_auto_restarts: 3,
             backoff_base_ms: 500,
@@ -366,6 +469,7 @@ impl LspSessionHandle {
     ///
     /// If any condition is not met, transitions to `Refused` without spawning.
     /// If the handle is already Starting or Live, this is a no-op.
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn start_for_workspace(&mut self, workspace_root: &Path, trusted: bool) {
         self.start_for_workspace_with_server_path(workspace_root, trusted, None);
     }
@@ -374,6 +478,7 @@ impl LspSessionHandle {
     /// binary path rather than relying on PATH-based discovery.  Intended for
     /// tests that want to point at a mock binary without mutating the process
     /// environment (which is unsound in multi-threaded test processes).
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn start_for_workspace_with_server_path(
         &mut self,
         workspace_root: &Path,
@@ -384,6 +489,20 @@ impl LspSessionHandle {
         if !self.is_idle() {
             return;
         }
+
+        // This compatibility route performs the legacy Rust-analyzer
+        // discovery.  Generic callers must use
+        // `start_for_workspace_with_config`, which has no discovery fallback.
+        self.preparation = None;
+        self.startup_cancel = None;
+        self.selected_metadata = Some(LspSelectedServerMetadata {
+            server_id: LanguageServerId(1),
+            language_id: LanguageId("rust".to_string()),
+            binary_provenance: LspServerBinaryProvenance::SystemPath,
+            artifact_hash: None,
+            version: None,
+            download_decision_id: None,
+        });
 
         self.workspace_root = Some(workspace_root.to_path_buf());
 
@@ -404,14 +523,185 @@ impl LspSessionHandle {
 
         let root_uri = path_to_file_uri(workspace_root);
         let root_path = workspace_root.to_path_buf();
+        let stderr_ring = Arc::clone(&self.stderr_ring);
         let (tx, rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let result = startup_session(&root_path, &root_uri, configured_server_path);
+            let result =
+                startup_session(&root_path, &root_uri, configured_server_path, stderr_ring);
             // Ignore send failure (handle was dropped while starting).
             let _ = tx.send(result);
         });
 
+        self.state = LspSessionState::Starting { rx };
+    }
+
+    /// Starts a selected language server from an app-provided, already
+    /// validated descriptor.  The launch and initialize work is performed on
+    /// the existing bounded background startup path; this method never blocks
+    /// and is a no-op while another startup or live worker exists.
+    pub fn start_for_workspace_with_config(&mut self, config: LanguageServerStartConfig) {
+        if !self.is_idle() {
+            return;
+        }
+
+        let config = Arc::new(config);
+        self.workspace_root = Some(config.workspace_root.clone());
+        self.selected_metadata = Some(LspSelectedServerMetadata::from(&config.launch_config));
+        self.preparation = None;
+        let cancel = self.new_start_generation();
+        self.spawn_configured_start(config, cancel);
+    }
+
+    /// Starts after preparing a fresh, app-approved descriptor on the
+    /// background startup thread.  Preparation must remain bounded and must
+    /// not touch frame-path state.  This one-shot form intentionally disables
+    /// automatic restart after a crash because approval cannot be reused.
+    pub fn start_preparing<F>(
+        &mut self,
+        workspace_root: PathBuf,
+        metadata: LspSelectedServerMetadata,
+        preparation: F,
+    ) where
+        F: FnOnce(Arc<AtomicBool>) -> Result<LanguageServerStartConfig, LanguageSessionError>
+            + Send
+            + 'static,
+    {
+        if !self.is_idle() {
+            return;
+        }
+        self.workspace_root = Some(workspace_root);
+        self.selected_metadata = Some(metadata);
+        self.preparation = None;
+        let cancel = self.new_start_generation();
+        self.spawn_preparation_start(
+            self.workspace_root.clone().expect("set above"),
+            cancel,
+            preparation,
+        );
+    }
+
+    /// Starts after app-owned preparation and retains the repeatable
+    /// preparation factory for bounded automatic restart.  Every retry invokes
+    /// the factory again; no launch config or approval receipt is cloned.
+    pub fn start_preparing_with_factory<F>(
+        &mut self,
+        workspace_root: PathBuf,
+        metadata: LspSelectedServerMetadata,
+        preparation: F,
+    ) where
+        F: Fn(Arc<AtomicBool>) -> Result<LanguageServerStartConfig, LanguageSessionError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        if !self.is_idle() {
+            return;
+        }
+        let preparation: Arc<LanguageServerPreparation> = Arc::new(preparation);
+        self.workspace_root = Some(workspace_root);
+        self.selected_metadata = Some(metadata);
+        self.preparation = Some(Arc::clone(&preparation));
+        let cancel = self.new_start_generation();
+        self.spawn_preparation_start(
+            self.workspace_root.clone().expect("set above"),
+            cancel,
+            move |cancel| preparation(cancel),
+        );
+    }
+
+    /// Explicitly restarts with a fresh app-provided descriptor.
+    ///
+    /// Callers must revalidate trust, approval, artifact/runtime identity, and
+    /// correlation/causality before constructing `config`; the handle never
+    /// silently reuses the previous descriptor for this user-triggered path.
+    pub fn restart_for_workspace_with_config(&mut self, config: LanguageServerStartConfig) {
+        self.state = LspSessionState::Idle;
+        self.restart_count = 0;
+        self.cancel_pending_start();
+        self.preparation = None;
+        self.start_for_workspace_with_config(config);
+    }
+
+    /// Explicitly restarts after a fresh one-shot app preparation.
+    pub fn restart_for_workspace_preparing<F>(
+        &mut self,
+        workspace_root: PathBuf,
+        metadata: LspSelectedServerMetadata,
+        preparation: F,
+    ) where
+        F: FnOnce(Arc<AtomicBool>) -> Result<LanguageServerStartConfig, LanguageSessionError>
+            + Send
+            + 'static,
+    {
+        self.state = LspSessionState::Idle;
+        self.restart_count = 0;
+        self.cancel_pending_start();
+        self.preparation = None;
+        self.start_preparing(workspace_root, metadata, preparation);
+    }
+
+    fn new_start_generation(&mut self) -> Arc<AtomicBool> {
+        self.cancel_pending_start();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.startup_cancel = Some(Arc::clone(&cancel));
+        cancel
+    }
+
+    fn cancel_pending_start(&mut self) {
+        if let Some(cancel) = self.startup_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+    }
+
+    fn spawn_configured_start(
+        &mut self,
+        config: Arc<LanguageServerStartConfig>,
+        cancel: Arc<AtomicBool>,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        let stderr_ring = Arc::clone(&self.stderr_ring);
+        thread::spawn(move || {
+            let result = if cancel.load(Ordering::Acquire) {
+                Err(LanguageSessionError::Unavailable)
+            } else {
+                startup_configured_session(config, cancel, stderr_ring.clone())
+            };
+            let _ = tx.send(result);
+        });
+        self.state = LspSessionState::Starting { rx };
+    }
+
+    fn spawn_preparation_start<F>(
+        &mut self,
+        expected_root: PathBuf,
+        cancel: Arc<AtomicBool>,
+        preparation: F,
+    ) where
+        F: FnOnce(Arc<AtomicBool>) -> Result<LanguageServerStartConfig, LanguageSessionError>
+            + Send
+            + 'static,
+    {
+        let (tx, rx) = mpsc::channel();
+        let stderr_ring = Arc::clone(&self.stderr_ring);
+        thread::spawn(move || {
+            let result = if cancel.load(Ordering::Acquire) {
+                Err(LanguageSessionError::Unavailable)
+            } else {
+                preparation(Arc::clone(&cancel)).and_then(|config| {
+                    if cancel.load(Ordering::Acquire) {
+                        return Err(LanguageSessionError::Unavailable);
+                    }
+                    if config.workspace_root != expected_root {
+                        return Err(LanguageSessionError::InvalidConfiguration(
+                            "prepared workspace root does not match requested root".to_string(),
+                        ));
+                    }
+                    startup_configured_session(Arc::new(config), cancel, stderr_ring)
+                })
+            };
+            let _ = tx.send(result);
+        });
         self.state = LspSessionState::Starting { rx };
     }
 
@@ -423,9 +713,11 @@ impl LspSessionHandle {
     ///
     /// Also resets the `restart_count` so the full auto-restart budget is
     /// available again — the explicit restart is a deliberate user action.
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn restart_for_workspace(&mut self, workspace_root: &Path, trusted: bool) {
         self.state = LspSessionState::Idle;
         self.restart_count = 0;
+        self.cancel_pending_start();
         self.start_for_workspace(workspace_root, trusted);
     }
 
@@ -451,8 +743,23 @@ impl LspSessionHandle {
             if now >= *earliest_retry_ms {
                 // Timer fired — reset to Idle and re-start.
                 self.state = LspSessionState::Idle;
-                if let Some(root) = self.workspace_root.clone() {
-                    self.start_for_workspace(&root, true);
+                if let Some(preparation) = self.preparation.clone() {
+                    // Automatic retries are bounded by this handle's circuit
+                    // breaker and must obtain a fresh app-approved config.
+                    let Some(root) = self.workspace_root.clone() else {
+                        self.state = LspSessionState::Failed {
+                            reason: "automatic restart has no workspace root".to_string(),
+                        };
+                        return true;
+                    };
+                    let cancel = self.new_start_generation();
+                    self.spawn_preparation_start(root, cancel.clone(), move |cancel| {
+                        preparation(cancel)
+                    });
+                } else {
+                    self.state = LspSessionState::Failed {
+                        reason: "automatic restart requires fresh app preparation".to_string(),
+                    };
                 }
                 return true;
             }
@@ -466,20 +773,32 @@ impl LspSessionHandle {
             Ok(Ok(session)) => {
                 // Spawn the worker thread; it owns the session from here on.
                 let health = session.health().clone();
-                // Extract the shared stderr ring before moving session into the
-                // worker thread (PKT-LSP-C T4).
-                let stderr_ring = session.stderr_ring();
                 let worker = spawn_session_worker(session);
                 self.state = LspSessionState::Live(Box::new(LspWorkerHandle {
                     health,
                     request_tx: worker.0,
                     result_rx: worker.1,
-                    stderr_ring,
+                    transport_dead: worker.2,
                 }));
                 true
             }
             Ok(Err(err)) => {
-                self.transition_failure(err.to_string());
+                if matches!(err, LanguageSessionError::InvalidConfiguration(_)) {
+                    self.state = LspSessionState::Refused {
+                        reason: err.to_string(),
+                    };
+                } else if matches!(err, LanguageSessionError::Unavailable)
+                    && self
+                        .startup_cancel
+                        .as_ref()
+                        .is_some_and(|cancel| cancel.load(Ordering::Acquire))
+                {
+                    // A cancelled generation must not feed the restart
+                    // circuit breaker or resurrect a stale worker.
+                    self.state = LspSessionState::Idle;
+                } else {
+                    self.transition_failure(err.to_string());
+                }
                 true
             }
             Err(mpsc::TryRecvError::Empty) => false,
@@ -536,15 +855,21 @@ impl LspSessionHandle {
                 }
             }
         }
+        if transport_death.is_none() {
+            transport_death = worker
+                .transport_dead
+                .lock()
+                .ok()
+                .and_then(|mut signal| signal.take());
+        }
         if let Some(reason) = transport_death {
             // Route through the restart circuit breaker (PKT-LSP-C T3):
             // BackingOff with auto-retry while budget remains, Failed after.
             self.transition_failure(truncate_reason(&format!("LSP transport died: {reason}")));
         } else if worker_disconnected {
-            // Worker thread exited without reporting; treat as session failure.
-            self.state = LspSessionState::Failed {
-                reason: "LSP worker thread exited unexpectedly".to_string(),
-            };
+            // Worker thread exited without reporting; treat it as a bounded
+            // transport failure so the normal restart circuit breaker applies.
+            self.transition_failure("LSP worker thread exited unexpectedly".to_string());
         }
         results
     }
@@ -621,9 +946,12 @@ impl LspSessionHandle {
         match &self.state {
             LspSessionState::Idle | LspSessionState::Starting { .. } => None,
             LspSessionState::Live(worker) => Some(worker.health.clone()),
-            LspSessionState::BackingOff { .. }
-            | LspSessionState::Refused { .. }
-            | LspSessionState::Failed { .. } => Some(unavailable_health_record()),
+            LspSessionState::BackingOff { restart_count, .. } => {
+                unavailable_health_record_for(self.selected_metadata.as_ref(), *restart_count)
+            }
+            LspSessionState::Refused { .. } | LspSessionState::Failed { .. } => {
+                unavailable_health_record_for(self.selected_metadata.as_ref(), self.restart_count)
+            }
         }
     }
 
@@ -638,18 +966,17 @@ impl LspSessionHandle {
         }
     }
 
-    /// Returns the redacted stderr ring-buffer projection when the session is
-    /// `Live` and the ring contains at least one line; `None` otherwise
-    /// (PKT-LSP-C T4).
+    /// Returns the redacted stderr ring-buffer projection whenever startup or
+    /// the live session has captured at least one line; `None` otherwise
+    /// (PKT-LSP-C T4).  The handle-owned ring survives startup failures and
+    /// bounded automatic retries so diagnostics remain available in those
+    /// states too.
     ///
     /// The lines are copies of the redacted strings stored in the ring buffer
     /// at the time of the call; they are metadata-only (all file paths have
     /// been replaced with `[REDACTED]` by the drain thread).
     pub fn stderr_log_projection(&self) -> Option<LspSessionLogProjection> {
-        let LspSessionState::Live(worker) = &self.state else {
-            return None;
-        };
-        let guard = worker.stderr_ring.lock().ok()?;
+        let guard = self.stderr_ring.lock().ok()?;
         if guard.is_empty() {
             return None;
         }
@@ -660,26 +987,31 @@ impl LspSessionHandle {
     }
 }
 
-/// Spawns the session worker thread.  Returns `(request_tx, result_rx)`.
+/// Spawns the session worker thread.  Returns `(request_tx, result_rx,
+/// transport_dead)`; the terminal signal is separate from the bounded result
+/// queue so a full queue cannot lose lifecycle failure information.
 ///
 /// The channel capacities are intentionally small:
 ///   - `request_tx`: capacity 1 — one in-flight LSP request at a time;
 ///     subsequent sends are dropped and retried on the next keystroke.
 ///   - `result_rx`: capacity 16 — allow batching of diagnostic notifications.
 fn spawn_session_worker(
-    mut session: RustAnalyzerSession,
+    mut session: LanguageServerSession,
 ) -> (
     mpsc::SyncSender<LspWorkerRequest>,
     mpsc::Receiver<LspWorkerResult>,
+    TransportDeathSignal,
 ) {
     let (request_tx, request_rx) = mpsc::sync_channel::<LspWorkerRequest>(1);
     let (result_tx, result_rx) = mpsc::sync_channel::<LspWorkerResult>(16);
+    let transport_dead: TransportDeathSignal = Arc::new(Mutex::new(None));
+    let worker_transport_dead = Arc::clone(&transport_dead);
 
     thread::spawn(move || {
-        run_session_worker(&mut session, request_rx, result_tx);
+        run_session_worker(&mut session, request_rx, result_tx, worker_transport_dead);
     });
 
-    (request_tx, result_rx)
+    (request_tx, result_rx, transport_dead)
 }
 
 /// Worker thread main loop.
@@ -689,9 +1021,10 @@ fn spawn_session_worker(
 /// - On timeout (no request), drains any buffered `publishDiagnostics`
 ///   notifications from the reader channel and forwards them to the frame path.
 fn run_session_worker(
-    session: &mut RustAnalyzerSession,
+    session: &mut LanguageServerSession,
     request_rx: mpsc::Receiver<LspWorkerRequest>,
     result_tx: mpsc::SyncSender<LspWorkerResult>,
+    transport_dead: TransportDeathSignal,
 ) {
     const NOTIFICATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -746,7 +1079,15 @@ fn run_session_worker(
                             )
                         }
                     };
-                    let _ = result_tx.try_send(LspWorkerResult::TransportDead { reason });
+                    let bounded_reason = truncate_reason(&reason);
+                    if let Ok(mut terminal) = transport_dead.lock()
+                        && terminal.is_none()
+                    {
+                        *terminal = Some(bounded_reason.clone());
+                    }
+                    let _ = result_tx.try_send(LspWorkerResult::TransportDead {
+                        reason: bounded_reason,
+                    });
                     break;
                 }
             }
@@ -864,10 +1205,12 @@ fn render_stderr_line(raw_line: &[u8], truncated: bool) -> String {
 /// `configured_server_path` overrides PATH-based discovery when `Some`.
 /// Tests pass the mock binary path this way rather than mutating the process
 /// environment (which races in parallel test execution).
+#[cfg(any(test, feature = "test-helpers"))]
 fn startup_session(
     workspace_root: &Path,
     root_uri: &str,
     configured_server_path: Option<PathBuf>,
+    stderr_ring: Arc<Mutex<VecDeque<String>>>,
 ) -> Result<RustAnalyzerSession, LanguageSessionError> {
     let resolved_discovery = if let Some(configured_path) = configured_server_path {
         // Caller supplied an explicit binary path (e.g. mock server in tests).
@@ -919,7 +1262,7 @@ fn startup_session(
         workspace_trust_state: WorkspaceTrustState::Trusted,
         privacy_scope: SemanticPrivacyScope::Workspace,
         privacy_scope_allowed: true,
-        required_capability: CapabilityId("process.spawn".to_string()),
+        required_capability: CapabilityId("lsp.launch".to_string()),
         decision_id: Some(CapabilityDecisionId(1)),
         diagnostics: Vec::new(),
         schema_version: 1,
@@ -957,6 +1300,11 @@ fn startup_session(
 
     let mut launcher = LspStdioLauncher::new();
     let mut session = RustAnalyzerSession::launch(config, &mut launcher)?;
+    if let Some(stderr) = session.take_stderr() {
+        thread::spawn(move || {
+            drain_stderr(stderr, stderr_ring);
+        });
+    }
     // Pass `files.watcher: "client"` so rust-analyzer does not start its own
     // notify file-watcher on the workspace root.  The notify watcher fails on
     // temp-path workspaces with a "Input watch path is neither a file nor a
@@ -970,14 +1318,58 @@ fn startup_session(
         None,
     )?;
 
-    // Spawn the stderr drain thread now that the session is initialised.
-    // The ring Arc is cloned into the thread; the session keeps the other
-    // clone so `drain()` can extract it when transitioning to Live.
+    Ok(session)
+}
+
+/// Runs generic configured startup on the background startup thread.
+///
+/// The descriptor is supplied by the app authority.  In particular, this
+/// function intentionally does not discover a binary, consult a broker, or
+/// manufacture identity/approval metadata.
+fn startup_configured_session(
+    config: Arc<LanguageServerStartConfig>,
+    cancel: Arc<AtomicBool>,
+    stderr_ring: Arc<Mutex<VecDeque<String>>>,
+) -> Result<LanguageServerSession, LanguageSessionError> {
+    if cancel.load(Ordering::Acquire) {
+        return Err(LanguageSessionError::Unavailable);
+    }
+    let canonical_root = std::fs::canonicalize(&config.workspace_root).map_err(|error| {
+        LanguageSessionError::InvalidConfiguration(format!(
+            "workspace root cannot be canonicalized: {error}"
+        ))
+    })?;
+    if !canonical_root.is_dir() {
+        return Err(LanguageSessionError::InvalidConfiguration(
+            "workspace root is not a directory".to_string(),
+        ));
+    }
+    let expected_root_uri = path_to_file_uri(&canonical_root);
+    if config.root_uri != expected_root_uri {
+        return Err(LanguageSessionError::InvalidConfiguration(
+            "root_uri does not match the configured workspace root".to_string(),
+        ));
+    }
+    let root_uri = config.root_uri.clone();
+    let initialization_options = config.initialization_options.clone();
+    let client_capabilities = config.client_capabilities.clone();
+    let mut launcher = LspStdioLauncher::new();
+    let mut session = LanguageServerSession::launch_configured(
+        clone_launch_config(&config.launch_config),
+        &mut launcher,
+    )?;
     if let Some(stderr) = session.take_stderr() {
-        let ring = session.stderr_ring();
         thread::spawn(move || {
-            drain_stderr(stderr, ring);
+            drain_stderr(stderr, stderr_ring);
         });
+    }
+    if cancel.load(Ordering::Acquire) {
+        return Err(LanguageSessionError::Unavailable);
+    }
+    session.initialize_with_options(&root_uri, initialization_options, client_capabilities)?;
+
+    if cancel.load(Ordering::Acquire) {
+        return Err(LanguageSessionError::Unavailable);
     }
 
     Ok(session)
@@ -1003,7 +1395,7 @@ impl LspSessionHandle {
             health,
             request_tx,
             result_rx,
-            stderr_ring: Arc::new(Mutex::new(VecDeque::new())),
+            transport_dead: Arc::new(Mutex::new(None)),
         }));
     }
 
@@ -1020,7 +1412,7 @@ impl LspSessionHandle {
             health,
             request_tx,
             result_rx,
-            stderr_ring: Arc::new(Mutex::new(VecDeque::new())),
+            transport_dead: Arc::new(Mutex::new(None)),
         }));
         request_rx
     }
@@ -1031,10 +1423,7 @@ impl LspSessionHandle {
     /// child process (PKT-LSP-C T4).
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn inject_stderr_ring_for_test(&mut self, lines: Vec<String>) {
-        let LspSessionState::Live(worker) = &mut self.state else {
-            return;
-        };
-        let Ok(mut guard) = worker.stderr_ring.lock() else {
+        let Ok(mut guard) = self.stderr_ring.lock() else {
             return;
         };
         for line in lines {
@@ -1042,6 +1431,18 @@ impl LspSessionHandle {
                 guard.pop_front();
             }
             guard.push_back(line);
+        }
+    }
+
+    /// Test-only: signal a transport death through the production sideband
+    /// while the bounded result queue may be full.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn signal_transport_dead_for_test(&mut self, reason: impl Into<String>) {
+        let LspSessionState::Live(worker) = &self.state else {
+            return;
+        };
+        if let Ok(mut signal) = worker.transport_dead.lock() {
+            *signal = Some(reason.into());
         }
     }
 
@@ -1060,7 +1461,7 @@ impl LspSessionHandle {
             health,
             request_tx,
             result_rx,
-            stderr_ring: Arc::new(Mutex::new(VecDeque::new())),
+            transport_dead: Arc::new(Mutex::new(None)),
         }));
         result_tx
     }
@@ -1085,6 +1486,12 @@ impl LspSessionHandle {
     }
 }
 
+impl Drop for LspSessionHandle {
+    fn drop(&mut self) {
+        self.cancel_pending_start();
+    }
+}
+
 /// Returns the current UNIX time in milliseconds (wall clock, not monotonic).
 /// Used to compute backoff deadlines and remaining countdown.
 fn now_unix_ms() -> u64 {
@@ -1105,8 +1512,30 @@ fn truncate_reason(reason: &str) -> String {
 }
 
 /// Returns a synthetic Unavailable health record for refused/failed handles.
+fn unavailable_health_record_for(
+    metadata: Option<&LspSelectedServerMetadata>,
+    restart_count: u32,
+) -> Option<LspServerHealthRecord> {
+    let metadata = metadata?;
+    Some(LspServerHealthRecord {
+        server_id: metadata.server_id,
+        language_id: metadata.language_id.clone(),
+        binary_provenance: metadata.binary_provenance,
+        binary_path_hash: None,
+        artifact_hash: metadata.artifact_hash.clone(),
+        version: metadata.version.clone(),
+        init_status: LspResultStatus::Unavailable,
+        capabilities: Vec::new(),
+        diagnostics_latency_ms: None,
+        restart_count,
+        download_decision_id: metadata.download_decision_id,
+        schema_version: LspServerHealthRecord::schema_version(),
+    })
+}
+
+/// Legacy compatibility health record for test-only injected handles.
+#[cfg(test)]
 fn unavailable_health_record() -> LspServerHealthRecord {
-    use legion_protocol::LspServerBinaryProvenance;
     LspServerHealthRecord {
         server_id: LanguageServerId(0),
         language_id: LanguageId("rust".to_string()),
@@ -1271,6 +1700,364 @@ mod backoff_tests {
     }
 }
 
+#[cfg(test)]
+mod generic_startup_tests {
+    use super::*;
+    use legion_protocol::{
+        CapabilityDecisionId, CapabilityId, CausalityId, CorrelationId, FileFingerprint,
+        LspConfiguredServerIdentity, LspLaunchPolicyDecision, LspServerBinaryProvenance,
+        LspSessionLifecycleKind, LspWorkspaceTrustPosture, RedactionHint, SemanticPrivacyScope,
+        WorkspaceId, WorkspaceRootId, WorkspaceTrustState,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use uuid::Uuid;
+
+    fn wait_for_backoff(handle: &mut LspSessionHandle) {
+        for _ in 0..100 {
+            handle.drain();
+            if handle.is_backing_off() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("startup did not reach BackingOff within bounded test window");
+    }
+
+    fn wait_for_refused_or_failed(handle: &mut LspSessionHandle) {
+        for _ in 0..100 {
+            handle.drain();
+            if handle.is_refused_or_failed() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("startup did not reach Refused/Failed within bounded test window");
+    }
+
+    fn configured_python_start() -> Option<LanguageServerStartConfig> {
+        let executable = std::env::current_exe().ok()?;
+        let profile_dir = executable.parent()?.parent()?;
+        let binary = profile_dir.join(if cfg!(windows) {
+            "mock_lsp_server.exe"
+        } else {
+            "mock_lsp_server"
+        });
+        if !binary.is_file() {
+            return None;
+        }
+        let workspace_root = profile_dir.to_path_buf();
+        let command = binary.to_string_lossy().into_owned();
+        let identity = LspConfiguredServerIdentity {
+            server_id: LanguageServerId(901),
+            workspace_id: WorkspaceId(902),
+            root_id: Some(WorkspaceRootId(903)),
+            language_id: LanguageId("python".to_string()),
+            display_name: "mock-pyright".to_string(),
+            command_hash: FileFingerprint {
+                algorithm: "test".to_string(),
+                value: "mock-python".to_string(),
+            },
+            args_hash: None,
+            env_hash: None,
+            cwd_hash: None,
+            settings_hash: None,
+            redaction_hints: vec![RedactionHint::MetadataOnly],
+            schema_version: 1,
+        };
+        let posture = LspWorkspaceTrustPosture {
+            workspace_id: WorkspaceId(902),
+            workspace_trust_state: WorkspaceTrustState::Trusted,
+            privacy_scope: SemanticPrivacyScope::Workspace,
+            privacy_scope_allowed: true,
+            required_capability: CapabilityId("lsp.launch".to_string()),
+            decision_id: Some(CapabilityDecisionId(904)),
+            diagnostics: Vec::new(),
+            schema_version: 1,
+        };
+        let policy = LspLaunchPolicyDecision::evaluate(
+            identity,
+            posture,
+            true,
+            CorrelationId(905),
+            CausalityId(Uuid::from_u128(906)),
+            Vec::new(),
+            1,
+        );
+        let root_uri = path_to_file_uri(&workspace_root);
+        Some(LanguageServerStartConfig {
+            workspace_root,
+            root_uri,
+            launch_config: LanguageServerLaunchConfig {
+                supervisor: LspSupervisorConfig {
+                    launch_policy: policy,
+                    process: LspServerProcessConfig {
+                        command,
+                        args: vec!["--stdio".to_string(), "--python".to_string()],
+                        cwd: None,
+                        env: Vec::new(),
+                    },
+                    initial_backoff_ms: 10,
+                    max_backoff_ms: 100,
+                    max_restart_attempts: 1,
+                },
+                server_id: LanguageServerId(901),
+                language_id: LanguageId("python".to_string()),
+                binary_provenance: LspServerBinaryProvenance::Downloaded,
+                artifact_hash: Some(FileFingerprint {
+                    algorithm: "sha256".to_string(),
+                    value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        .to_string(),
+                }),
+                version: Some("1.1.400".to_string()),
+                download_decision_id: None,
+            },
+            initialization_options: None,
+            client_capabilities: None,
+        })
+    }
+
+    fn test_metadata() -> LspSelectedServerMetadata {
+        LspSelectedServerMetadata {
+            server_id: LanguageServerId(901),
+            language_id: LanguageId("python".to_string()),
+            binary_provenance: LspServerBinaryProvenance::Downloaded,
+            artifact_hash: None,
+            version: Some("1.1.400".to_string()),
+            download_decision_id: Some(CapabilityDecisionId(904)),
+        }
+    }
+
+    #[test]
+    fn configured_non_rust_mock_launch_reaches_live_with_python_health() {
+        let Some(config) = configured_python_start() else {
+            eprintln!("skip: mock_lsp_server binary not found");
+            return;
+        };
+        let mut handle = LspSessionHandle::new();
+        handle.start_for_workspace_with_config(config);
+        for _ in 0..250 {
+            handle.drain();
+            if handle.is_live() {
+                let health = handle.health_record().expect("live health");
+                assert_eq!(health.language_id, LanguageId("python".to_string()));
+                assert_eq!(health.server_id, LanguageServerId(901));
+                return;
+            }
+            if handle.is_refused_or_failed() {
+                panic!(
+                    "configured Python mock launch failed: {:?}",
+                    handle.session_status_projection()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(4));
+        }
+        panic!("configured Python mock launch did not become live");
+    }
+
+    #[test]
+    fn configured_handshake_failure_retains_early_stderr() {
+        let Some(mut config) = configured_python_start() else {
+            eprintln!("skip: mock_lsp_server binary not found");
+            return;
+        };
+        config
+            .launch_config
+            .supervisor
+            .process
+            .env
+            .push(("MOCK_LSP_FAIL_INITIALIZE".to_string(), "1".to_string()));
+
+        let mut handle = LspSessionHandle::new();
+        handle.start_for_workspace_with_config(config);
+        for _ in 0..2_000 {
+            handle.drain();
+            if handle.is_refused_or_failed() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(4));
+        }
+        assert!(
+            handle.is_refused_or_failed(),
+            "handshake fixture should exhaust bounded startup retries: {:?}",
+            handle.session_status_projection()
+        );
+
+        for _ in 0..100 {
+            handle.drain();
+            if let Some(log) = handle.stderr_log_projection() {
+                assert!(
+                    log.lines
+                        .iter()
+                        .any(|line| line.contains("initialize fixture failure"))
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!(
+            "handshake failure lost early stderr: status={:?}",
+            handle.session_status_projection()
+        );
+    }
+
+    #[test]
+    fn replacing_or_dropping_start_cancels_late_preparation() {
+        let started = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed_started = Arc::clone(&started);
+        let observed_cancelled = Arc::clone(&cancelled);
+        let mut handle = LspSessionHandle::new();
+        handle.start_preparing(
+            PathBuf::from("C:/legion-old"),
+            test_metadata(),
+            move |cancel| {
+                observed_started.store(true, Ordering::Release);
+                while !cancel.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                observed_cancelled.store(true, Ordering::Release);
+                Err(LanguageSessionError::Unavailable)
+            },
+        );
+        for _ in 0..100 {
+            if started.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(started.load(Ordering::Acquire));
+
+        handle.restart_for_workspace_preparing(
+            PathBuf::from("C:/legion-new"),
+            test_metadata(),
+            |_cancel| {
+                Err(LanguageSessionError::InvalidConfiguration(
+                    "replacement denied in test".to_string(),
+                ))
+            },
+        );
+        wait_for_refused_or_failed(&mut handle);
+        assert!(cancelled.load(Ordering::Acquire));
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let observed_dropped = Arc::clone(&dropped);
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let mut pending = LspSessionHandle::new();
+        pending.start_preparing(
+            PathBuf::from("C:/legion-drop"),
+            test_metadata(),
+            move |cancel| {
+                entered_tx.send(()).expect("drop test receiver is alive");
+                while !cancel.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                observed_dropped.store(true, Ordering::Release);
+                Err(LanguageSessionError::Unavailable)
+            },
+        );
+        assert!(
+            entered_rx.recv_timeout(Duration::from_secs(1)).is_ok(),
+            "drop test preparation did not start"
+        );
+        drop(pending);
+        for _ in 0..100 {
+            if dropped.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(dropped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn configured_preparation_failure_does_not_attempt_a_launch() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed_calls = Arc::clone(&calls);
+        let mut handle = LspSessionHandle::new();
+        handle.start_preparing(
+            PathBuf::from("C:/legion-test-python"),
+            test_metadata(),
+            move |_cancel| {
+                observed_calls.fetch_add(1, Ordering::SeqCst);
+                Err(LanguageSessionError::InvalidConfiguration(
+                    "test approval denied".to_string(),
+                ))
+            },
+        );
+
+        wait_for_refused_or_failed(&mut handle);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            handle.session_status_projection().lifecycle,
+            LspSessionLifecycleKind::Refused
+        );
+    }
+
+    #[test]
+    fn automatic_retry_invokes_fresh_preparation_each_time() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed_calls = Arc::clone(&calls);
+        let mut handle = LspSessionHandle::new();
+        handle.start_preparing_with_factory(
+            PathBuf::from("C:/legion-test-python"),
+            test_metadata(),
+            move |_cancel| {
+                observed_calls.fetch_add(1, Ordering::SeqCst);
+                Err(LanguageSessionError::Unavailable)
+            },
+        );
+
+        wait_for_backoff(&mut handle);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        handle.set_backing_off_for_test(1, true);
+        assert!(handle.drain());
+        wait_for_backoff(&mut handle);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn failed_python_preparation_preserves_selected_health_metadata() {
+        let mut handle = LspSessionHandle::new();
+        handle.start_preparing(
+            PathBuf::from("C:/legion-python"),
+            test_metadata(),
+            |_cancel| Err(LanguageSessionError::Unavailable),
+        );
+
+        wait_for_backoff(&mut handle);
+        let health = handle.health_record().expect("selected metadata health");
+        assert_eq!(health.server_id, LanguageServerId(901));
+        assert_eq!(health.language_id, LanguageId("python".to_string()));
+        assert_eq!(
+            health.binary_provenance,
+            LspServerBinaryProvenance::Downloaded
+        );
+        assert_eq!(health.version.as_deref(), Some("1.1.400"));
+        assert_eq!(health.download_decision_id, Some(CapabilityDecisionId(904)));
+        assert_eq!(health.restart_count, 1);
+    }
+
+    #[test]
+    fn one_shot_preparation_refuses_automatic_retry_without_factory() {
+        let mut handle = LspSessionHandle::new();
+        handle.start_preparing(
+            PathBuf::from("C:/legion-test-python"),
+            test_metadata(),
+            |_cancel| Err(LanguageSessionError::Unavailable),
+        );
+
+        wait_for_backoff(&mut handle);
+        handle.set_backing_off_for_test(1, true);
+        assert!(handle.drain());
+        assert!(handle.is_refused_or_failed());
+        assert_eq!(
+            handle.session_status_projection().failure_reason.as_deref(),
+            Some("automatic restart requires fresh app preparation")
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PKT-LSP-C T4: stderr ring buffer as redacted projection — TDD tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1278,7 +2065,7 @@ mod backoff_tests {
 mod stderr_tests {
     use super::*;
     use legion_protocol::LspServerBinaryProvenance;
-    use std::io::{self, Read};
+    use std::io::{self, Cursor, Read};
 
     fn make_live_handle() -> LspSessionHandle {
         let mut handle = LspSessionHandle::new();
@@ -1309,6 +2096,23 @@ mod stderr_tests {
             handle.stderr_log_projection().is_none(),
             "idle handle must not project stderr"
         );
+    }
+
+    #[test]
+    fn t4_stderr_projection_survives_handshake_failure_state() {
+        let mut handle = LspSessionHandle::new();
+        handle.state = LspSessionState::Failed {
+            reason: "language-server handshake failed".to_string(),
+        };
+        drain_stderr_reader(
+            Cursor::new(b"mock handshake diagnostic\n"),
+            Arc::clone(&handle.stderr_ring),
+        );
+
+        let projection = handle
+            .stderr_log_projection()
+            .expect("startup stderr must remain available after handshake failure");
+        assert_eq!(projection.lines, vec!["mock handshake diagnostic"]);
     }
 
     // ── T4-2: Projection is None when ring is empty ──────────────────────────
@@ -1536,7 +2340,7 @@ mod transport_death_tests {
             workspace_trust_state: WorkspaceTrustState::Trusted,
             privacy_scope: SemanticPrivacyScope::Workspace,
             privacy_scope_allowed: true,
-            required_capability: CapabilityId("process.spawn".to_string()),
+            required_capability: CapabilityId("lsp.launch".to_string()),
             decision_id: Some(CapabilityDecisionId(1)),
             diagnostics: Vec::new(),
             schema_version: 1,
@@ -1583,8 +2387,10 @@ mod transport_death_tests {
         let (request_tx, request_rx) = mpsc::sync_channel::<LspWorkerRequest>(1);
         let (result_tx, result_rx) = mpsc::sync_channel::<LspWorkerResult>(16);
 
+        let transport_dead = Arc::new(Mutex::new(None));
+        let worker_transport_dead = Arc::clone(&transport_dead);
         let worker = thread::spawn(move || {
-            run_session_worker(&mut session, request_rx, result_tx);
+            run_session_worker(&mut session, request_rx, result_tx, worker_transport_dead);
         });
 
         // The worker must report transport death within a bounded window
@@ -1607,6 +2413,13 @@ mod transport_death_tests {
         worker
             .join()
             .expect("worker thread must exit after transport death");
+        assert!(
+            transport_dead
+                .lock()
+                .expect("transport signal lock")
+                .is_some(),
+            "transport death must remain observable independently of result queue"
+        );
         // Keep the request channel alive until after the join so the exit is
         // attributable to transport death, not channel disconnect.
         drop(request_tx);
@@ -1644,6 +2457,32 @@ mod transport_death_tests {
         assert!(
             reason.contains("test-injected"),
             "reason must carry the terminal event description, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn full_result_queue_cannot_drop_transport_death_lifecycle() {
+        let mut handle = LspSessionHandle::new();
+        let result_tx = handle.set_live_with_result_sender_for_test(unavailable_health_record());
+        for _ in 0..16 {
+            result_tx
+                .try_send(LspWorkerResult::DiagnosticBatch {
+                    raw_params: serde_json::json!({"diagnostics": []}),
+                })
+                .expect("test result queue should accept its bounded capacity");
+        }
+        handle.signal_transport_dead_for_test("reader terminated while result queue full");
+
+        let results = handle.try_drain_results();
+        assert_eq!(results.len(), 16, "queued diagnostics should still drain");
+        let status = handle.session_status_projection();
+        assert_eq!(status.lifecycle, LspSessionLifecycleKind::BackingOff);
+        assert_eq!(status.restart_count, 1);
+        assert!(
+            status
+                .failure_reason
+                .expect("sideband transport reason")
+                .contains("result queue full")
         );
     }
 }

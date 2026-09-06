@@ -20,10 +20,7 @@ fn registry_rebinds_catalog_to_real_workspace_without_mutating_catalog() {
     assert!(python[0].is_primary);
 
     let typescript = bound
-        .adapters_for_workspace_language(
-            WorkspaceId(77),
-            &LanguageId("typescript".to_string()),
-        )
+        .adapters_for_workspace_language(WorkspaceId(77), &LanguageId("typescript".to_string()))
         .expect("bound TypeScript plans should be selectable");
     assert_eq!(typescript.len(), 2);
     assert!(typescript[0].is_primary);
@@ -36,9 +33,11 @@ fn registry_rebinds_catalog_to_real_workspace_without_mutating_catalog() {
         .expect("catalog Python plan should remain available");
     assert_eq!(original.workspace_id, WorkspaceId(1));
 
-    assert!(bound
-        .adapters_for_workspace_language(WorkspaceId(0), &LanguageId("python".to_string()))
-        .is_err());
+    assert!(
+        bound
+            .adapters_for_workspace_language(WorkspaceId(0), &LanguageId("python".to_string()))
+            .is_err()
+    );
     assert!(catalog.for_workspace(WorkspaceId(0)).is_err());
 }
 
@@ -215,17 +214,27 @@ fn downloaded_pyright_resolves_to_node_and_absolute_entrypoint() {
     let config = adapter
         .resolve_downloaded_process(&root_path, &node, "v18.20.0")
         .expect("materialized package should resolve");
+    let entrypoint_argument = |path: &std::path::Path| {
+        let value = path.canonicalize().unwrap().to_string_lossy().into_owned();
+        if cfg!(windows) {
+            if let Some(rest) = value.strip_prefix("\\\\?\\") {
+                if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
+                    return rest.to_string();
+                }
+                if let Some(unc) = rest.strip_prefix("UNC\\") {
+                    return format!("\\\\{unc}");
+                }
+            }
+        }
+        value
+    };
     assert_eq!(
         config.command,
         node.canonicalize().unwrap().to_string_lossy()
     );
     assert_eq!(
         config.args[0],
-        root_path
-            .join("package/langserver.index.js")
-            .canonicalize()
-            .unwrap()
-            .to_string_lossy()
+        entrypoint_argument(&root_path.join("package/langserver.index.js"))
     );
     assert_eq!(config.args[1], "--stdio");
     std::fs::remove_dir_all(root_path).expect("cleanup");

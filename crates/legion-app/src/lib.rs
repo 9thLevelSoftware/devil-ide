@@ -148,7 +148,7 @@ use legion_debug::{
 };
 use legion_editor::{
     Cursor, DirectedCaret, EditorEngine, EditorError, PreferredX, SaveAcknowledgement,
-    SaveRequestDto, Selection, ShapedVisualRow, TextEdit, TextPosition,
+    SaveRequestDto, Selection, ShapedVisualRow, SnapshotLeaseLineChunk, TextEdit, TextPosition,
     TextRange as EditorTextRange, VerticalCaretStop, VerticalDirection, VerticalLayoutId,
     VerticalMovementRequest, VerticalSourceRow,
 };
@@ -226,19 +226,19 @@ use legion_protocol::{
     InlinePredictionStaleReason, InlinePredictionTriggerKind, LanguageBreadcrumbProjection,
     LanguageCodeLensProjection, LanguageCompletionProjection, LanguageHoverProjection, LanguageId,
     LanguageInlayHintProjection, LanguageLocationProjection, LanguageOutlineSymbolProjection,
-    LanguageProblemProjection, LanguageStickyScopeProjection, LanguageToolingOperationKind,
-    LanguageToolingOperationProjection, LanguageToolingProjection, LanguageToolingStatusKind,
-    LegionCloudLaneProjection, LegionCloudLaneProjectionRow, LegionCloudLaneTaskId,
-    LegionCloudLaneTaskRequest, LegionCloudLaneTaskState, LegionCloudLaneTaskStatus,
-    LegionEvidenceRecord, LegionTaskPacket, LegionWorkerResult, LegionWorkflowConflictId,
-    LegionWorkflowConflictState, LegionWorkflowDecisionFeedEntry, LegionWorkflowDecisionId,
-    LegionWorkflowDecisionKind, LegionWorkflowDependencyState, LegionWorkflowKillSwitch,
-    LegionWorkflowKillSwitchId, LegionWorkflowKillSwitchState, LegionWorkflowMergeApproval,
-    LegionWorkflowMergeReadiness, LegionWorkflowMergeReadinessState, LegionWorkflowProjection,
-    LegionWorkflowRiskHaltReason, LegionWorkflowRiskMonitorId, LegionWorkflowRiskMonitorSnapshot,
-    LegionWorkflowRiskMonitorState, LegionWorkflowSession, LegionWorkflowSessionId,
-    LegionWorkflowSignOffId, LegionWorkflowSignOffState, LegionWorkflowState,
-    LegionWorkflowVerificationGateId, LegionWorkflowVerificationGateState,
+    LanguageProblemProjection, LanguageServerId, LanguageStickyScopeProjection,
+    LanguageToolingOperationKind, LanguageToolingOperationProjection, LanguageToolingProjection,
+    LanguageToolingStatusKind, LegionCloudLaneProjection, LegionCloudLaneProjectionRow,
+    LegionCloudLaneTaskId, LegionCloudLaneTaskRequest, LegionCloudLaneTaskState,
+    LegionCloudLaneTaskStatus, LegionEvidenceRecord, LegionTaskPacket, LegionWorkerResult,
+    LegionWorkflowConflictId, LegionWorkflowConflictState, LegionWorkflowDecisionFeedEntry,
+    LegionWorkflowDecisionId, LegionWorkflowDecisionKind, LegionWorkflowDependencyState,
+    LegionWorkflowKillSwitch, LegionWorkflowKillSwitchId, LegionWorkflowKillSwitchState,
+    LegionWorkflowMergeApproval, LegionWorkflowMergeReadiness, LegionWorkflowMergeReadinessState,
+    LegionWorkflowProjection, LegionWorkflowRiskHaltReason, LegionWorkflowRiskMonitorId,
+    LegionWorkflowRiskMonitorSnapshot, LegionWorkflowRiskMonitorState, LegionWorkflowSession,
+    LegionWorkflowSessionId, LegionWorkflowSignOffId, LegionWorkflowSignOffState,
+    LegionWorkflowState, LegionWorkflowVerificationGateId, LegionWorkflowVerificationGateState,
     LegionWorkflowWorkerAssignment, LegionWorkflowWorkerId, LegionWorkflowWorkerState,
     LineWrappingPolicy, LspEditProposalConversionInput, LspRequestCorrelation, McpListChangedKind,
     McpPrimitiveKind, McpRegistrySnapshot, McpServerId, McpToolDescriptor, McpToolName,
@@ -261,9 +261,9 @@ use legion_protocol::{
     SaveIntent, SemanticGrammarVersion, SemanticModelVersion, SemanticPrivacyScope,
     SemanticQueryFreshnessPolicy, SemanticQueryId, SemanticQueryKind, SemanticQueryRequest,
     SemanticQueryScope, SessionDirtyIndicator, SessionPanelState, SessionTab, SessionTabGroup,
-    SnapshotId, SpecArtifact, StorageRepositoryPort, StorageRepositoryRequest,
-    StorageRepositoryResponse, SymbolFileMapRecord, TaskGraphArtifact, TerminalInput,
-    TerminalKillEscalation, TerminalKillRequest, TerminalOutputRowProjection,
+    SnapshotConsumerKind, SnapshotId, SnapshotLeaseDescriptor, SpecArtifact, StorageRepositoryPort,
+    StorageRepositoryRequest, StorageRepositoryResponse, SymbolFileMapRecord, TaskGraphArtifact,
+    TerminalInput, TerminalKillEscalation, TerminalKillRequest, TerminalOutputRowProjection,
     TerminalPanelProjection, TerminalPanelStatus, TerminalPanelStatusKind,
     TerminalPolicyProjection, TerminalResize, TerminalRuntimeState, TerminalScrollbackProjection,
     TerminalSearchProjection, TerminalSessionId, TextCoordinate,
@@ -6247,15 +6247,30 @@ impl ProposalPort for AppProposalCoordinator {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 struct CorrelationGenerator {
-    next: u64,
+    next: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl CorrelationGenerator {
-    fn next(&mut self) -> CorrelationId {
-        self.next = self.next.saturating_add(1).max(1);
-        CorrelationId(self.next)
+    fn next(&self) -> CorrelationId {
+        let value = self
+            .next
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |current| current.checked_add(1),
+            )
+            .expect("correlation id exhausted");
+        CorrelationId(value)
+    }
+}
+
+impl Default for CorrelationGenerator {
+    fn default() -> Self {
+        Self {
+            next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
     }
 }
 
@@ -8705,7 +8720,12 @@ mod language_id_for_path_tests {
 
     #[test]
     fn recognizes_python_source_stub_and_windows_extensions_case_insensitively() {
-        for path in ["src/main.py", "src/types.pyi", "src/tool.pyw", "src/MAIN.PY"] {
+        for path in [
+            "src/main.py",
+            "src/types.pyi",
+            "src/tool.pyw",
+            "src/MAIN.PY",
+        ] {
             assert_eq!(
                 language_id_for_path(&CanonicalPath(path.to_string())),
                 LanguageId("python".to_string())
@@ -14666,6 +14686,12 @@ pub struct AppComposition {
     terminal_workflow: TerminalWorkflow,
     /// Background LSP session lifecycle (PKT-LSP-B T1 / D4).
     lsp_session: crate::language::LspSessionHandle,
+    /// App-owned language startup authority and selected adapter registry.
+    language_startup_authority: crate::language::LanguageStartupAuthority,
+    language_server_registry: legion_lsp::LanguageServerAdapterRegistry,
+    language_server_configured_paths: HashMap<LanguageServerId, std::path::PathBuf>,
+    language_server_downloaded: HashMap<LanguageServerId, LanguageDownloadedStartup>,
+    language_server_local_downloads: HashMap<LanguageServerId, LanguageDownloadedLocalConfig>,
     /// Direction awaiting a `prepareCallHierarchy` response.
     ///
     /// Call hierarchy is two round trips: `prepareCallHierarchy` resolves the
@@ -14702,6 +14728,41 @@ pub struct AppComposition {
     /// `None` means no org bundle is installed; the type has no unverified
     /// constructor, so a bundle here has had its signature checked.
     org_policy_bundle: Option<legion_security::VerifiedPolicyBundle>,
+}
+
+#[derive(Clone)]
+struct LanguageDownloadedStartup {
+    adapter: legion_lsp::LanguageServerAdapterPlan,
+    descriptor: crate::language::ArtifactDescriptor,
+    artifact: crate::language::MaterializedArtifact,
+    approved_node: crate::language::ApprovedNodeRuntime,
+    runtime_request: crate::language::NodeRuntimeApprovalRequest,
+}
+
+#[derive(Clone)]
+struct LanguageDownloadedLocalConfig {
+    adapter: legion_lsp::LanguageServerAdapterPlan,
+    archive: PathBuf,
+    node_path: PathBuf,
+    cache_root: PathBuf,
+}
+
+#[derive(Clone)]
+enum LanguageStartupSelection {
+    Configured(legion_lsp::LspServerProcessConfig),
+    Downloaded(Box<LanguageDownloadedStartup>),
+    DownloadedLocal(Box<LanguageDownloadedLocalConfig>),
+}
+
+struct LanguageStartupInputs {
+    root: String,
+    authority: crate::language::LanguageStartupAuthority,
+    context: crate::language::LanguageStartupContext,
+    server_id: LanguageServerId,
+    language_id: LanguageId,
+    display_name: String,
+    selection: LanguageStartupSelection,
+    root_uri: String,
 }
 
 struct InlinePredictionRequestArgs<'a> {
@@ -14964,6 +15025,7 @@ impl AppComposition {
             SecurityPolicy::default(),
             CapabilityNamespace("app".to_string()),
         );
+        let language_policy_store = Arc::new(std::sync::Mutex::new(security.clone()));
         let workspace = Arc::new(WorkspaceActor::with_event_sink(
             fs,
             watcher,
@@ -15055,6 +15117,14 @@ impl AppComposition {
             language_tooling: LanguageToolingWorkflow::default(),
             terminal_workflow: TerminalWorkflow::default(),
             lsp_session: crate::language::LspSessionHandle::new(),
+            language_startup_authority:
+                crate::language::LanguageStartupAuthority::with_policy_store(Arc::clone(
+                    &language_policy_store,
+                )),
+            language_server_registry: legion_lsp::LanguageServerAdapterRegistry::tier_two(),
+            language_server_configured_paths: HashMap::new(),
+            language_server_downloaded: HashMap::new(),
+            language_server_local_downloads: HashMap::new(),
             pending_call_hierarchy: None,
             lsp_ui_completion_debounce: None,
             lsp_ui_last_completion_count: 0,
@@ -16338,6 +16408,9 @@ impl AppComposition {
         };
         self.active_documents
             .bind_workspace(opened.clone(), root_path, principal, trust.clone());
+        self.language_server_registry = legion_lsp::LanguageServerAdapterRegistry::tier_two()
+            .for_workspace(opened.workspace_id)
+            .unwrap_or_default();
         self.debug_workflow.clear_workspace_state();
         self.language_tooling.clear_workspace_state();
         self.assist_inline_prediction_state = AssistInlinePredictionState::default();
@@ -16358,20 +16431,115 @@ impl AppComposition {
         Ok(opened)
     }
 
+    /// Configure one exact language-server executable path for explicit
+    /// operator-approved startup. Paths are canonicalized before storage;
+    /// there is no PATH lookup or wildcard expansion.
+    pub fn configure_language_server_binary(
+        &mut self,
+        server_id: LanguageServerId,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<(), AppCompositionError> {
+        let path = std::fs::canonicalize(path.as_ref()).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: error.to_string(),
+            })
+        })?;
+        if !path.is_file() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: "configured language-server path is not a regular file".to_string(),
+            }));
+        }
+        self.language_startup_authority
+            .allow_exact_binary(&path)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_server_binary_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.language_server_configured_paths
+            .insert(server_id, path);
+        Ok(())
+    }
+
+    /// Bind a verified local artifact and approved Node identity to one
+    /// downloaded adapter. The receipt is revalidated for every startup
+    /// preparation; it is never treated as a download grant.
+    pub fn configure_downloaded_language_server(
+        &mut self,
+        adapter: legion_lsp::LanguageServerAdapterPlan,
+        descriptor: crate::language::ArtifactDescriptor,
+        artifact: crate::language::MaterializedArtifact,
+        approved_node: crate::language::ApprovedNodeRuntime,
+        runtime_request: crate::language::NodeRuntimeApprovalRequest,
+    ) {
+        self.language_server_downloaded.insert(
+            adapter.server_id,
+            LanguageDownloadedStartup {
+                adapter,
+                descriptor,
+                artifact,
+                approved_node,
+                runtime_request,
+            },
+        );
+    }
+
+    /// Configure an offline local archive and explicit Node executable. The
+    /// startup worker performs materialization and runtime approval itself.
+    pub fn configure_downloaded_language_server_local(
+        &mut self,
+        adapter: legion_lsp::LanguageServerAdapterPlan,
+        archive: impl Into<PathBuf>,
+        node_path: impl Into<PathBuf>,
+        cache_root: impl Into<PathBuf>,
+    ) -> Result<(), AppCompositionError> {
+        let node_path = std::fs::canonicalize(node_path.into()).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: error.to_string(),
+            })
+        })?;
+        if !node_path.is_file() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: "Node executable must be a regular file".to_string(),
+            }));
+        }
+        self.language_startup_authority
+            .allow_exact_binary(&node_path)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_server_binary_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.language_server_local_downloads.insert(
+            adapter.server_id,
+            LanguageDownloadedLocalConfig {
+                adapter,
+                archive: archive.into(),
+                node_path,
+                cache_root: cache_root.into(),
+            },
+        );
+        Ok(())
+    }
+
     /// Test-only: starts the LSP session using an explicit server binary path,
     /// bypassing PATH-based discovery.  Allows integration tests to inject the
     /// mock server without mutating the process environment (which races in
     /// parallel test execution).
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn force_lsp_start_with_server_path_for_test(&mut self, server_path: std::path::PathBuf) {
-        let Some(root) = self.active_documents.workspace_root_path.clone() else {
-            return;
-        };
-        self.lsp_session.start_for_workspace_with_server_path(
-            std::path::Path::new(&root),
-            true,
-            Some(server_path),
-        );
+        if self
+            .configure_language_server_binary(LanguageServerId(101), server_path)
+            .is_ok()
+        {
+            self.try_start_lsp_session_for_current_workspace();
+        }
     }
 
     /// Test-only: inject a live health record with given capabilities, so tests
@@ -16591,7 +16759,19 @@ impl AppComposition {
     /// opening an actual `.rs` file.  PKT-LSP-C T1 / T5.
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn force_lsp_start_for_test(&mut self) {
-        self.try_start_lsp_session_for_current_workspace();
+        if let Some(root) = self.active_documents.workspace_root_path.clone()
+            && !Path::new(&root).join("Cargo.toml").exists()
+        {
+            let trusted = self
+                .active_documents
+                .active_workspace_trust
+                .as_ref()
+                .is_some_and(|trust| *trust == WorkspaceTrustState::Trusted);
+            self.lsp_session
+                .start_for_workspace(Path::new(&root), trusted);
+        } else {
+            self.try_start_lsp_session_for_current_workspace();
+        }
     }
 
     /// Attempt to start the LSP session for the currently-open workspace.
@@ -16601,18 +16781,138 @@ impl AppComposition {
     /// If the workspace is untrusted the session immediately enters Refused.
     /// PKT-LSP-C T1.
     fn try_start_lsp_session_for_current_workspace(&mut self) {
-        let Some(root) = self.active_documents.workspace_root_path.clone() else {
+        let Some(inputs) = self.language_startup_inputs() else {
+            let Some(root) = self.active_documents.workspace_root_path.clone() else {
+                return;
+            };
+            let language_id = self
+                .active_documents
+                .active_file_path
+                .as_ref()
+                .map(|path| language_id_for_path(&CanonicalPath(path.clone())))
+                .unwrap_or_else(|| LanguageId("unknown".to_string()));
+            self.lsp_session.start_preparing(
+                PathBuf::from(root),
+                crate::language::LspSelectedServerMetadata {
+                    server_id: LanguageServerId(0),
+                    language_id,
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                },
+                |_cancel| {
+                Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "no explicitly configured language-server binary or verified local artifact for the active language".to_string(),
+                ))
+                },
+            );
             return;
         };
-        let trust = self
-            .active_documents
-            .active_workspace_trust
-            .as_ref()
-            .cloned()
-            .unwrap_or(WorkspaceTrustState::Untrusted);
-        let trusted = trust == WorkspaceTrustState::Trusted;
+        let LanguageStartupInputs {
+            root,
+            authority,
+            context,
+            server_id,
+            language_id,
+            display_name,
+            selection,
+            root_uri,
+        } = inputs;
+        let correlation_generator = self.correlation_generator.clone();
+        let preparation_selection = selection.clone();
+        let preparation_language_id = language_id.clone();
+        let preparation_display_name = display_name.clone();
+        let preparation_root_uri = root_uri.clone();
+        let preparation = move |cancel: Arc<std::sync::atomic::AtomicBool>| {
+            if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "language startup preparation cancelled".to_string(),
+                ));
+            }
+            let correlation_id = correlation_generator.next();
+            let mut context = context.clone();
+            context.correlation_id = correlation_id;
+            context.causality_id = CausalityId(uuid::Uuid::now_v7());
+            match &preparation_selection {
+                LanguageStartupSelection::Configured(process) => authority.prepare_configured(
+                    &context,
+                    server_id,
+                    preparation_language_id.clone(),
+                    preparation_display_name.clone(),
+                    process.clone(),
+                    preparation_root_uri.clone(),
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::Downloaded(downloaded) => authority.prepare_downloaded(
+                    &context,
+                    &downloaded.adapter,
+                    &downloaded.descriptor,
+                    &downloaded.artifact,
+                    &downloaded.approved_node,
+                    &crate::language::NodeRuntimeApprovalRequest {
+                        correlation_id: context.correlation_id,
+                        causality_id: context.causality_id,
+                        ..downloaded.runtime_request.clone()
+                    },
+                    Arc::clone(&cancel),
+                    preparation_root_uri.clone(),
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::DownloadedLocal(local) => authority
+                    .prepare_downloaded_local(
+                        &context,
+                        &local.adapter,
+                        &local.archive,
+                        &local.cache_root,
+                        &local.node_path,
+                        Arc::clone(&cancel),
+                        preparation_root_uri.clone(),
+                    ),
+            }
+        };
+        let metadata = match &selection {
+            LanguageStartupSelection::Configured(_) => crate::language::LspSelectedServerMetadata {
+                server_id,
+                language_id: language_id.clone(),
+                binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                artifact_hash: None,
+                version: None,
+                download_decision_id: None,
+            },
+            LanguageStartupSelection::Downloaded(downloaded) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: Some(legion_protocol::FileFingerprint {
+                        algorithm: "sha256-content-v1".to_string(),
+                        value: downloaded.artifact.sha256.clone(),
+                    }),
+                    version: Some(format!(
+                        "{}.{}.{}",
+                        downloaded.approved_node.observed_version().major,
+                        downloaded.approved_node.observed_version().minor,
+                        downloaded.approved_node.observed_version().patch,
+                    )),
+                    download_decision_id: None,
+                }
+            }
+            LanguageStartupSelection::DownloadedLocal(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                }
+            }
+        };
         self.lsp_session
-            .start_for_workspace(std::path::Path::new(&root), trusted);
+            .start_preparing_with_factory(PathBuf::from(root), metadata, preparation);
     }
 
     /// Restart the LSP session for the currently-open workspace, resetting
@@ -16621,18 +16921,201 @@ impl AppComposition {
     ///
     /// Called from the "Restart language server" palette command (PKT-LSP-C T1/T3).
     fn restart_lsp_session_for_current_workspace(&mut self) {
-        let Some(root) = self.active_documents.workspace_root_path.clone() else {
+        let Some(inputs) = self.language_startup_inputs() else {
+            let Some(root) = self.active_documents.workspace_root_path.clone() else {
+                return;
+            };
+            let language_id = self
+                .active_documents
+                .active_file_path
+                .as_ref()
+                .map(|path| language_id_for_path(&CanonicalPath(path.clone())))
+                .unwrap_or_else(|| LanguageId("unknown".to_string()));
+            self.lsp_session.restart_for_workspace_preparing(
+                PathBuf::from(root),
+                crate::language::LspSelectedServerMetadata {
+                    server_id: LanguageServerId(0),
+                    language_id,
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                },
+                |_cancel| {
+                Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "no explicitly configured language-server binary or verified local artifact for the active language".to_string(),
+                ))
+                },
+            );
             return;
         };
+        let LanguageStartupInputs {
+            root,
+            authority,
+            context,
+            server_id,
+            language_id,
+            display_name,
+            selection,
+            root_uri,
+        } = inputs;
+        let correlation_id = self.correlation_generator.next();
+        let mut context = context;
+        context.correlation_id = correlation_id;
+        context.causality_id = CausalityId(uuid::Uuid::now_v7());
+        let metadata = match &selection {
+            LanguageStartupSelection::Configured(_) => crate::language::LspSelectedServerMetadata {
+                server_id,
+                language_id: language_id.clone(),
+                binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                artifact_hash: None,
+                version: None,
+                download_decision_id: None,
+            },
+            LanguageStartupSelection::Downloaded(downloaded) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: Some(legion_protocol::FileFingerprint {
+                        algorithm: "sha256-content-v1".to_string(),
+                        value: downloaded.artifact.sha256.clone(),
+                    }),
+                    version: Some(format!(
+                        "{}.{}.{}",
+                        downloaded.approved_node.observed_version().major,
+                        downloaded.approved_node.observed_version().minor,
+                        downloaded.approved_node.observed_version().patch,
+                    )),
+                    download_decision_id: None,
+                }
+            }
+            LanguageStartupSelection::DownloadedLocal(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                }
+            }
+        };
+        let preparation = move |cancel: Arc<std::sync::atomic::AtomicBool>| {
+            if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "language startup preparation cancelled".to_string(),
+                ));
+            }
+            match selection {
+                LanguageStartupSelection::Configured(process) => authority.prepare_configured(
+                    &context,
+                    server_id,
+                    language_id,
+                    display_name,
+                    process,
+                    root_uri,
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::Downloaded(downloaded) => authority.prepare_downloaded(
+                    &context,
+                    &downloaded.adapter,
+                    &downloaded.descriptor,
+                    &downloaded.artifact,
+                    &downloaded.approved_node,
+                    &crate::language::NodeRuntimeApprovalRequest {
+                        correlation_id: context.correlation_id,
+                        causality_id: context.causality_id,
+                        ..downloaded.runtime_request
+                    },
+                    Arc::clone(&cancel),
+                    root_uri,
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::DownloadedLocal(local) => authority
+                    .prepare_downloaded_local(
+                        &context,
+                        &local.adapter,
+                        &local.archive,
+                        &local.cache_root,
+                        &local.node_path,
+                        Arc::clone(&cancel),
+                        root_uri,
+                    ),
+            }
+        };
+        self.lsp_session.restart_for_workspace_preparing(
+            PathBuf::from(root),
+            metadata,
+            preparation,
+        );
+    }
+
+    /// Captures the app-owned language selection and real workspace identity
+    /// for one explicit start/restart request. No filesystem or process work
+    /// occurs here; the resulting preparation closure runs on the startup
+    /// worker.
+    fn language_startup_inputs(&self) -> Option<LanguageStartupInputs> {
+        let root = self.active_documents.workspace_root_path.clone()?;
+        let opened = self.active_documents.opened_workspace.clone()?;
+        let principal_id = self.active_documents.active_principal_id.clone()?;
         let trust = self
             .active_documents
             .active_workspace_trust
-            .as_ref()
-            .cloned()
+            .clone()
             .unwrap_or(WorkspaceTrustState::Untrusted);
-        let trusted = trust == WorkspaceTrustState::Trusted;
-        self.lsp_session
-            .restart_for_workspace(std::path::Path::new(&root), trusted);
+        let language_id = self
+            .active_documents
+            .active_file_path
+            .as_ref()
+            .map(|path| language_id_for_path(&CanonicalPath(path.clone())))
+            .unwrap_or_else(|| LanguageId("rust".to_string()));
+        let adapter = self
+            .language_server_registry
+            .adapters_for_workspace_language(opened.workspace_id, &language_id)
+            .ok()?
+            .into_iter()
+            .find(|adapter| adapter.is_primary)?;
+        let selection = if let Some(local) =
+            self.language_server_local_downloads.get(&adapter.server_id)
+        {
+            let mut local = local.clone();
+            local.adapter = adapter.clone();
+            LanguageStartupSelection::DownloadedLocal(Box::new(local))
+        } else if let Some(downloaded) = self.language_server_downloaded.get(&adapter.server_id) {
+            let mut downloaded = downloaded.clone();
+            downloaded.adapter = adapter.clone();
+            LanguageStartupSelection::Downloaded(Box::new(downloaded))
+        } else {
+            let configured_path = self
+                .language_server_configured_paths
+                .get(&adapter.server_id)
+                .cloned()?;
+            let mut process = adapter.process.clone();
+            process.command = configured_path.to_str()?.to_string();
+            process.cwd = Some(PathBuf::from(root.clone()));
+            LanguageStartupSelection::Configured(process)
+        };
+        Some(LanguageStartupInputs {
+            root: root.clone(),
+            authority: self.language_startup_authority.clone(),
+            context: crate::language::LanguageStartupContext {
+                workspace_id: opened.workspace_id,
+                root_id: opened.root_id,
+                workspace_root: PathBuf::from(root.clone()),
+                principal_id,
+                trust,
+                correlation_id: CorrelationId(1),
+                causality_id: CausalityId(uuid::Uuid::now_v7()),
+            },
+            server_id: adapter.server_id,
+            language_id,
+            display_name: adapter.display_name.clone(),
+            selection,
+            root_uri: canonical_path_to_uri(&root),
+        })
     }
 
     /// Sends `textDocument/didChange` to the live LSP session after a buffer
@@ -16681,6 +17164,32 @@ impl AppComposition {
     /// to inspect the product-session rust-analyzer's stderr at wedge time.
     pub fn lsp_session_log_projection(&self) -> Option<legion_protocol::LspSessionLogProjection> {
         self.lsp_session.stderr_log_projection()
+    }
+
+    /// Acquire a bounded read lease for the desktop UI snapshot path.
+    pub fn lease_ui_snapshot(
+        &mut self,
+        buffer_id: BufferId,
+    ) -> Result<SnapshotLeaseDescriptor, EditorError> {
+        self.editor
+            .lease_snapshot(buffer_id, SnapshotConsumerKind::Ui)
+    }
+
+    /// Read one bounded logical-line chunk through a UI snapshot lease.
+    pub fn read_ui_snapshot_line_chunk(
+        &self,
+        lease: &SnapshotLeaseDescriptor,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> Result<SnapshotLeaseLineChunk, EditorError> {
+        self.editor
+            .read_snapshot_lease_line_chunk(lease, line, start_byte, max_bytes)
+    }
+
+    /// Release a desktop UI snapshot lease.
+    pub fn release_ui_snapshot(&mut self, lease_id: uuid::Uuid) -> Option<SnapshotLeaseDescriptor> {
+        self.editor.release_snapshot_lease(lease_id)
     }
 
     // ── LSP UI debounce authority (I1) ──────────────────────────────────────
@@ -36109,7 +36618,8 @@ mod lsp_explicit_start_tests {
     }
 
     /// After a Refused session, dispatching `LspRestartSession` must reset
-    /// state and attempt a new start (ending in Refused again if no Cargo.toml).
+    /// state and attempt a new start (ending in preparation failure without
+    /// explicit language-server configuration).
     /// PKT-LSP-C T1/T3.
     #[test]
     fn t1_restart_resets_refused_session() {
@@ -36127,28 +36637,21 @@ mod lsp_explicit_start_tests {
         let _ = app.open_file(rs_path.to_string_lossy().as_ref());
         assert!(app.lsp_is_idle_for_test(), "file open must not start LSP");
 
-        // Explicitly approve the initial start; it refuses because this
-        // workspace has no Cargo.toml.
+        // Explicitly request the initial start; it leaves Idle and prepares a
+        // visible missing-configuration refusal without implicit startup.
         let result = app.dispatch_ui_intent(CommandDispatchIntent::LspStartSession);
         assert!(result.is_ok(), "start dispatch must succeed");
         assert!(
             !app.lsp_is_idle_for_test(),
             "should have left Idle after explicit start"
         );
-        assert!(
-            !app.lsp_is_starting_for_test(),
-            "should not be Starting without Cargo.toml"
-        );
-        assert!(
-            app.lsp_failure_reason_for_test().is_some(),
-            "should have a failure reason (Refused: no Cargo.toml)"
-        );
+        assert!(app.lsp_is_starting_for_test() || app.lsp_failure_reason_for_test().is_some());
 
         // Restart via the palette command dispatch path.
         let result = app.dispatch_ui_intent(CommandDispatchIntent::LspRestartSession);
         assert!(result.is_ok(), "restart dispatch must succeed");
-        // Session was reset to Idle and re-attempted immediately; without
-        // Cargo.toml it ends up Refused again — still "not Idle".
+        // Session was reset and re-attempted with the same missing
+        // configuration; it remains active while preparation resolves.
         assert!(
             !app.lsp_is_idle_for_test(),
             "session must have re-attempted (Refused again) after restart"
