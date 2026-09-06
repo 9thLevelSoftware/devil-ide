@@ -69,7 +69,7 @@ fn initialize_records_every_capability_the_read_side_gates_on() {
             ..Default::default()
         },
         supervisor: lsp_mock::mock_supervisor_config(),
-        server_id: LanguageServerId(11),
+        server_id: LanguageServerId(7),
         language_id: LanguageId("rust".to_string()),
     };
 
@@ -214,7 +214,7 @@ fn a_recorded_capability_reports_what_the_server_actually_said() {
             ..Default::default()
         },
         supervisor: lsp_mock::mock_supervisor_config_withholding(UNADVERTISED_CAPABILITY),
-        server_id: LanguageServerId(12),
+        server_id: LanguageServerId(7),
         language_id: LanguageId("rust".to_string()),
     };
 

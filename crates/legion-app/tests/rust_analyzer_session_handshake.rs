@@ -148,7 +148,7 @@ fn initialize_with_watcher_client_option_succeeds() {
             ..Default::default()
         },
         supervisor: lsp_mock::mock_supervisor_config(),
-        server_id: LanguageServerId(8),
+        server_id: LanguageServerId(7),
         language_id: LanguageId("rust".to_string()),
     };
 

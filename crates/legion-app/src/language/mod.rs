@@ -12,8 +12,8 @@ pub use download::{
 
 mod session;
 pub use session::{
-    LanguageSessionError, LspReadOutcome, RestartPolicy, RustAnalyzerLaunchConfig,
-    RustAnalyzerSession,
+    LanguageServerLaunchConfig, LanguageServerSession, LanguageSessionError, LspReadOutcome,
+    RestartPolicy, RustAnalyzerLaunchConfig, RustAnalyzerSession,
 };
 
 mod proposal;

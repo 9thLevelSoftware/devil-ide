@@ -773,7 +773,7 @@ fn drain_stderr(stderr: std::process::ChildStderr, ring: Arc<Mutex<VecDeque<Stri
 /// Drains an arbitrary stderr reader without allowing an unterminated line to
 /// grow in memory.  Bytes after the retained prefix are consumed until the
 /// next newline so subsequent lines remain aligned.
-fn drain_stderr_reader<R: Read>(mut reader: R, ring: Arc<Mutex<VecDeque<String>>>) {
+pub(super) fn drain_stderr_reader<R: Read>(mut reader: R, ring: Arc<Mutex<VecDeque<String>>>) {
     let mut read_buf = [0_u8; 4096];
     let mut line = Vec::with_capacity(STDERR_LINE_MAX_LEN);
     let mut truncated = false;
@@ -790,7 +790,7 @@ fn drain_stderr_reader<R: Read>(mut reader: R, ring: Arc<Mutex<VecDeque<String>>
                 // Match `BufRead::lines()` for CRLF while retaining a
                 // standalone CR in a partial EOF line.
                 let raw_line = if !truncated {
-                    line.strip_suffix(&[b'\r']).unwrap_or(&line)
+                    line.strip_suffix(b"\r").unwrap_or(&line)
                 } else {
                     &line
                 };
