@@ -53,6 +53,8 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 hex = "0.4"
 sha2 = "0.10"
+tar = { version = "0.4.46", default-features = false }
+flate2 = "1.1.9"
 toml = "0.8"
 # PKT-UPDATER: Ed25519 verify for auto-updater client (ADR-0042).
 # BSD-3-Clause + MIT/Apache; same crate family already present via xtask.

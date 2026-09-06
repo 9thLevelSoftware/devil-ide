@@ -352,6 +352,22 @@ Phase 8 production dependency rebaseline permits the following external crates o
 
 - Remote TLS/mTLS carrier (`legion-remote-transport`): `tokio` with network/I/O/runtime features, `rustls`, `tokio-rustls`, `rustls-pki-types`, `sha2` for metadata-only root/pin digest checks, and certificate/root handling crates that do not expose private key material in diagnostics.
 - Hosted telemetry HTTPS exporter (`legion-telemetry`): either `hyper` plus `hyper-rustls` or a rustls-only `reqwest` profile; native-tls/OpenSSL-backed production profiles are not approved by this policy. The accepted `reqwest` profile must disable default features and enable only rustls-backed TLS plus required request/serialization features.
+- Verified language artifact materializer (`legion-app`, ADR-0055): the app may
+  add an optional direct `reqwest` edge using the existing workspace version
+  (`0.13.1`) with default features disabled and rustls-only TLS. The edge must
+  be behind the explicit `tool-downloads` feature; it is absent from the
+  `--no-default-features --features offline` Manual package. This feature
+  controls dependency/package inclusion only: every runtime network request
+  still passes the capability broker, and Manual always denies product network
+  fetch. The app may also add the reviewed `tar` parser and use the existing
+  locked `flate2` (`1.1.9`) for bounded `tar.gz` local import. Extraction must
+  reject traversal, absolute/Windows-prefix paths, duplicate entries, links,
+  devices, and non-regular/non-directory entries; enforce compressed,
+  uncompressed, file, entry, depth, and deadline limits; and publish only via
+  an atomic validated cache. Any version change, parser alternative, or new
+  HTTP/archive crate requires an ADR-0055 amendment, cargo-deny/license review,
+  and contract tests. Existing provider/remote/updater HTTP clients are not
+  reusable language-materializer authority.
 - Native terminal PTY (`legion-platform` and `legion-terminal`): `windows` for ConPTY and either `nix` or `rustix` for Unix PTY, process-group, and signal handling.
 - Raw-source production vault (`legion-retention`): `aes-gcm` or `chacha20poly1305`, `rand_core`/`getrandom`, `sha2`, `zeroize`, and `keyring` for the bundled OS key-provider. Cloud KMS SDKs are not bundled in Phase 8; KMS integration is represented by a provider contract and deployment-supplied adapters.
 - Local-history content addressing (`legion-app`, M8 WS-GIT-01): `sha2` for SHA-256 content hashes of save-time local-history snapshots (metadata-only records; content blobs stay workspace-local under `.legion/local-history/`).

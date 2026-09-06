@@ -5,9 +5,16 @@
 //! launch/handshake.
 
 mod download;
+mod materialize;
 pub use download::{
     DownloadDecision, RustAnalyzerDownloadRequest, evaluate_rust_analyzer_download,
     verify_downloaded_artifact,
+};
+pub use materialize::{
+    ArtifactDescriptor, ArtifactSource, CancellationToken, LanguageArtifactMaterializer,
+    MaterializeError, MaterializeEvent, MaterializeHandle, MaterializeProgress,
+    MaterializeRequest,
+    MaterializedArtifact,
 };
 
 mod session;

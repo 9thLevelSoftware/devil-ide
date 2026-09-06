@@ -6,6 +6,43 @@ use legion_lsp::{
 use legion_protocol::{LanguageId, WorkspaceId};
 
 #[test]
+fn registry_rebinds_catalog_to_real_workspace_without_mutating_catalog() {
+    let catalog = LanguageServerAdapterRegistry::tier_two();
+    let bound = catalog
+        .for_workspace(WorkspaceId(77))
+        .expect("nonzero workspace identity should bind");
+
+    let python = bound
+        .adapters_for_workspace_language(WorkspaceId(77), &LanguageId("python".to_string()))
+        .expect("bound Python plans should be selectable");
+    assert_eq!(python.len(), 1);
+    assert_eq!(python[0].workspace_id, WorkspaceId(77));
+    assert!(python[0].is_primary);
+
+    let typescript = bound
+        .adapters_for_workspace_language(
+            WorkspaceId(77),
+            &LanguageId("typescript".to_string()),
+        )
+        .expect("bound TypeScript plans should be selectable");
+    assert_eq!(typescript.len(), 2);
+    assert!(typescript[0].is_primary);
+    assert!(!typescript[1].is_primary);
+
+    let original = catalog
+        .adapters_for_language(&LanguageId("python".to_string()))
+        .into_iter()
+        .next()
+        .expect("catalog Python plan should remain available");
+    assert_eq!(original.workspace_id, WorkspaceId(1));
+
+    assert!(bound
+        .adapters_for_workspace_language(WorkspaceId(0), &LanguageId("python".to_string()))
+        .is_err());
+    assert!(catalog.for_workspace(WorkspaceId(0)).is_err());
+}
+
+#[test]
 fn tier_two_registry_covers_the_expected_language_smoke_set() {
     let registry = LanguageServerAdapterRegistry::tier_two();
     let workspace_id = WorkspaceId(1);
@@ -71,6 +108,7 @@ fn downloaded_artifact_entries_keep_binary_policy_metadata() {
             );
             assert_eq!(policy_gate, "policy://lsp-download/pyright");
             assert_eq!(metadata.version, "1.1.400");
+            assert_eq!(metadata.package_name, "pyright");
             assert_eq!(metadata.archive_format, "tar.gz");
             assert_eq!(metadata.package_root, std::path::Path::new("package"));
             assert_eq!(
@@ -228,6 +266,7 @@ fn downloaded_resolver_rejects_unmaterialized_and_escaping_paths() {
         "hash",
         "policy://test",
         LspDownloadedArtifactMetadata {
+            package_name: "test".into(),
             version: "test".into(),
             archive_format: "tar.gz".into(),
             package_root: "../escape".into(),
@@ -312,6 +351,7 @@ fn resolver_preserves_extra_arguments_after_entrypoint() {
         "hash",
         "policy://test",
         LspDownloadedArtifactMetadata {
+            package_name: "pyright".into(),
             version: "1.1.400".into(),
             archive_format: "tar.gz".into(),
             package_root: "package".into(),

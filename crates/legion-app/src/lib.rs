@@ -8690,10 +8690,36 @@ fn language_id_for_path(path: &CanonicalPath) -> LanguageId {
         "markdown"
     } else if lower.ends_with(".json") {
         "json"
+    } else if lower.ends_with(".py") || lower.ends_with(".pyi") || lower.ends_with(".pyw") {
+        "python"
     } else {
         "text"
     };
     LanguageId(language.to_string())
+}
+
+#[cfg(test)]
+mod language_id_for_path_tests {
+    use super::language_id_for_path;
+    use legion_protocol::{CanonicalPath, LanguageId};
+
+    #[test]
+    fn recognizes_python_source_stub_and_windows_extensions_case_insensitively() {
+        for path in ["src/main.py", "src/types.pyi", "src/tool.pyw", "src/MAIN.PY"] {
+            assert_eq!(
+                language_id_for_path(&CanonicalPath(path.to_string())),
+                LanguageId("python".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_unknown_extensions_as_text() {
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/main.unknown".to_string())),
+            LanguageId("text".to_string())
+        );
+    }
 }
 
 pub(crate) fn bounded_label(value: impl Into<String>, limit: usize) -> String {

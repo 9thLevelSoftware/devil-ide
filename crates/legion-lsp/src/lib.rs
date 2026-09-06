@@ -317,6 +317,8 @@ pub enum LspArtifactRuntime {
 /// Packaging metadata for a downloaded language-server artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspDownloadedArtifactMetadata {
+    /// Package name recorded by the package manifest.
+    pub package_name: String,
     /// Pinned package version.
     pub version: String,
     /// Archive format (for example, `tar.gz`).
@@ -413,7 +415,7 @@ pub enum LspServerBinarySource {
         /// Policy gate that authorizes the download path.
         policy_gate: String,
         /// Pinned packaging and runtime metadata.
-        metadata: LspDownloadedArtifactMetadata,
+        metadata: Box<LspDownloadedArtifactMetadata>,
     },
 }
 
@@ -495,7 +497,7 @@ impl LanguageServerAdapterPlan {
                 artifact_uri: artifact_uri.into(),
                 checksum_sha256: checksum_sha256.into(),
                 policy_gate: policy_gate.into(),
-                metadata,
+                metadata: Box::new(metadata),
             },
             process: LspServerProcessConfig {
                 command: binary_name,
@@ -769,10 +771,57 @@ pub struct LanguageServerAdapterRegistry {
     adapters_by_language: HashMap<legion_protocol::LanguageId, Vec<LanguageServerAdapterPlan>>,
 }
 
+/// Errors raised while binding catalog adapters to an opened workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanguageServerRegistryError {
+    /// Workspace identity zero is reserved and cannot own an adapter plan.
+    InvalidWorkspaceId,
+}
+
 impl LanguageServerAdapterRegistry {
     /// Creates an empty adapter registry.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Rebinds the immutable catalog to one real opened workspace identity.
+    ///
+    /// The catalog is cloned and every plan receives `workspace_id`; the
+    /// source registry is never mutated. Registration preserves the existing
+    /// primary/name/server ordering. A zero workspace identity is rejected so
+    /// callers cannot create fixture-like or fabricated bindings.
+    pub fn for_workspace(
+        &self,
+        workspace_id: legion_protocol::WorkspaceId,
+    ) -> Result<Self, LanguageServerRegistryError> {
+        if workspace_id.0 == 0 {
+            return Err(LanguageServerRegistryError::InvalidWorkspaceId);
+        }
+        let mut bound = Self::new();
+        for adapters in self.adapters_by_language.values() {
+            for adapter in adapters {
+                let mut rebound = adapter.clone();
+                rebound.workspace_id = workspace_id;
+                bound.register(rebound);
+            }
+        }
+        Ok(bound)
+    }
+
+    /// Returns the ordered adapter plans for a real workspace and language.
+    pub fn adapters_for_workspace_language(
+        &self,
+        workspace_id: legion_protocol::WorkspaceId,
+        language_id: &legion_protocol::LanguageId,
+    ) -> Result<Vec<&LanguageServerAdapterPlan>, LanguageServerRegistryError> {
+        if workspace_id.0 == 0 {
+            return Err(LanguageServerRegistryError::InvalidWorkspaceId);
+        }
+        Ok(self
+            .adapters_for_language(language_id)
+            .into_iter()
+            .filter(|adapter| adapter.workspace_id == workspace_id)
+            .collect())
     }
 
     /// Registers one adapter entry.
@@ -937,6 +986,7 @@ impl LanguageServerAdapterRegistry {
             "2ccba7af9c8b14bb81c8fa9bb558d8b5181b586ec4dfc448b78eb4209e7a429a",
             "policy://lsp-download/pyright",
             LspDownloadedArtifactMetadata {
+                package_name: "pyright".to_string(),
                 version: "1.1.400".to_string(),
                 archive_format: "tar.gz".to_string(),
                 package_root: PathBuf::from("package"),
