@@ -17123,7 +17123,6 @@ impl AppComposition {
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn set_lsp_health_for_test(&mut self, health: legion_protocol::LspServerHealthRecord) {
         self.lsp_session.set_live_health_for_test(health);
-        self.mark_injected_lsp_documents_ready_for_test();
     }
 
     /// Test-only: install a live LSP session and return its production request
@@ -17136,16 +17135,19 @@ impl AppComposition {
         let rx = self
             .lsp_session
             .set_live_with_request_receiver_for_test(health);
+        // Edit-observer tests assert the next `didChange`, not the injected
+        // handshake. Mark open buffers ready and drain the cap-one queue so
+        // the replacement they dispatch is the first message they see.
         self.mark_injected_lsp_documents_ready_for_test();
-        // The production request queue is cap-one. Catching up the harness
-        // after the injected `didOpen` leaves the slot free for the edit the
-        // test is actually asserting.
         while rx.try_recv().is_ok() {}
         rx
     }
 
     /// Test-only: install a cap-one live session and retain its result sender
     /// so draining does not mistake a dropped harness channel for worker death.
+    ///
+    /// Does not flush document sync: harness tests own `didOpen` / `didClose`
+    /// ordering and the pre-ready rejection gate.
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn set_lsp_request_harness_for_test(
         &mut self,
@@ -17154,12 +17156,8 @@ impl AppComposition {
         std::sync::mpsc::Receiver<LspWorkerRequest>,
         std::sync::mpsc::SyncSender<crate::language::LspWorkerResult>,
     ) {
-        let (rx, tx) = self
-            .lsp_session
-            .set_live_with_request_and_result_sender_for_test(health);
-        self.mark_injected_lsp_documents_ready_for_test();
-        while rx.try_recv().is_ok() {}
-        (rx, tx)
+        self.lsp_session
+            .set_live_with_request_and_result_sender_for_test(health)
     }
 
     /// Test-only: run a one-shot callback after workspace-edit preflight and
@@ -21007,41 +21005,9 @@ impl AppComposition {
                     )?,
                 ))
             }
-            AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => {
-                if let Some(range) = self.whole_document_utf16_range(buffer_id) {
-                    self.request_code_actions_scoped(
-                        buffer_id,
-                        ProtocolTextRange {
-                            start: TextCoordinate {
-                                line: range.start.line,
-                                character: range.start.character,
-                                byte_offset: None,
-                                utf16_offset: None,
-                            },
-                            end: TextCoordinate {
-                                line: range.end.line,
-                                character: range.end.character,
-                                byte_offset: None,
-                                utf16_offset: None,
-                            },
-                        },
-                        true,
-                    );
-                }
-                Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
-                        LanguageProposalKind::OrganizeImports,
-                        TextCoordinate {
-                            line: 0,
-                            character: 0,
-                            byte_offset: Some(0),
-                            utf16_offset: Some(0),
-                        },
-                        "organize-imports".to_string(),
-                    )?,
-                ))
-            }
+            AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => Ok(
+                AppCommandOutcome::language_tooling(self.run_organize_imports_proposal(buffer_id)?),
+            ),
             AppCommandRequest::RequestCodeActionProposal {
                 buffer_id,
                 action_id,

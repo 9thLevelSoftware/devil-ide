@@ -2016,6 +2016,13 @@ impl AppComposition {
         }
     }
 
+    /// Test-only: whether the injected or live session has sent `didOpen` for
+    /// `buffer_id` at the current buffer version.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn lsp_document_sync_ready_for_test(&self, buffer_id: BufferId) -> bool {
+        self.lsp_document_sync_ready(buffer_id)
+    }
+
     /// Test-only: the label that would be attached to hints and lenses now.
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn lsp_read_source_label_for_test(&self) -> String {

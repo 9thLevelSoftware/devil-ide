@@ -11,9 +11,9 @@ use legion_protocol::{
     LspEditProposalConversionInput, LspRequestCorrelation, PreviewSummary, ProposalAffectedTarget,
     ProposalLifecycleState, ProposalPort, ProposalRequest, ProposalResponse,
     ProposalTargetCoverage, ProposalTargetCoverageKind, ProposalTargetKind,
-    ProposalVersionPreconditions, ProtocolDiagnostic, ProtocolDiagnosticSeverity, RedactionHint,
-    SemanticPrivacyScope, TextCoordinate, TextEdit, TextRange, TimestampMillis,
-    WorkspaceEditProposalPayload, WorkspaceEditSourceKind, WorkspaceTextEdit,
+    ProposalVersionPreconditions, ProtocolDiagnostic, ProtocolDiagnosticSeverity,
+    ProtocolTextRange, RedactionHint, SemanticPrivacyScope, TextCoordinate, TextEdit, TextRange,
+    TimestampMillis, WorkspaceEditProposalPayload, WorkspaceEditSourceKind, WorkspaceTextEdit,
 };
 
 use crate::{AppComposition, AppCompositionError, LanguageProposalKind, bounded_label};
@@ -89,6 +89,51 @@ fn coordinate_byte_offset(text: &str, position: &TextCoordinate) -> Option<u64> 
 }
 
 impl AppComposition {
+    /// Organize-imports: ask a live server first. A placeholder preview is
+    /// only minted when nothing went out, so a multi-action LSP answer can
+    /// still require an opaque selection before any proposal exists.
+    pub(crate) fn run_organize_imports_proposal(
+        &mut self,
+        buffer_id: BufferId,
+    ) -> Result<LanguageToolingProjection, AppCompositionError> {
+        let issued = self
+            .whole_document_utf16_range(buffer_id)
+            .is_some_and(|range| {
+                self.request_code_actions_scoped(
+                    buffer_id,
+                    ProtocolTextRange {
+                        start: TextCoordinate {
+                            line: range.start.line,
+                            character: range.start.character,
+                            byte_offset: None,
+                            utf16_offset: None,
+                        },
+                        end: TextCoordinate {
+                            line: range.end.line,
+                            character: range.end.character,
+                            byte_offset: None,
+                            utf16_offset: None,
+                        },
+                    },
+                    true,
+                )
+            });
+        if issued {
+            return Ok(self.language_tooling.projection());
+        }
+        self.run_language_proposal(
+            buffer_id,
+            LanguageProposalKind::OrganizeImports,
+            TextCoordinate {
+                line: 0,
+                character: 0,
+                byte_offset: Some(0),
+                utf16_offset: Some(0),
+            },
+            "organize-imports".to_string(),
+        )
+    }
+
     /// Create a Previewed workspace-edit proposal for a language gesture.
     ///
     /// A live rename request is issued instead of a local identifier rewrite

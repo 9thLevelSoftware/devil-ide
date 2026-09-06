@@ -120,6 +120,23 @@ fn live_app() -> LiveApp {
         status.lifecycle, status.failure_reason
     );
 
+    // Live is not the same as "reads may go out". Prepare is rejected until
+    // the handshake `didOpen` is marked sent; asking before that clears
+    // `call_hierarchy_awaiting` and the outgoing test reads as a silent no.
+    let mut document_ready = false;
+    for _ in 0..MAX_POLLS {
+        app.drain_lsp_session();
+        if app.lsp_document_sync_ready_for_test(buffer_id) {
+            document_ready = true;
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    assert!(
+        document_ready,
+        "the mock session reached Live without synchronizing the open buffer"
+    );
+
     LiveApp {
         app,
         buffer_id,
