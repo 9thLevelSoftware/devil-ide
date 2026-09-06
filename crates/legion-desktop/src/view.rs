@@ -58,7 +58,7 @@ pub mod fleet_board;
 pub mod fleet_card;
 /// Inline edit diff overlay view model and per-hunk accept/reject helpers (PKT-INLINE).
 pub mod inline_edit;
-/// Interactive text fields (terminal input, BYOK) outside the code-canvas gate.
+/// Interactive text fields (terminal input, BYOK, settings paths) outside the code-canvas gate.
 pub(crate) mod interactive_fields;
 /// Pre-invocation context manifest panel with per-item exclusion toggles.
 pub mod manifest_panel;
@@ -6919,11 +6919,10 @@ fn render_settings_panel(
             ));
             ui.horizontal(|ui| {
                 ui.label(theme::muted("Language server archive"));
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut view.typescript_toolchain_draft.server_archive)
-                        .desired_width(320.0)
-                        .hint_text("server archive path"),
-                );
+                let response = ui.add(interactive_fields::settings_path_text_edit(
+                    &mut view.typescript_toolchain_draft.server_archive,
+                    "server archive path",
+                ));
                 if response.changed() {
                     bound_typescript_toolchain_path(
                         &mut view.typescript_toolchain_draft.server_archive,
@@ -6932,13 +6931,10 @@ fn render_settings_panel(
             });
             ui.horizontal(|ui| {
                 ui.label(theme::muted("Compiler archive"));
-                let response = ui.add(
-                    egui::TextEdit::singleline(
-                        &mut view.typescript_toolchain_draft.compiler_archive,
-                    )
-                    .desired_width(320.0)
-                    .hint_text("compiler archive path"),
-                );
+                let response = ui.add(interactive_fields::settings_path_text_edit(
+                    &mut view.typescript_toolchain_draft.compiler_archive,
+                    "compiler archive path",
+                ));
                 if response.changed() {
                     bound_typescript_toolchain_path(
                         &mut view.typescript_toolchain_draft.compiler_archive,
@@ -6947,11 +6943,10 @@ fn render_settings_panel(
             });
             ui.horizontal(|ui| {
                 ui.label(theme::muted("Node executable"));
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut view.typescript_toolchain_draft.node_executable)
-                        .desired_width(320.0)
-                        .hint_text("node executable path"),
-                );
+                let response = ui.add(interactive_fields::settings_path_text_edit(
+                    &mut view.typescript_toolchain_draft.node_executable,
+                    "node executable path",
+                ));
                 if response.changed() {
                     bound_typescript_toolchain_path(
                         &mut view.typescript_toolchain_draft.node_executable,

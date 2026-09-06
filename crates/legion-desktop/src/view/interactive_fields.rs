@@ -3,7 +3,7 @@
 //! These widgets are **not** the code-canvas editor (which remains a custom
 //! painter). The `no-egui-textedit` gate only scans `view.rs` and
 //! `code_canvas_painter.rs`; this module is the approved home for terminal
-//! input, BYOK key entry, and similar adapter-local forms.
+//! input, BYOK key entry, settings path fields, and similar adapter-local forms.
 
 use std::borrow::Cow;
 
@@ -313,6 +313,24 @@ pub(crate) fn find_bar_text_edit<'a>(
         .desired_width(180.0)
         .hint_text(hint)
         .id(id)
+        .min_size(egui::vec2(
+            f32::from(theme::tokens().control_height.compact),
+            f32::from(theme::tokens().control_height.compact),
+        ))
+        .margin(egui::Margin::symmetric(4, 8))
+}
+
+/// Build a single-line path field for settings forms.
+///
+/// Toolchain path inputs are adapter-local settings, not the code-canvas
+/// editor, so they intentionally use egui's standard text-edit widget.
+pub(crate) fn settings_path_text_edit<'a>(
+    text: &'a mut String,
+    hint: &'static str,
+) -> egui::TextEdit<'a> {
+    egui::TextEdit::singleline(text)
+        .desired_width(320.0)
+        .hint_text(hint)
         .min_size(egui::vec2(
             f32::from(theme::tokens().control_height.compact),
             f32::from(theme::tokens().control_height.compact),

@@ -1518,7 +1518,15 @@ fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResu
                 Err(err) => Err(err),
             };
         }
-        #[cfg(unix)]
+        // nix exposes waitid only on these targets. Other Unix hosts, including
+        // macOS, fall back to Child::try_wait so the child handle still owns the
+        // reap and we never import a configured-out waitid symbol.
+        #[cfg(any(
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "haiku",
+            all(target_os = "linux", not(target_env = "uclibc")),
+        ))]
         let observed = {
             use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
             use nix::unistd::Pid;
@@ -1544,7 +1552,12 @@ fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResu
                 )),
             }
         };
-        #[cfg(windows)]
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "haiku",
+            all(target_os = "linux", not(target_env = "uclibc")),
+        )))]
         let observed = child
             .try_wait()
             .map(|status| status.map(|status| status.code().unwrap_or(-1)))
