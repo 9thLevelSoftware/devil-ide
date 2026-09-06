@@ -3910,6 +3910,12 @@ fn terminate_windows_process_tree(pid: u32) -> bool {
 #[cfg(windows)]
 struct WindowsStdioJob(::windows::Win32::Foundation::HANDLE);
 
+// Exclusive owner of the job-object handle. The raw HANDLE is !Send
+// because it is a pointer newtype; this wrapper is Send so
+// LspStdioProcess can satisfy LspProcessHandle: Send.
+#[cfg(windows)]
+unsafe impl Send for WindowsStdioJob {}
+
 #[cfg(windows)]
 impl Drop for WindowsStdioJob {
     fn drop(&mut self) {
