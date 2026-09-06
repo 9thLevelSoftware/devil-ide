@@ -1723,7 +1723,6 @@ impl AppComposition {
     /// Startup can report `Fresh` while the cap-one worker is still delivering
     /// `didOpen` for another open buffer.  A command issued during that window
     /// is a truthful pending-sync state, not a missing server capability.
-    #[allow(dead_code)]
     pub(crate) fn lsp_rename_unavailable_message(&self, buffer_id: BufferId) -> &'static str {
         if self.lsp_server_supports_capability("renameProvider")
             && self.lsp_document_sync_pending(buffer_id)

@@ -484,20 +484,11 @@ fn ensure_cache_namespace(root: &Path) -> Result<(), MaterializeError> {
     {
         return Err(MaterializeError::CacheTampered);
     }
-    // Resolve the existing parent before walking so host prefixes such as
-    // macOS `/var` → `/private/var` are not reported as cache tamper.
-    let walk_root = if let Some(parent) = root.parent().filter(|parent| parent.exists()) {
-        let canonical = fs::canonicalize(parent)
-            .map_err(|error| MaterializeError::Io(bounded_text(error.to_string())))?;
-        match root.file_name() {
-            Some(name) => canonical.join(name),
-            None => root.to_path_buf(),
-        }
-    } else {
-        root.to_path_buf()
-    };
+    // Walk the declared path so a planted symlink still fails closed. Host
+    // prefixes such as macOS `/var` → `/private/var` keep the same final
+    // component name; a redirected ancestor that changes identity is tamper.
     let mut current = PathBuf::new();
-    for component in walk_root.components() {
+    for component in root.components() {
         current.push(component.as_os_str());
         // On Windows a verbatim path begins with a Prefix component such as
         // \\?\C:. Querying that incomplete prefix asks Win32 to stat a
@@ -509,7 +500,15 @@ fn ensure_cache_namespace(root: &Path) -> Result<(), MaterializeError> {
         }
         match fs::symlink_metadata(&current) {
             Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(MaterializeError::CacheTampered);
+                if current.as_path() == root {
+                    return Err(MaterializeError::CacheTampered);
+                }
+                let canonical = fs::canonicalize(&current)
+                    .map_err(|error| MaterializeError::Io(bounded_text(error.to_string())))?;
+                if canonical.file_name() != current.file_name() {
+                    return Err(MaterializeError::CacheTampered);
+                }
+                current = canonical;
             }
             Ok(meta) if !meta.is_dir() => return Err(MaterializeError::CacheTampered),
             Ok(_) => {}
@@ -1457,6 +1456,22 @@ mod tests {
             std::fs::canonicalize(workspace.path()).expect("canonical workspace");
         let cache = canonical_workspace.join(".legion").join("language-tools");
         ensure_cache_namespace(&cache).expect("verbatim cache namespace");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ancestor_symlink_that_changes_identity_is_tamper() {
+        let dir = tempfile::tempdir().expect("workspace");
+        let real = dir.path().join("real");
+        let alias = dir.path().join("alias");
+        std::fs::create_dir(&real).expect("real dir");
+        std::os::unix::fs::symlink(&real, &alias).expect("plant redirected ancestor");
+        let cache = alias.join("language-tools");
+        std::fs::create_dir(&cache).expect("cache through alias");
+        assert_eq!(
+            ensure_cache_namespace(&cache),
+            Err(MaterializeError::CacheTampered)
+        );
     }
 
     #[test]

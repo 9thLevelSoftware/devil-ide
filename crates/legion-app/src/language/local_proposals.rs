@@ -23,39 +23,64 @@ fn identifier_byte_range_at(text: &str, requested_byte: u64) -> Option<ByteRange
         return None;
     }
 
-    let mut index = usize::try_from(requested_byte).unwrap_or(usize::MAX);
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
+    let mut byte = usize::try_from(requested_byte).ok()?.min(text.len());
+    while byte > 0 && !text.is_char_boundary(byte) {
+        byte -= 1;
     }
-    let bytes = text.as_bytes();
-    if index == bytes.len() && index > 0 {
-        index -= 1;
+    if byte == text.len() {
+        byte = text.char_indices().next_back()?.0;
     }
-    if index < bytes.len()
-        && !is_identifier_byte(bytes[index])
-        && index > 0
-        && is_identifier_byte(bytes[index - 1])
-    {
-        index -= 1;
-    }
-    if index >= bytes.len() || !is_identifier_byte(bytes[index]) {
-        return None;
+    let current = text[byte..].chars().next()?;
+    if !is_identifier_char(current) {
+        byte = text[..byte].char_indices().next_back()?.0;
+        let previous = text[byte..].chars().next()?;
+        if !is_identifier_char(previous) {
+            return None;
+        }
     }
 
-    let mut start = index;
-    while start > 0 && is_identifier_byte(bytes[start - 1]) {
-        start -= 1;
+    let mut start = byte;
+    for (index, ch) in text[..byte].char_indices().rev() {
+        if !is_identifier_char(ch) {
+            break;
+        }
+        start = index;
     }
-    let mut end = index + 1;
-    while end < bytes.len() && is_identifier_byte(bytes[end]) {
-        end += 1;
+    let mut end = byte;
+    for (index, ch) in text[byte..].char_indices() {
+        if !is_identifier_char(ch) {
+            break;
+        }
+        end = byte + index + ch.len_utf8();
     }
     Some(ByteRange::new(start as u64, end as u64))
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
+fn is_identifier_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn coordinate_byte_offset(text: &str, position: &TextCoordinate) -> Option<u64> {
+    if let Some(offset) = position.byte_offset {
+        return (offset as usize <= text.len()).then_some(offset);
+    }
+    let mut remaining_lines = position.line;
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        if remaining_lines == 0 {
+            let body = line.trim_end_matches(['\n', '\r']);
+            let utf16: Vec<u16> = body.encode_utf16().collect();
+            let character = usize::try_from(position.character).ok()?;
+            if character > utf16.len() {
+                return None;
+            }
+            let prefix = String::from_utf16(&utf16[..character]).ok()?;
+            return Some((offset + prefix.len()) as u64);
+        }
+        remaining_lines = remaining_lines.checked_sub(1)?;
+        offset = offset.checked_add(line.len())?;
+    }
+    None
 }
 
 impl AppComposition {
@@ -106,16 +131,10 @@ impl AppComposition {
         };
         let (workspace_edit, diagnostics) = match kind {
             LanguageProposalKind::Rename => {
-                // When the LSP session is live, route through `textDocument/rename`
-                // for multi-file rename coverage (PKT-LSP-C I-2).  The result
-                // arrives asynchronously via `ingest_lsp_rename_result` and is
-                // projected into `language_tooling` on the next drain call.
-                if self.lsp_session.is_live()
-                    && self.issue_lsp_rename_request_inner(buffer_id, position, label.clone())
-                {
-                    return Ok(self.language_tooling.projection());
-                }
-                // --- local (non-LSP) rename path ---
+                // The command arm owns the live `textDocument/rename` issue
+                // (including capability gating and deferral). This fallback
+                // only builds an index-backed preview so the ledger has an id
+                // immediately; it must not send a second rename request.
                 let replacement = bounded_label(&label, 128);
                 if replacement.trim().is_empty() {
                     return Ok(self.language_tooling.record_proposal_failure(
@@ -124,14 +143,23 @@ impl AppComposition {
                         "Rename proposal requires a non-empty replacement label".to_string(),
                     ));
                 }
-                let Some(range) =
-                    identifier_byte_range_at(&input.text, position.byte_offset.unwrap_or(0))
-                else {
+                let Some(offset) = coordinate_byte_offset(&input.text, &position) else {
                     return Ok(self.language_tooling.record_proposal_failure(
                         &input,
                         kind,
-                        "Rename proposal requires an identifier at the requested position"
-                            .to_string(),
+                        "rename requires a resolved byte offset".to_string(),
+                    ));
+                };
+                let Some(range) = identifier_byte_range_at(&input.text, offset) else {
+                    return Ok(self.language_tooling.record_proposal_failure(
+                        &input,
+                        kind,
+                        if self.lsp_session.is_live() {
+                            self.lsp_rename_unavailable_message(buffer_id).to_string()
+                        } else {
+                            "Rename proposal requires an identifier at the requested position"
+                                .to_string()
+                        },
                     ));
                 };
                 let target = ProposalAffectedTarget {
@@ -200,7 +228,7 @@ impl AppComposition {
                     plugin_id: None,
                     remote_authority: None,
                     collaboration_session_id: None,
-                    byte_ranges: vec![ByteRange::new(0, input.text.len() as u64)],
+                    byte_ranges: Vec::new(),
                     redaction_hints: vec![RedactionHint::MetadataOnly],
                 };
                 let workspace_edit = WorkspaceEditProposalPayload {
@@ -217,12 +245,7 @@ impl AppComposition {
                     file_edits: vec![WorkspaceTextEdit {
                         file: input.metadata.identity.clone(),
                         buffer_id: Some(buffer_id),
-                        edits: EditBatch {
-                            edits: vec![TextEdit {
-                                range: TextRange::byte(0, input.text.len() as u64),
-                                replacement: input.text.clone(),
-                            }],
-                        },
+                        edits: EditBatch { edits: Vec::new() },
                         preconditions: preconditions.clone(),
                     }],
                     file_operations: Vec::new(),
@@ -314,5 +337,45 @@ impl AppComposition {
             format!("{title} proposal preview created"),
             None,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{coordinate_byte_offset, identifier_byte_range_at};
+    use legion_protocol::TextCoordinate;
+
+    #[test]
+    fn identifier_range_covers_whole_unicode_symbol() {
+        let range = identifier_byte_range_at("rename café now", 8).expect("café");
+        assert_eq!(
+            &"rename café now"[range.start as usize..range.end as usize],
+            "café"
+        );
+    }
+
+    #[test]
+    fn coordinate_without_byte_offset_uses_line_and_character() {
+        let text = "fn café()\n";
+        let position = TextCoordinate {
+            line: 0,
+            character: 3,
+            byte_offset: None,
+            utf16_offset: None,
+        };
+        let offset = coordinate_byte_offset(text, &position).expect("offset");
+        let range = identifier_byte_range_at(text, offset).expect("ident");
+        assert_eq!(&text[range.start as usize..range.end as usize], "café");
+    }
+
+    #[test]
+    fn missing_byte_offset_past_line_fails_closed() {
+        let position = TextCoordinate {
+            line: 4,
+            character: 0,
+            byte_offset: None,
+            utf16_offset: None,
+        };
+        assert_eq!(coordinate_byte_offset("fn x()\n", &position), None);
     }
 }
