@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
@@ -87,11 +88,14 @@ status = "todo"
 }
 
 fn temp_root() -> PathBuf {
-    let suffix = SystemTime::now()
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("legion-completion-command-{suffix}"));
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("legion-completion-command-{pid}-{stamp}-{seq}"));
     fs::create_dir_all(&root).expect("temporary root");
     root
 }
@@ -179,8 +183,9 @@ fn cli_subprocess_accepts_populated_development_and_release_fixture() {
         ][..],
     ] {
         let output = Command::new(&executable)
-            .current_dir(&root)
             .args(args)
+            .arg("--root")
+            .arg(&root)
             .output()
             .expect("run populated verify-completion");
         assert!(
@@ -190,6 +195,21 @@ fn cli_subprocess_accepts_populated_development_and_release_fixture() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    let cwd_output = Command::new(&executable)
+        .current_dir(&root)
+        .args([
+            "verify-completion",
+            "--candidate",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ])
+        .output()
+        .expect("run verify-completion with fixture cwd");
+    assert!(
+        cwd_output.status.success(),
+        "cwd status {:?}, stderr {}",
+        cwd_output.status,
+        String::from_utf8_lossy(&cwd_output.stderr)
+    );
     let _ = fs::remove_dir_all(root);
 }
 

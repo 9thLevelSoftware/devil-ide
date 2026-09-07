@@ -514,6 +514,9 @@ enum Commands {
         /// Require complete required product/configuration release coverage.
         #[arg(long)]
         release: bool,
+        /// Workspace root that contains `plans/completion`. Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
     },
     /// Report which DAP adapter binaries this machine has (P2.F3.T2).
     ///
@@ -1045,13 +1048,11 @@ fn main() {
         }
         Commands::DocsHygiene { allowlist } => run_docs_hygiene_command(&allowlist),
         Commands::ClaimAudit { ledger } => run_claim_audit_command(&ledger),
-        Commands::VerifyCompletion { candidate, release } => {
-            xtask::completion_command::run_verify_completion_command(
-                Path::new("."),
-                &candidate,
-                release,
-            )
-        }
+        Commands::VerifyCompletion {
+            candidate,
+            release,
+            root,
+        } => xtask::completion_command::run_verify_completion_command(&root, &candidate, release),
         Commands::DapAdapterProbe {
             provenance,
             require,

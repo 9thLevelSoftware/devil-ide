@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -32,11 +33,19 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 fn temp_root(label: &str) -> PathBuf {
-    let suffix = SystemTime::now()
+    // Process id + monotonic counter keeps the fixture unique when cargo test
+    // runs this crate and the included completion_command suite in parallel.
+    // Windows clock granularity can be coarser than a nanosecond, so a
+    // timestamp-only name lets one test's remove_dir_all delete another's tree
+    // (the CLI subprocess then fails with ERROR_PATH_NOT_FOUND).
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("legion-completion-{label}-{suffix}"));
+    let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("legion-completion-{label}-{pid}-{stamp}-{seq}"));
     fs::create_dir_all(&root).expect("temporary root");
     root
 }
