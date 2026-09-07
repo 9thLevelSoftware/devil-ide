@@ -2419,6 +2419,16 @@ mod generic_startup_tests {
         panic!("startup did not reach Refused/Failed within bounded test window");
     }
 
+    fn wait_for_flag(flag: &AtomicBool, what: &str) {
+        for _ in 0..200 {
+            if flag.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("{what} was not observed within bounded test window");
+    }
+
     fn configured_python_start() -> Option<LanguageServerStartConfig> {
         let executable = std::env::current_exe().ok()?;
         let profile_dir = executable.parent()?.parent()?;
@@ -2669,13 +2679,7 @@ mod generic_startup_tests {
                 Err(LanguageSessionError::Unavailable)
             },
         );
-        for _ in 0..100 {
-            if started.load(Ordering::Acquire) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert!(started.load(Ordering::Acquire));
+        wait_for_flag(&started, "original preparation start");
 
         handle.restart_for_workspace_preparing(
             PathBuf::from("C:/legion-new"),
@@ -2687,7 +2691,10 @@ mod generic_startup_tests {
             },
         );
         wait_for_refused_or_failed(&mut handle);
-        assert!(cancelled.load(Ordering::Acquire));
+        // Replacement can refuse immediately; the superseded prepare thread
+        // may still be inside its 1 ms cancel poll. Wait for it the same way
+        // the drop half already waits — loaded macOS CI was losing that race.
+        wait_for_flag(&cancelled, "superseded preparation cancel");
 
         let dropped = Arc::new(AtomicBool::new(false));
         let observed_dropped = Arc::clone(&dropped);
@@ -2710,13 +2717,7 @@ mod generic_startup_tests {
             "drop test preparation did not start"
         );
         drop(pending);
-        for _ in 0..100 {
-            if dropped.load(Ordering::Acquire) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert!(dropped.load(Ordering::Acquire));
+        wait_for_flag(&dropped, "dropped preparation cancel");
     }
 
     #[test]
