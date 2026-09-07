@@ -96,6 +96,15 @@ fn main() {
         let _ = output.flush();
     }
 
+    // Deterministic handshake-failure fixture: emit only a diagnostic on
+    // stderr and close stdout before answering initialize.  This exercises
+    // the app startup path's early stderr drain without relying on a broken
+    // framing implementation or process-global test state.
+    if std::env::var("MOCK_LSP_FAIL_INITIALIZE").as_deref() == Ok("1") {
+        eprintln!("mock_lsp_server: initialize fixture failure");
+        return;
+    }
+
     loop {
         let frame = match read_frame(&mut input) {
             Ok(frame) => frame,
@@ -138,6 +147,9 @@ fn main() {
                         "textDocumentSync": {"openClose": true, "change": 1},
                         "hoverProvider": true,
                         "definitionProvider": true,
+                        "renameProvider": true,
+                        "documentFormattingProvider": true,
+                        "codeActionProvider": {"codeActionKinds": ["quickfix", "source.organizeImports"]},
                         // Every capability the read-side gates on. A mock that
                         // advertises only what the parser already handles can
                         // never reveal a parser that handles too little, which
@@ -590,6 +602,63 @@ fn main() {
                 let _ = output.flush();
                 id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}))
             }
+            "mock.applyEditThenRespond" => {
+                // Opt-in server→client workspace/applyEdit fixture. The
+                // transport test controls the expected answer and payload
+                // shape through process-local environment variables.
+                let params = match std::env::var("MOCK_APPLY_EDIT_PARAMS").as_deref() {
+                    Ok("oversized") => json!({
+                        "edit": {"changes": {"file:///workspace/src/main.rs": [
+                            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                             "newText": "x".repeat(300 * 1024)}
+                        ]}}
+                    }),
+                    Ok("missing-edit") => json!({"label": "missing edit"}),
+                    Ok("malformed-edit") => json!({"edit": "not-a-workspace-edit"}),
+                    _ => json!({"edit": {"changes": {}}}),
+                };
+                let apply_edit =
+                    if std::env::var("MOCK_APPLY_EDIT_PARAMS").as_deref() == Ok("missing-params") {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": 9100,
+                            "method": "workspace/applyEdit",
+                        })
+                    } else {
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": 9100,
+                            "method": "workspace/applyEdit",
+                            "params": params,
+                        })
+                    };
+                if write_frame(&mut output, &apply_edit).is_err() {
+                    return;
+                }
+                let _ = output.flush();
+                let expected_applied =
+                    std::env::var("MOCK_APPLY_EDIT_EXPECT_APPLIED").as_deref() == Ok("1");
+                wait_for_client_answer(
+                    &mut input,
+                    9100,
+                    ExpectedAnswer::ApplyEdit {
+                        applied: expected_applied,
+                    },
+                );
+                let diagnostics = json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/publishDiagnostics",
+                    "params": {
+                        "uri": "file:///workspace/src/apply-edit.rs",
+                        "diagnostics": [],
+                    },
+                });
+                if write_frame(&mut output, &diagnostics).is_err() {
+                    return;
+                }
+                let _ = output.flush();
+                id.map(|id| json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}))
+            }
             other => {
                 // Surface a JSON-RPC error for unknown *requests* so the
                 // consumer can map it through the standard error path. Unknown
@@ -620,6 +689,11 @@ enum ExpectedAnswer {
     NullResult,
     /// A JSON-RPC error response with code -32601.
     MethodNotFound,
+    /// A workspace/applyEdit result with the expected applied flag.
+    ApplyEdit {
+        /// Expected `result.applied` value.
+        applied: bool,
+    },
 }
 
 /// Blocks reading frames until the client answers the server→client request
@@ -666,6 +740,20 @@ fn wait_for_client_answer<R: Read + BufRead>(
                 if code != Some(-32601) {
                     eprintln!(
                         "mock_lsp_server: expected -32601 error answer to {expected_id}, got: {envelope}"
+                    );
+                    std::process::exit(3);
+                }
+            }
+            ExpectedAnswer::ApplyEdit { applied } => {
+                let result = envelope.get("result").and_then(Value::as_object);
+                if envelope.get("error").is_some()
+                    || result
+                        .and_then(|result| result.get("applied"))
+                        .and_then(Value::as_bool)
+                        != Some(applied)
+                {
+                    eprintln!(
+                        "mock_lsp_server: expected workspace/applyEdit applied={applied} answer to {expected_id}, got: {envelope}"
                     );
                     std::process::exit(3);
                 }

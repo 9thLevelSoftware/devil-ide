@@ -438,6 +438,10 @@ const RENDERER_DEPENDENCY_ALLOWED_PACKAGES: &[&str] = &["legion-desktop"];
 const FORBIDDEN_RENDERER_DEPS: &[&str] = &[
     "eframe",
     "egui",
+    // epaint is the renderer's lower-level drawing crate.  ADR-0053 permits
+    // the existing graph's patched epaint only under legion-desktop; a direct
+    // declaration in any other package would bypass the projection boundary.
+    "epaint",
     "egui-winit",
     "egui-wgpu",
     "winit",
@@ -501,6 +505,18 @@ enum Commands {
         /// Path to the product readiness ledger markdown.
         #[arg(long, default_value = DEFAULT_CLAIM_AUDIT_LEDGER_PATH)]
         ledger: String,
+    },
+    /// Validate the canonical completion registers and nominated evidence.
+    VerifyCompletion {
+        /// Candidate code SHA pinned by plans/completion/candidate.json.
+        #[arg(long)]
+        candidate: String,
+        /// Require complete required product/configuration release coverage.
+        #[arg(long)]
+        release: bool,
+        /// Workspace root that contains `plans/completion`. Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
     },
     /// Report which DAP adapter binaries this machine has (P2.F3.T2).
     ///
@@ -1032,6 +1048,11 @@ fn main() {
         }
         Commands::DocsHygiene { allowlist } => run_docs_hygiene_command(&allowlist),
         Commands::ClaimAudit { ledger } => run_claim_audit_command(&ledger),
+        Commands::VerifyCompletion {
+            candidate,
+            release,
+            root,
+        } => xtask::completion_command::run_verify_completion_command(&root, &candidate, release),
         Commands::DapAdapterProbe {
             provenance,
             require,
@@ -3012,6 +3033,7 @@ fn run_check_deps(policy_path: &str) -> Result<(), String> {
     let violations = validate_dependency_policy(&packages, &policy);
     let renderer_violations =
         validate_renderer_dependency_gate(&policy_text, &package_dependency_names);
+    let grapheme_violations = validate_grapheme_dependency_gate(&metadata, &policy_text);
     let parser_violations =
         validate_parser_dependency_gate(&policy_text, &package_dependency_names);
     let plugin_runtime_adr = fs::read_to_string(workspace_root.join(PLUGIN_RUNTIME_ADR_PATH)).ok();
@@ -3190,6 +3212,7 @@ fn run_check_deps(policy_path: &str) -> Result<(), String> {
 
     let mut all = violations;
     all.extend(renderer_violations);
+    all.extend(grapheme_violations);
     all.extend(parser_violations);
     all.extend(plugin_runtime_violations);
     all.extend(protocol_violations);
@@ -3333,6 +3356,66 @@ fn validate_dependency_policy(
         }
     }
 
+    issues.sort();
+    issues
+}
+
+fn validate_grapheme_dependency_gate(metadata: &Metadata, policy_text: &str) -> Vec<String> {
+    const DEPENDENCY: &str = "unicode-segmentation";
+    let mut owners = Vec::new();
+    let workspace_members = metadata.workspace_members.iter().collect::<HashSet<_>>();
+    for package in &metadata.packages {
+        if !workspace_members.contains(&package.id) {
+            continue;
+        }
+        for dependency in &package.dependencies {
+            if dependency.name == DEPENDENCY
+                && dependency.kind == cargo_metadata::DependencyKind::Normal
+            {
+                owners.push((package.name.as_str(), dependency.req.to_string()));
+            }
+        }
+    }
+    let owners = owners
+        .into_iter()
+        .map(|(package, req)| (package.to_string(), req))
+        .collect::<Vec<_>>();
+    validate_grapheme_dependency_specs(&owners, policy_text)
+}
+
+fn validate_grapheme_dependency_specs(
+    owners: &[(String, String)],
+    policy_text: &str,
+) -> Vec<String> {
+    const DEPENDENCY: &str = "unicode-segmentation";
+    const REQUIRED: &str = "=1.13.2";
+    let mut issues = Vec::new();
+    if !policy_text.contains("unicode-segmentation = 1.13.2") {
+        issues.push(
+            "`plans/dependency-policy.md` must authorize `unicode-segmentation = 1.13.2` for `legion-text`"
+                .to_string(),
+        );
+    }
+    for (package, req) in owners {
+        if *package != "legion-text" {
+            issues.push(format!(
+                "`{package}` directly depends on `{DEPENDENCY}`; only `legion-text` may own it"
+            ));
+        } else if req != REQUIRED {
+            issues.push(format!(
+                "`legion-text` must pin `{DEPENDENCY}` to `{REQUIRED}`, found `{req}`"
+            ));
+        }
+    }
+    if !owners
+        .iter()
+        .any(|(package, req)| *package == "legion-text" && req == REQUIRED)
+    {
+        issues.push(
+            "`legion-text` must directly depend on pinned `unicode-segmentation = 1.13.2`"
+                .to_string(),
+        );
+    }
     issues.sort();
     issues
 }
@@ -4882,6 +4965,10 @@ fn renderer_dependency_gate_preserves_projection_boundary() {
                 "legion-ui".to_string(),
                 "egui".to_string(),
                 "eframe".to_string(),
+                // The generic gate permits renderer declarations in the
+                // desktop adapter. Production remains on egui::epaint until
+                // the separately authorized ADR-0053 patch is activated.
+                "epaint".to_string(),
             ]),
         ),
     ]);
@@ -4902,7 +4989,7 @@ fn renderer_dependency_gate_preserves_projection_boundary() {
         "core crate renderer dependency violation should be reported, got: {issues:?}"
     );
 
-    let mut violating_dependencies = package_dependencies;
+    let mut violating_dependencies = package_dependencies.clone();
     violating_dependencies
         .get_mut("legion-ui")
         .expect("legion-ui fixture must exist")
@@ -4914,6 +5001,18 @@ fn renderer_dependency_gate_preserves_projection_boundary() {
             .any(|issue| issue.contains(DEFAULT_UI_MANIFEST_PATH) && issue.contains("egui")),
         "legion-ui renderer dependency violation should be reported, got: {issues:?}"
     );
+
+    for package in ["legion-editor", "legion-ui", "legion-app"] {
+        let mut violating_dependencies = package_dependencies.clone();
+        violating_dependencies.insert(package.to_string(), HashSet::from(["epaint".to_string()]));
+        let issues = validate_renderer_dependency_gate(&policy, &violating_dependencies);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| { issue.contains(package) && issue.contains("epaint") }),
+            "{package} direct epaint edge should be rejected, got: {issues:?}"
+        );
+    }
 }
 
 #[test]
@@ -5613,6 +5712,52 @@ Final gate outputs archived from current commands.
                 .contains(&("legion-ui".to_string(), "legion-project".to_string()))
         );
         assert!(policy.protocol_symbols().contains("WorkspaceId"));
+    }
+
+    #[test]
+    fn grapheme_dependency_gate_covers_pin_owner_and_policy_cases() {
+        let policy = "`unicode-segmentation = 1.13.2`";
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-text".to_string(), "=1.13.2".to_string())],
+                policy
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-text".to_string(), "^1.13.2".to_string())],
+                policy
+            )
+            .iter()
+            .any(|issue| issue.contains("must pin"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(&[], policy)
+                .iter()
+                .any(|issue| issue.contains("must directly depend"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-editor".to_string(), "=1.13.2".to_string())],
+                policy
+            )
+            .iter()
+            .any(|issue| issue.contains("only `legion-text`"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(&[], policy)
+                .iter()
+                .all(|issue| !issue.contains("only `legion-text`"))
+        );
+        assert!(
+            validate_grapheme_dependency_specs(
+                &[("legion-text".to_string(), "=1.13.2".to_string())],
+                ""
+            )
+            .iter()
+            .any(|issue| issue.contains("dependency-policy.md"))
+        );
     }
 
     #[test]

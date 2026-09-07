@@ -40,6 +40,15 @@ Every current workspace crate must have an explicit internal dependency policy e
 - `legion-text` may depend on:
   - `legion-protocol`
 
+  `legion-text` may also directly use the workspace-pinned external
+  `unicode-segmentation = 1.13.2` dependency for rope-backed extended grapheme
+  boundary queries. Segmentation remains text-model authority; editor owns
+  directional deletion and editing decisions. No other crate may add this
+  dependency for the S1-04 primitive increment.
+
+  The S1-04f editor horizontal movement contract consumes these existing
+  `legion-text` boundary APIs and adds no dependency or new internal edge.
+
 - `legion-platform` may depend on:
   - `legion-protocol`
 
@@ -74,6 +83,16 @@ Every current workspace crate must have an explicit internal dependency policy e
   - `legion-text`
 
 - `legion-editor` MUST NOT depend on `legion-project`.
+
+The S1-04h vertical-caret contract adds no dependency edge. `legion-editor`
+continues to own ordered carets, typed row-local preferred X, grapheme and
+affinity validation, layout-identity guards, bounded shaped-stop validation,
+and reset/undo/redo state. Renderer-shaped geometry is supplied through the
+protocol/app route; `legion-desktop` remains an adapter and must not depend on
+`legion-editor`. The associated contract coverage belongs in
+`crates/legion-editor/tests/vertical_carets.rs` and must distinguish the tested
+editor core from the pending live desktop route and huge-line/native
+qualification. No new external or workspace dependency is authorized.
 
 - `legion-ui` may depend on:
   - `legion-protocol`
@@ -112,6 +131,27 @@ Every current workspace crate must have an explicit internal dependency policy e
   - `legion-ui`
 
 `legion-desktop` is the active Phase 2 crate authorized to host GUI renderer dependencies and project/workspace projection helpers. Phase 2 may use `eframe` and `egui` for the Windows-first desktop foundation proof, including their renderer/windowing/accessibility integration stack such as `egui-winit`, `egui-wgpu`, `winit`, `wgpu`, and `accesskit` when pulled in by or needed for the adapter. Slint is an explicit fallback candidate for native panel rendering if Phase 2 evidence shows the egui path cannot satisfy IME, clipboard, focus, accessibility, or high-DPI requirements. Tauri/WRY/TAO and GPUI are not approved for the core editor shell in Phase 2; Tauri/WRY remain auxiliary-only unless a later ADR supersedes ADR-0002, and GPUI remains a long-term architecture influence until its official Windows-first support is suitable for this project.
+
+S1-04h's streaming text-layout continuation uses the existing `egui::epaint`
+route and adds no direct `epaint` dependency to any workspace crate. The
+generic renderer boundary still permits renderer declarations in the
+`legion-desktop` adapter; that gate allowance does not itself change the
+workspace's no-new-direct-epaint decision. The coordinator-authorized ADR-0053
+permits the reviewed global Cargo source patch
+`epaint = { path = "vendor/epaint" }` only when the vendored
+package remains exactly version `0.34.2`, preserves its upstream dependency
+declarations and provenance, and is activated for the existing renderer graph.
+This source override does not authorize a new `legion-editor`, `legion-ui`,
+app, protocol, or other core-substrate renderer edge: renderer ownership stays
+with `legion-desktop`, and shaped layout facts continue through the existing
+protocol/app route. The patch is locally verified: the aligned standalone
+vendor test passed (40 passed, 0 failed), root desktop targeted tests passed,
+and the dependency, documentation-hygiene, claim-audit, and `cargo deny`
+advisory/ban/license/source checks passed. The vendor retains the exact upstream
+MIT and Apache-2.0 texts from the egui `0.34.2` tag; provenance URLs and byte
+hashes are recorded in ADR-0053 and `vendor/epaint/LEGION_PROVENANCE.md`.
+These checks establish local verification only and make no production or
+full-wrapped qualification claim.
 
 `legion-desktop` may additionally use `egui_kittest` as a **test-only**
 dependency (`[dev-dependencies]`, features `wgpu` + `snapshot`) for visual
@@ -312,7 +352,23 @@ Phase 8 production dependency rebaseline permits the following external crates o
 
 - Remote TLS/mTLS carrier (`legion-remote-transport`): `tokio` with network/I/O/runtime features, `rustls`, `tokio-rustls`, `rustls-pki-types`, `sha2` for metadata-only root/pin digest checks, and certificate/root handling crates that do not expose private key material in diagnostics.
 - Hosted telemetry HTTPS exporter (`legion-telemetry`): either `hyper` plus `hyper-rustls` or a rustls-only `reqwest` profile; native-tls/OpenSSL-backed production profiles are not approved by this policy. The accepted `reqwest` profile must disable default features and enable only rustls-backed TLS plus required request/serialization features.
-- Native terminal PTY (`legion-platform` and `legion-terminal`): `windows` for ConPTY and either `nix` or `rustix` for Unix PTY, process-group, and signal handling.
+- Verified language artifact materializer (`legion-app`, ADR-0055): the app may
+  add an optional direct `reqwest` edge using the existing workspace version
+  (`0.13.1`) with default features disabled and rustls-only TLS. The edge must
+  be behind the explicit `tool-downloads` feature; it is absent from the
+  `--no-default-features --features offline` Manual package. This feature
+  controls dependency/package inclusion only: every runtime network request
+  still passes the capability broker, and Manual always denies product network
+  fetch. The app may also add the reviewed `tar` parser and use the existing
+  locked `flate2` (`1.1.9`) for bounded `tar.gz` local import. Extraction must
+  reject traversal, absolute/Windows-prefix paths, duplicate entries, links,
+  devices, and non-regular/non-directory entries; enforce compressed,
+  uncompressed, file, entry, depth, and deadline limits; and publish only via
+  an atomic validated cache. Any version change, parser alternative, or new
+  HTTP/archive crate requires an ADR-0055 amendment, cargo-deny/license review,
+  and contract tests. Existing provider/remote/updater HTTP clients are not
+  reusable language-materializer authority.
+- Native terminal PTY (`legion-platform` and `legion-terminal`): `windows` for ConPTY and either `nix` or `rustix` for Unix PTY, process-group, and signal handling. Supervised LSP stdio (`legion-lsp`) may use Unix `nix` process-group signals and the Windows `windows` crate Job Objects (`Win32_System_JobObjects`, plus `Win32_Security` / `Win32_System_Threading` for `CreateJobObjectW` and `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`, `KILL_ON_JOB_CLOSE`) solely to take down the language-server child and descendants that inherited stdout; it does not authorize PTY ownership or a `legion-platform` runtime edge.
 - Raw-source production vault (`legion-retention`): `aes-gcm` or `chacha20poly1305`, `rand_core`/`getrandom`, `sha2`, `zeroize`, and `keyring` for the bundled OS key-provider. Cloud KMS SDKs are not bundled in Phase 8; KMS integration is represented by a provider contract and deployment-supplied adapters.
 - Local-history content addressing (`legion-app`, M8 WS-GIT-01): `sha2` for SHA-256 content hashes of save-time local-history snapshots (metadata-only records; content blobs stay workspace-local under `.legion/local-history/`).
 
@@ -883,3 +939,12 @@ Autonomous merge/apply remains forbidden. Main-workspace mutation must continue 
 PR-21 authorizes a minimal local MCP server module in `legion-ai-providers` using the existing `legion-protocol` and `legion-security` contracts. The module is stdio-only, dispatches metadata-safe workbench descriptors, and denies tool calls by default until `legion-app` composition supplies an approved capability/proposal callback. It must not gain filesystem, terminal, process, network, VSIX, or Node authority.
 
 This slice does not add MCP runtime dependencies to `legion-agent`, `legion-ui`, `legion-desktop`, or `legion-cli`; it does not add `rmcp`, `modelcontextprotocol`, or `agent-client-protocol`; and it does not introduce a listen socket, HTTP server, completion-class MCP tool, registry marketplace, or direct mutation path. Any future expansion requires a new phase gate and ADR amendment.
+
+### Directed editor caret authority (ADR-0052)
+
+S1-04 authorizes migration of existing editor cursor/selection state to one directed caret vector under `legion-editor`, as specified by `plans/adrs/ADR-0052-directed-editor-carets.md`. Existing editor mutation, snapshot, undo/redo and projection APIs remain the authority. `legion-ui` and `legion-desktop` may carry semantic requests and derived projections through app composition; neither may own persistent caret/selection state or mutate text directly. The migration adds no crate dependency edge. Editor contract tests must cover validation atomicity, edit mapping, history/retention and streamed text before new navigation commands are connected to the desktop. The S1-04D `MoveToBoundary`, `ReplaceDirectedCarets`, and `SetDirectedSelection` contracts remain existing-layer UI/app/editor ownership seams; their bridge, routing, app-authority, and editor-state tests must accompany activation. This entry records S1-04 implementation authority, not product acceptance.
+
+The S1-04g viewport line-origin metadata addendum adds no dependency edge: the
+editor computes optional absolute snapshot byte and UTF-16 line origins from
+the existing `legion-text` line index, while UI consumers preserve `None` for
+legacy or unavailable origins.

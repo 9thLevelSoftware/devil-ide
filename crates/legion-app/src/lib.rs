@@ -19,7 +19,7 @@ use legion_agent::{
     dag::{WorkflowDag, workflow_dag_from_approved_plan},
     plan::editable_plan_from_workflow_artifacts,
 };
-#[cfg(feature = "ai")]
+#[cfg(all(feature = "ai", any(test, feature = "test-helpers")))]
 use legion_agent::{DelegatedTaskProposalGenerator, DelegatedTaskProposalInput};
 #[cfg(feature = "ai")]
 use legion_ai::{InlinePredictionRequest, ProviderRegistry, ProviderRouter};
@@ -44,6 +44,8 @@ use crate::language::{language_projection_for_new_identity, language_quick_fixes
 #[cfg(any(test, feature = "test-helpers"))]
 pub use git_inspection::GitInspectionRunner;
 use git_inspection::{GitMutateOp, GitWorkRequest, GitWorker};
+#[cfg(any(test, feature = "test-helpers"))]
+pub use language::LspWorkerRequest;
 
 pub mod terminal_policy;
 
@@ -145,11 +147,15 @@ use legion_debug::{
     test_run_summary_evidence,
 };
 use legion_editor::{
-    Cursor, EditorEngine, EditorError, SaveAcknowledgement, SaveRequestDto, Selection, TextEdit,
-    TextPosition, TextRange as EditorTextRange,
+    Cursor, DirectedCaret, EditorEngine, EditorError, PreferredX, SaveAcknowledgement,
+    SaveRequestDto, Selection, ShapedVisualRow, SnapshotLeaseLineChunk, TextEdit, TextPosition,
+    TextRange as EditorTextRange, VerticalCaretStop, VerticalDirection, VerticalLayoutId,
+    VerticalMovementRequest, VerticalSourceRow,
 };
 // `AppSaveOutcome` carries this in two public variants, so a caller matching on
 // it needs to be able to name it without depending on `legion-editor` directly.
+/// Re-export the editor-owned, revocable snapshot handle for desktop workers.
+pub use legion_editor::OwnedSnapshotLease;
 pub use legion_editor::SaveRequestDto as PublicSaveRequestDto;
 use legion_index::{
     DEFAULT_GRAMMAR_VERSION, DEFAULT_MODEL_VERSION, LexicalIndexer, RetrievalQuery,
@@ -190,7 +196,7 @@ use legion_protocol::{
     AssistedAiProviderInvocationState, BatchProposalPayload, BufferId, BufferVersion, ByteRange,
     CancellationTokenId, CanonicalPath, CapabilityBrokerPort, CapabilityDecision,
     CapabilityDecisionId, CapabilityId, CapabilityNamespace, CapabilityRequest,
-    CapabilityRequestContext, CapabilityResponse, CausalityId, CheckpointAuditEvent,
+    CapabilityRequestContext, CapabilityResponse, CaretAffinity, CausalityId, CheckpointAuditEvent,
     CheckpointAuditRecord, CollaborationAcknowledgementStatus, CollaborationAuditRecord,
     CollaborationDocumentBinding, CollaborationDocumentEpoch, CollaborationDocumentOperation,
     CollaborationDocumentOperationKind, CollaborationGuiProjection, CollaborationParticipant,
@@ -222,19 +228,20 @@ use legion_protocol::{
     InlinePredictionStaleReason, InlinePredictionTriggerKind, LanguageBreadcrumbProjection,
     LanguageCodeLensProjection, LanguageCompletionProjection, LanguageHoverProjection, LanguageId,
     LanguageInlayHintProjection, LanguageLocationProjection, LanguageOutlineSymbolProjection,
-    LanguageProblemProjection, LanguageStickyScopeProjection, LanguageToolingOperationKind,
-    LanguageToolingOperationProjection, LanguageToolingProjection, LanguageToolingStatusKind,
-    LegionCloudLaneProjection, LegionCloudLaneProjectionRow, LegionCloudLaneTaskId,
-    LegionCloudLaneTaskRequest, LegionCloudLaneTaskState, LegionCloudLaneTaskStatus,
-    LegionEvidenceRecord, LegionTaskPacket, LegionWorkerResult, LegionWorkflowConflictId,
-    LegionWorkflowConflictState, LegionWorkflowDecisionFeedEntry, LegionWorkflowDecisionId,
-    LegionWorkflowDecisionKind, LegionWorkflowDependencyState, LegionWorkflowKillSwitch,
-    LegionWorkflowKillSwitchId, LegionWorkflowKillSwitchState, LegionWorkflowMergeApproval,
-    LegionWorkflowMergeReadiness, LegionWorkflowMergeReadinessState, LegionWorkflowProjection,
-    LegionWorkflowRiskHaltReason, LegionWorkflowRiskMonitorId, LegionWorkflowRiskMonitorSnapshot,
-    LegionWorkflowRiskMonitorState, LegionWorkflowSession, LegionWorkflowSessionId,
-    LegionWorkflowSignOffId, LegionWorkflowSignOffState, LegionWorkflowState,
-    LegionWorkflowVerificationGateId, LegionWorkflowVerificationGateState,
+    LanguageProblemProjection, LanguageServerId, LanguageStickyScopeProjection,
+    LanguageToolchainConfigurationStatus, LanguageToolchainSettingsRecord,
+    LanguageToolingOperationKind, LanguageToolingOperationProjection, LanguageToolingProjection,
+    LanguageToolingStatusKind, LegionCloudLaneProjection, LegionCloudLaneProjectionRow,
+    LegionCloudLaneTaskId, LegionCloudLaneTaskRequest, LegionCloudLaneTaskState,
+    LegionCloudLaneTaskStatus, LegionEvidenceRecord, LegionTaskPacket, LegionWorkerResult,
+    LegionWorkflowConflictId, LegionWorkflowConflictState, LegionWorkflowDecisionFeedEntry,
+    LegionWorkflowDecisionId, LegionWorkflowDecisionKind, LegionWorkflowDependencyState,
+    LegionWorkflowKillSwitch, LegionWorkflowKillSwitchId, LegionWorkflowKillSwitchState,
+    LegionWorkflowMergeApproval, LegionWorkflowMergeReadiness, LegionWorkflowMergeReadinessState,
+    LegionWorkflowProjection, LegionWorkflowRiskHaltReason, LegionWorkflowRiskMonitorId,
+    LegionWorkflowRiskMonitorSnapshot, LegionWorkflowRiskMonitorState, LegionWorkflowSession,
+    LegionWorkflowSessionId, LegionWorkflowSignOffId, LegionWorkflowSignOffState,
+    LegionWorkflowState, LegionWorkflowVerificationGateId, LegionWorkflowVerificationGateState,
     LegionWorkflowWorkerAssignment, LegionWorkflowWorkerId, LegionWorkflowWorkerState,
     LineWrappingPolicy, LspEditProposalConversionInput, LspRequestCorrelation, McpListChangedKind,
     McpPrimitiveKind, McpRegistrySnapshot, McpServerId, McpToolDescriptor, McpToolName,
@@ -257,25 +264,28 @@ use legion_protocol::{
     SaveIntent, SemanticGrammarVersion, SemanticModelVersion, SemanticPrivacyScope,
     SemanticQueryFreshnessPolicy, SemanticQueryId, SemanticQueryKind, SemanticQueryRequest,
     SemanticQueryScope, SessionDirtyIndicator, SessionPanelState, SessionTab, SessionTabGroup,
-    SpecArtifact, StorageRepositoryPort, StorageRepositoryRequest, StorageRepositoryResponse,
-    SymbolFileMapRecord, TaskGraphArtifact, TerminalInput, TerminalKillEscalation,
-    TerminalKillRequest, TerminalOutputRowProjection, TerminalPanelProjection, TerminalPanelStatus,
-    TerminalPanelStatusKind, TerminalPolicyProjection, TerminalResize, TerminalRuntimeState,
-    TerminalScrollbackProjection, TerminalSearchProjection, TerminalSessionId, TextCoordinate,
-    TextEdit as ProtocolWorkspaceTextEdit, TextRange as ProtocolEditTextRange,
-    TextTransactionDescriptor, TimestampMillis, TransactionSource, TrustDecisionContext,
-    Utf16Position, Utf16Range, VersionContext, ViewportLineSlice, ViewportProjection,
-    ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay,
-    WorkbenchSettingsRecord, WorkbenchTelemetryConsent, WorkspaceCloseRequest,
-    WorkspaceEditProposalPayload, WorkspaceEditSourceKind, WorkspaceGeneration, WorkspaceId,
-    WorkspaceOpenRequest, WorkspaceOpened, WorkspacePort, WorkspaceProposal, WorkspaceRequest,
-    WorkspaceResponse, WorkspaceSessionRecord, WorkspaceTextEdit, WorkspaceTrustState,
-    delegated_task_tool_permission_request, inline_prediction_projection_from_results,
-    validate_inline_prediction_lifecycle_command, validate_legion_cloud_lane_projection,
-    validate_legion_cloud_lane_task_request, validate_legion_workflow_decision_feed_entry,
-    validate_legion_workflow_kill_switch, validate_legion_workflow_risk_monitor_snapshot,
-    validate_mcp_registry_snapshot, validate_terminal_input, validate_terminal_kill_request,
-    validate_terminal_resize,
+    SnapshotConsumerKind, SnapshotId, SnapshotLeaseDescriptor, SpecArtifact, StorageRepositoryPort,
+    StorageRepositoryRequest, StorageRepositoryResponse, SymbolFileMapRecord, TaskGraphArtifact,
+    TerminalInput, TerminalKillEscalation, TerminalKillRequest, TerminalOutputRowProjection,
+    TerminalPanelProjection, TerminalPanelStatus, TerminalPanelStatusKind,
+    TerminalPolicyProjection, TerminalResize, TerminalRuntimeState, TerminalScrollbackProjection,
+    TerminalSearchProjection, TerminalSessionId, TextCoordinate,
+    TextRange as ProtocolEditTextRange, TextTransactionDescriptor, TimestampMillis,
+    TransactionSource, TrustDecisionContext, TypeScriptToolchainProjection,
+    TypeScriptToolchainSettings, Utf16Position, Utf16Range, VersionContext, ViewportLineSlice,
+    ViewportProjection, ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay,
+    VisualNavigationCaret, VisualNavigationDirection, VisualNavigationPosition,
+    VisualNavigationProjection, VisualNavigationRequest, VisualNavigationRow,
+    VisualNavigationWindow, VisualNavigationX, WorkbenchSettingsRecord, WorkbenchTelemetryConsent,
+    WorkspaceCloseRequest, WorkspaceEditProposalPayload, WorkspaceEditSourceKind,
+    WorkspaceGeneration, WorkspaceId, WorkspaceOpenRequest, WorkspaceOpened, WorkspacePort,
+    WorkspaceProposal, WorkspaceRequest, WorkspaceResponse, WorkspaceSessionRecord,
+    WorkspaceTrustState, delegated_task_tool_permission_request,
+    inline_prediction_projection_from_results, validate_inline_prediction_lifecycle_command,
+    validate_legion_cloud_lane_projection, validate_legion_cloud_lane_task_request,
+    validate_legion_workflow_decision_feed_entry, validate_legion_workflow_kill_switch,
+    validate_legion_workflow_risk_monitor_snapshot, validate_mcp_registry_snapshot,
+    validate_terminal_input, validate_terminal_kill_request, validate_terminal_resize,
 };
 use legion_remote::{
     RemoteConnectionSpec, RemoteDevelopmentRuntime, RemoteOperationOutcome, RemoteRuntimeConfig,
@@ -1092,6 +1102,13 @@ mod daily_editing_save_all_internal_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "language/code_action_tests.rs"]
+mod code_action_tests;
+#[cfg(test)]
+#[path = "language/toolchain_approval_tests.rs"]
+mod toolchain_approval_tests;
 
 /// Typed save result returned by application save routing.
 #[derive(Debug, Clone)]
@@ -6240,15 +6257,30 @@ impl ProposalPort for AppProposalCoordinator {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 struct CorrelationGenerator {
-    next: u64,
+    next: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl CorrelationGenerator {
-    fn next(&mut self) -> CorrelationId {
-        self.next = self.next.saturating_add(1).max(1);
-        CorrelationId(self.next)
+    fn next(&self) -> CorrelationId {
+        let value = self
+            .next
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |current| current.checked_add(1),
+            )
+            .expect("correlation id exhausted");
+        CorrelationId(value)
+    }
+}
+
+impl Default for CorrelationGenerator {
+    fn default() -> Self {
+        Self {
+            next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
     }
 }
 
@@ -6573,29 +6605,11 @@ impl ActiveDocumentController {
             .ok_or(AppCompositionError::WorkspaceNotOpen)
     }
 
-    /// Finds the `BufferId` for an open buffer whose canonical path matches
-    /// `path`.  Returns `None` if no open buffer has that path.
-    fn buffer_id_for_path(&self, path: &str) -> Option<BufferId> {
-        // Check active buffer first (fast path).
-        if let Some(meta) = &self.active_file_metadata
-            && meta.identity.canonical_path.0 == path
-        {
-            return self.active_buffer_id;
-        }
-        // Fall back to iterating the open buffer metadata map.
-        for (buffer_id, meta) in &self.buffer_file_metadata {
-            if meta.identity.canonical_path.0 == path {
-                return Some(*buffer_id);
-            }
-        }
-        None
-    }
-
     /// Every file with an open buffer right now.
     ///
     /// The active buffer is included explicitly rather than assumed to be in
-    /// the map, mirroring `buffer_id_for_path`, which checks it first for the
-    /// same reason.
+    /// the map, because the active buffer can be projected before its metadata
+    /// has been inserted into the map.
     fn open_file_ids(&self) -> std::collections::HashSet<FileId> {
         let mut ids: std::collections::HashSet<FileId> = self
             .buffer_file_metadata
@@ -6731,7 +6745,7 @@ fn lsp_identity_for_language_request(
     input: &LanguageRequestInput,
 ) -> legion_lsp::LspTextDocumentIdentity {
     legion_lsp::LspTextDocumentIdentity {
-        uri: format!("file://{}", input.metadata.identity.canonical_path.0),
+        uri: canonical_path_to_uri(&input.metadata.identity.canonical_path.0),
         language_id: language_id_for_path(&input.metadata.identity.canonical_path),
         workspace_id: input.workspace_id,
         file_id: input.metadata.identity.file_id,
@@ -6752,7 +6766,7 @@ fn utf16_position_from_text_coordinate(position: TextCoordinate) -> Utf16Positio
 }
 
 #[derive(Debug, Clone, Copy)]
-enum LanguageProposalKind {
+pub(crate) enum LanguageProposalKind {
     Formatting,
     Rename,
     OrganizeImports,
@@ -6826,8 +6840,8 @@ impl LanguageToolingWorkflow {
         self.projection.status_message = format!("Language operation {operation_id} cancelled");
         self.projection.cancellation_count = self.projection.cancellation_count.saturating_add(1);
         self.projection.generated_at = TimestampMillis::now();
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: LanguageToolingOperationKind::Diagnostics,
             status: LanguageToolingStatusKind::Cancelled,
             request_id: None,
@@ -6837,7 +6851,62 @@ impl LanguageToolingWorkflow {
             causality_id: Some(event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
+    }
+
+    /// Updates the existing metadata-only row for an accepted LSP write.
+    ///
+    /// Write operations are admitted with an opaque app operation id and must
+    /// keep that same id through terminal failure, staleness, cancellation, or
+    /// proposal creation.  In particular, this helper never manufactures an
+    /// LSP request id: the request tag is app-owned and the worker does not
+    /// expose a protocol id at this boundary.
+    pub(crate) fn upsert_write_operation(
+        &mut self,
+        pending: &crate::language::PendingLspWriteOperation,
+        status: LanguageToolingStatusKind,
+        message: String,
+        proposal_id: Option<ProposalId>,
+    ) -> LanguageToolingProjection {
+        self.projection.workspace_id = Some(pending.workspace_id);
+        self.projection.buffer_id = Some(pending.buffer_id);
+        self.projection.file_id = Some(pending.file_id);
+        self.projection.status = status;
+        self.projection.status_message = message.clone();
+        self.projection.generated_at = TimestampMillis::now();
+        let row = LanguageToolingOperationProjection {
+            operation_id: pending.operation_id.clone(),
+            kind: pending.operation_kind,
+            status,
+            request_id: None,
+            proposal_id,
+            message,
+            correlation_id: Some(pending.event_context.correlation_id),
+            causality_id: Some(pending.event_context.causality_id),
+            generated_at: TimestampMillis::now(),
+            schema_version: 1,
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == pending.operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
+        self.projection()
     }
 
     fn ingest_lsp_diagnostics(
@@ -6983,8 +7052,8 @@ impl LanguageToolingWorkflow {
         }
         self.projection = projection;
         let operation_id = self.next_operation_id(operation_kind);
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: operation_kind,
             status: LanguageToolingStatusKind::Ready,
             request_id: ingest.request_id,
@@ -6994,7 +7063,17 @@ impl LanguageToolingWorkflow {
             causality_id: Some(input.event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
         self.projection()
     }
 
@@ -7289,6 +7368,7 @@ impl LanguageToolingWorkflow {
             });
 
         self.projection = LanguageToolingProjection {
+            typescript_toolchain: previous_projection.typescript_toolchain,
             workspace_id: Some(input.workspace_id),
             buffer_id: Some(input.buffer_id),
             file_id: Some(input.metadata.identity.file_id),
@@ -7300,6 +7380,7 @@ impl LanguageToolingWorkflow {
             sticky_scopes,
             inlay_hints,
             code_lenses,
+            code_action_candidates: previous_projection.code_action_candidates,
             hover: if matches!(kind, LanguageReadKind::Hover) {
                 hover
             } else {
@@ -7381,6 +7462,7 @@ impl LanguageToolingWorkflow {
         proposal_id: ProposalId,
         action_id: Option<&str>,
         message: String,
+        operation_id: Option<String>,
     ) -> LanguageToolingProjection {
         let operation_kind = match kind {
             LanguageProposalKind::Formatting => LanguageToolingOperationKind::FormattingProposal,
@@ -7405,19 +7487,34 @@ impl LanguageToolingWorkflow {
                 }
             }
         }
-        let operation_id = self.next_operation_id(operation_kind);
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let has_explicit_operation_id = operation_id.is_some();
+        let operation_id = operation_id.unwrap_or_else(|| self.next_operation_id(operation_kind));
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: operation_kind,
             status: LanguageToolingStatusKind::Ready,
-            request_id: Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7())),
+            request_id: if has_explicit_operation_id {
+                None
+            } else {
+                Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7()))
+            },
             proposal_id: Some(proposal_id),
             message,
             correlation_id: Some(input.event_context.correlation_id),
             causality_id: Some(input.event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
         self.projection()
     }
 
@@ -7426,6 +7523,16 @@ impl LanguageToolingWorkflow {
         input: &LanguageRequestInput,
         kind: LanguageProposalKind,
         message: String,
+    ) -> LanguageToolingProjection {
+        self.record_proposal_failure_with_operation_id(input, kind, message, None)
+    }
+
+    fn record_proposal_failure_with_operation_id(
+        &mut self,
+        input: &LanguageRequestInput,
+        kind: LanguageProposalKind,
+        message: String,
+        operation_id: Option<String>,
     ) -> LanguageToolingProjection {
         let operation_kind = match kind {
             LanguageProposalKind::Formatting => LanguageToolingOperationKind::FormattingProposal,
@@ -7441,19 +7548,34 @@ impl LanguageToolingWorkflow {
         self.projection.status = LanguageToolingStatusKind::Failed;
         self.projection.status_message = message.clone();
         self.projection.generated_at = TimestampMillis::now();
-        let operation_id = self.next_operation_id(operation_kind);
-        self.push_operation(LanguageToolingOperationProjection {
-            operation_id,
+        let has_explicit_operation_id = operation_id.is_some();
+        let operation_id = operation_id.unwrap_or_else(|| self.next_operation_id(operation_kind));
+        let row = LanguageToolingOperationProjection {
+            operation_id: operation_id.clone(),
             kind: operation_kind,
             status: LanguageToolingStatusKind::Failed,
-            request_id: Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7())),
+            request_id: if has_explicit_operation_id {
+                None
+            } else {
+                Some(legion_protocol::LspRequestId(uuid::Uuid::now_v7()))
+            },
             proposal_id: None,
             message,
             correlation_id: Some(input.event_context.correlation_id),
             causality_id: Some(input.event_context.causality_id),
             generated_at: TimestampMillis::now(),
             schema_version: 1,
-        });
+        };
+        if let Some(existing) = self
+            .projection
+            .operations
+            .iter_mut()
+            .find(|operation| operation.operation_id == operation_id)
+        {
+            *existing = row;
+        } else {
+            self.push_operation(row);
+        }
         self.projection()
     }
 
@@ -7465,8 +7587,19 @@ impl LanguageToolingWorkflow {
     fn push_operation(&mut self, operation: LanguageToolingOperationProjection) {
         self.projection.operations.push(operation);
         if self.projection.operations.len() > 20 {
-            let excess = self.projection.operations.len() - 20;
-            self.projection.operations.drain(0..excess);
+            // Keep every admitted write row while it is Running so a bounded
+            // 32-entry request map cannot lose cancellation/status identity.
+            // Completed history remains bounded at twenty rows.
+            while self.projection.operations.len() > 20 {
+                let Some(index) =
+                    self.projection.operations.iter().position(|operation| {
+                        operation.status != LanguageToolingStatusKind::Running
+                    })
+                else {
+                    break;
+                };
+                self.projection.operations.remove(index);
+            }
         }
     }
 }
@@ -8543,22 +8676,14 @@ impl TerminalWorkflow {
 ///   (lowercase) for a document opened as `file:///C:/…`, and lsp-types'
 ///   `Url` can percent-encode the colon (`C%3A`). Before this
 ///   normalization, every echoed diagnostic for an open buffer was
-///   silently dropped by the `buffer_id_for_path` lookup on Windows.
+///   silently dropped by exact path lookup on Windows.
 /// - Unix absolute paths keep their leading `/` — stripping `file:///`
 ///   consumed it, so `/tmp/ws/main.rs` became `tmp/ws/main.rs` and the
 ///   lookup silently dropped diagnostics on Unix through this path too.
 /// - `/` becomes `\` on Windows for consistency with the editor's paths.
-fn uri_to_canonical_path(uri: &str) -> String {
+pub(crate) fn uri_to_canonical_path(uri: &str) -> String {
     let path_part = if let Some(rest) = uri.strip_prefix("file:///") {
-        // Percent-decode a drive colon (`C%3A` → `C:`), either hex case.
-        let rest = if rest.len() >= 4
-            && rest.as_bytes()[0].is_ascii_alphabetic()
-            && rest[1..4].eq_ignore_ascii_case("%3a")
-        {
-            format!("{}:{}", &rest[..1], &rest[4..])
-        } else {
-            rest.to_string()
-        };
+        let rest = percent_decode_uri_path(rest);
         let bytes = rest.as_bytes();
         if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
             // Windows drive path: canonical uppercase drive letter.
@@ -8567,8 +8692,15 @@ fn uri_to_canonical_path(uri: &str) -> String {
             // Unix absolute path: restore the leading `/` the strip consumed.
             format!("/{rest}")
         }
+    } else if let Some(rest) = uri.strip_prefix("file://localhost/") {
+        let rest = percent_decode_uri_path(rest);
+        if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
+            rest
+        } else {
+            format!("/{rest}")
+        }
     } else if let Some(rest) = uri.strip_prefix("file://") {
-        rest.to_string()
+        format!("//{}", percent_decode_uri_path(rest))
     } else {
         uri.to_string()
     };
@@ -8581,6 +8713,65 @@ fn uri_to_canonical_path(uri: &str) -> String {
     {
         path_part
     }
+}
+
+/// Normalizes an LSP file URI to the app's authoritative URI spelling.
+pub(crate) fn normalize_lsp_document_uri(uri: &str) -> Option<String> {
+    if !uri.starts_with("file://") || uri.contains('?') || uri.contains('#') {
+        return None;
+    }
+    Some(canonical_path_to_uri(&uri_to_canonical_path(uri)))
+}
+
+/// Return whether two `file://` URIs name the same on-disk document.
+///
+/// Drive-letter and percent-encoding differences are normalized first.
+/// When both paths exist, filesystem canonicalize then equates macOS
+/// `/var` vs `/private/var` and Windows `\\?\` prefixes so a live
+/// server echo cannot drop diagnostics for an open buffer.
+pub(crate) fn lsp_file_uris_refer_to_same_document(left: &str, right: &str) -> bool {
+    let Some(left) = normalize_lsp_document_uri(left) else {
+        return false;
+    };
+    let Some(right) = normalize_lsp_document_uri(right) else {
+        return false;
+    };
+    if left == right {
+        return true;
+    }
+    let left_path = uri_to_canonical_path(&left);
+    let right_path = uri_to_canonical_path(&right);
+    match (
+        std::fs::canonicalize(&left_path),
+        std::fs::canonicalize(&right_path),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn percent_decode_uri_path(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) {
+                decoded.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| value.to_string())
 }
 
 #[cfg(test)]
@@ -8620,40 +8811,164 @@ mod uri_to_canonical_path_tests {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
+    fn file_uris_decode_spaces_and_unicode_without_path_guessing() {
+        let path = uri_to_canonical_path("file:///tmp/ws/space%20and%20%E2%98%83.ts");
+        assert_eq!(path, "/tmp/ws/space and ☃.ts");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unix_localhost_file_uri_is_local_absolute_path() {
+        assert_eq!(
+            uri_to_canonical_path("file://localhost/tmp/ws/src/main.ts"),
+            "/tmp/ws/src/main.ts"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
     fn unix_path_component_case_is_preserved() {
         assert_eq!(
             uri_to_canonical_path("file:///tmp/WS/src/Main.rs"),
             "/tmp/WS/src/Main.rs"
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_and_canonical_file_uris_name_the_same_document() {
+        use super::{canonical_path_to_uri, lsp_file_uris_refer_to_same_document};
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let real_dir = root.path().join("real");
+        std::fs::create_dir(&real_dir).expect("mkdir real");
+        let file = real_dir.join("main.ts");
+        std::fs::write(&file, "const value = 1;\n").expect("write");
+        let alias_dir = root.path().join("alias");
+        symlink(&real_dir, &alias_dir).expect("symlink");
+        let alias_file = alias_dir.join("main.ts");
+
+        let real_uri = canonical_path_to_uri(&file.to_string_lossy());
+        let alias_uri = canonical_path_to_uri(&alias_file.to_string_lossy());
+        assert_ne!(
+            real_uri, alias_uri,
+            "the test must exercise two different URI spellings"
+        );
+        assert!(lsp_file_uris_refer_to_same_document(&real_uri, &alias_uri));
+    }
 }
 
 /// Converts a canonical path string to a `file://` URI.
-fn canonical_path_to_uri(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    if normalized.starts_with('/') {
-        format!("file://{normalized}")
+pub(crate) fn canonical_path_to_uri(path: &str) -> String {
+    let windows_form = path.starts_with("\\\\")
+        || path.starts_with("//")
+        || path.starts_with("\\\\?\\")
+        || path.starts_with("//?/")
+        || (path.len() >= 2
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':');
+    let mut normalized = if windows_form {
+        path.replace('\\', "/")
     } else {
-        format!("file:///{normalized}")
+        path.to_string()
+    };
+    if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
+        normalized = format!("//{rest}");
+    } else if let Some(rest) = normalized.strip_prefix("//?/") {
+        normalized = rest.to_string();
     }
+    let encoded = percent_encode_file_path(&normalized);
+    if let Some(rest) = encoded.strip_prefix("//") {
+        format!("file://{rest}")
+    } else if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
+fn percent_encode_file_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte >> 4) as usize]));
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte & 0x0f) as usize]));
+        }
+    }
+    encoded
 }
 
 fn language_id_for_path(path: &CanonicalPath) -> LanguageId {
     let lower = path.0.to_ascii_lowercase();
     let language = if lower.ends_with(".rs") {
         "rust"
-    } else if lower.ends_with(".ts") || lower.ends_with(".tsx") {
+    } else if lower.ends_with(".tsx") {
+        "typescriptreact"
+    } else if lower.ends_with(".ts") {
         "typescript"
-    } else if lower.ends_with(".js") || lower.ends_with(".jsx") {
+    } else if lower.ends_with(".jsx") {
+        "javascriptreact"
+    } else if lower.ends_with(".js") {
         "javascript"
     } else if lower.ends_with(".md") {
         "markdown"
     } else if lower.ends_with(".json") {
         "json"
+    } else if lower.ends_with(".py") || lower.ends_with(".pyi") || lower.ends_with(".pyw") {
+        "python"
     } else {
         "text"
     };
     LanguageId(language.to_string())
+}
+
+#[cfg(test)]
+mod language_id_for_path_tests {
+    use super::language_id_for_path;
+    use legion_protocol::{CanonicalPath, LanguageId};
+
+    #[test]
+    fn recognizes_python_source_stub_and_windows_extensions_case_insensitively() {
+        for path in [
+            "src/main.py",
+            "src/types.pyi",
+            "src/tool.pyw",
+            "src/MAIN.PY",
+        ] {
+            assert_eq!(
+                language_id_for_path(&CanonicalPath(path.to_string())),
+                LanguageId("python".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_unknown_extensions_as_text() {
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/main.unknown".to_string())),
+            LanguageId("text".to_string())
+        );
+    }
+
+    #[test]
+    fn distinguishes_javascript_and_jsx_language_ids() {
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/main.js".to_string())),
+            LanguageId("javascript".to_string())
+        );
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/view.jsx".to_string())),
+            LanguageId("javascriptreact".to_string())
+        );
+        assert_eq!(
+            language_id_for_path(&CanonicalPath("src/view.tsx".to_string())),
+            LanguageId("typescriptreact".to_string())
+        );
+    }
 }
 
 pub(crate) fn bounded_label(value: impl Into<String>, limit: usize) -> String {
@@ -9066,46 +9381,6 @@ fn selected_line_count(selected: &str) -> usize {
     }
 }
 
-fn identifier_byte_range_at(text: &str, requested_byte: u64) -> Option<ByteRange> {
-    if text.is_empty() {
-        return None;
-    }
-
-    let mut index = usize::try_from(requested_byte).unwrap_or(usize::MAX);
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    let bytes = text.as_bytes();
-    if index == bytes.len() && index > 0 {
-        index -= 1;
-    }
-    if index < bytes.len()
-        && !is_identifier_byte(bytes[index])
-        && index > 0
-        && is_identifier_byte(bytes[index - 1])
-    {
-        index -= 1;
-    }
-    if index >= bytes.len() || !is_identifier_byte(bytes[index]) {
-        return None;
-    }
-
-    let mut start = index;
-    while start > 0 && is_identifier_byte(bytes[start - 1]) {
-        start -= 1;
-    }
-    let mut end = index + 1;
-    while end < bytes.len() && is_identifier_byte(bytes[end]) {
-        end += 1;
-    }
-    Some(ByteRange::new(start as u64, end as u64))
-}
-
-fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
 #[derive(Debug, Clone)]
 struct InstructionPrefixSource {
     source_label: String,
@@ -9314,6 +9589,140 @@ struct DeferredSaveSuccess {
     applied: legion_project::WorkspaceSaveApplied,
 }
 
+fn visual_navigation_position(
+    position: VisualNavigationPosition,
+) -> Result<TextPosition, AppCompositionError> {
+    let line = usize::try_from(position.line).map_err(|_| {
+        AppCompositionError::Editor(EditorError::InvalidEdit("visual line overflows usize"))
+    })?;
+    let column = usize::try_from(position.byte_column).map_err(|_| {
+        AppCompositionError::Editor(EditorError::InvalidEdit(
+            "visual byte column overflows usize",
+        ))
+    })?;
+    Ok(TextPosition::new(line, column))
+}
+
+fn visual_navigation_x(x: VisualNavigationX) -> Result<PreferredX, AppCompositionError> {
+    PreferredX::new(x.value).map_err(AppCompositionError::Editor)
+}
+
+fn visual_navigation_caret(
+    caret: VisualNavigationCaret,
+) -> Result<DirectedCaret, AppCompositionError> {
+    let head = visual_navigation_position(caret.head)?;
+    let anchor = caret.anchor.map(visual_navigation_position).transpose()?;
+    let preferred_x = caret.preferred_x.map(visual_navigation_x).transpose()?;
+    Ok(DirectedCaret {
+        head,
+        anchor,
+        affinity: caret.affinity,
+        preferred_x,
+    })
+}
+
+fn visual_navigation_row(row: VisualNavigationRow) -> Result<ShapedVisualRow, AppCompositionError> {
+    let stops = row
+        .stops
+        .into_iter()
+        .map(|stop| {
+            Ok(VerticalCaretStop {
+                position: visual_navigation_position(stop.position)?,
+                x: visual_navigation_x(stop.x)?,
+                affinity: stop.affinity,
+            })
+        })
+        .collect::<Result<Vec<_>, AppCompositionError>>()?;
+    Ok(ShapedVisualRow {
+        logical_line: row.logical_line,
+        row_index: row.row_index,
+        row_count: row.row_count,
+        start: visual_navigation_position(row.start)?,
+        end: visual_navigation_position(row.end)?,
+        stops,
+    })
+}
+
+fn visual_navigation_request(
+    request: &VisualNavigationRequest,
+) -> Result<VerticalMovementRequest, AppCompositionError> {
+    let layout_id = VerticalLayoutId::new(request.layout_id.0).ok_or(
+        AppCompositionError::Editor(EditorError::InvalidEdit("visual layout id must be nonzero")),
+    )?;
+    let expected_carets = request
+        .expected_carets
+        .clone()
+        .into_iter()
+        .map(visual_navigation_caret)
+        .collect::<Result<Vec<_>, _>>()?;
+    let source_rows = request
+        .source_rows
+        .clone()
+        .into_iter()
+        .map(|source| {
+            Ok(VerticalSourceRow {
+                row: visual_navigation_row(source.row)?,
+                source_x: visual_navigation_x(source.source_x)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AppCompositionError>>()?;
+    let target_rows = request
+        .target_rows
+        .clone()
+        .into_iter()
+        .map(visual_navigation_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    let direction = match request.direction {
+        VisualNavigationDirection::Up => VerticalDirection::Up,
+        VisualNavigationDirection::Down => VerticalDirection::Down,
+    };
+    Ok(VerticalMovementRequest {
+        expected_snapshot_id: request.expected_snapshot_id,
+        expected_buffer_version: request.expected_buffer_version,
+        expected_carets,
+        layout_id,
+        direction,
+        extend: request.extend,
+        source_rows,
+        target_rows,
+    })
+}
+
+fn visual_navigation_position_from_editor(
+    position: TextPosition,
+) -> Result<VisualNavigationPosition, AppCompositionError> {
+    Ok(VisualNavigationPosition {
+        line: u32::try_from(position.line).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "editor line overflows visual navigation DTO",
+            ))
+        })?,
+        byte_column: u64::try_from(position.column).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "editor byte column overflows visual navigation DTO",
+            ))
+        })?,
+    })
+}
+
+fn visual_navigation_x_from_editor(x: PreferredX) -> VisualNavigationX {
+    VisualNavigationX { value: x.get() }
+}
+
+fn visual_navigation_caret_from_editor(
+    caret: DirectedCaret,
+) -> Result<VisualNavigationCaret, AppCompositionError> {
+    Ok(VisualNavigationCaret {
+        head: visual_navigation_position_from_editor(caret.head)?,
+        anchor: caret
+            .anchor
+            .map(visual_navigation_position_from_editor)
+            .transpose()?,
+        affinity: caret.affinity,
+        preferred_x: caret.preferred_x.map(visual_navigation_x_from_editor),
+    })
+}
+
 #[derive(Debug, Clone)]
 enum ProposalMutationRollback {
     None,
@@ -9359,6 +9768,64 @@ pub enum AppCommandRequest {
         buffer_id: BufferId,
         /// Editor edit in UI-projected text coordinates.
         edit: TextEdit,
+    },
+    /// Replace every directed caret range through editor authority.
+    ReplaceDirectedCarets {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Replacement or insertion payload.
+        text: String,
+    },
+    /// Delete each directed caret's selection or adjacent grapheme cluster.
+    DeleteDirectedCarets {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Delete toward the document start when true; otherwise toward the end.
+        backward: bool,
+    },
+    /// Set a directed pointer selection while preserving anchor/head order.
+    SetDirectedSelection {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+    },
+    /// Place a visual cursor with stale-layout protection and wrap-side affinity.
+    SetVisualCursor {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Cursor coordinate from projection space.
+        cursor: TextCoordinate,
+        /// Rendered wrap-side affinity.
+        affinity: CaretAffinity,
+    },
+    /// Place a visual directed selection with stale-layout protection.
+    SetVisualDirectedSelection {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Layout snapshot identity.
+        expected_snapshot_id: SnapshotId,
+        /// Layout buffer version.
+        expected_buffer_version: BufferVersion,
+        /// Fixed selection anchor.
+        anchor: TextCoordinate,
+        /// Current selection head.
+        head: TextCoordinate,
+        /// Rendered wrap-side affinity for the head.
+        head_affinity: CaretAffinity,
+    },
+    /// Move every ordered caret through app-owned shaped visual-row facts.
+    MoveVertically {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Renderer-shaped vertical movement request.
+        request: VisualNavigationRequest,
     },
     /// Copy the current selection and return metadata-only clipboard evidence.
     ClipboardCopy {
@@ -9412,6 +9879,24 @@ pub enum AppCommandRequest {
         buffer_id: BufferId,
         /// Selection range from UI projection space.
         range: legion_protocol::ProtocolTextRange,
+    },
+    /// Move every active caret to a semantic line/document boundary.
+    MoveToBoundary {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Requested boundary.
+        boundary: legion_ui::EditorBoundaryKind,
+        /// Extend the directed selections.
+        extend: bool,
+    },
+    /// Move every active caret one grapheme boundary horizontally.
+    MoveHorizontally {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// Move toward the document start when true, otherwise toward the end.
+        left: bool,
+        /// Extend the directed selections.
+        extend: bool,
     },
     /// Update viewport scroll state for a buffer.
     SetViewportScroll {
@@ -9837,6 +10322,20 @@ pub enum AppCommandRequest {
         /// Code-action identifier selected from projection data.
         action_id: String,
     },
+    /// Request bounded metadata for all code actions in a document range.
+    RequestCodeActions {
+        /// Target buffer identifier.
+        buffer_id: BufferId,
+        /// UTF-16 range supplied to the language server.
+        range: ProtocolTextRange,
+    },
+    /// Select an opaque candidate from a previously projected response.
+    SelectCodeAction {
+        /// Response-scoped identity.
+        response_id: String,
+        /// Candidate token scoped to the response.
+        action_id: String,
+    },
     /// Activate a projected language code lens through app authority.
     ActivateLanguageCodeLens {
         /// Target buffer identifier.
@@ -10101,6 +10600,17 @@ pub enum AppCommandRequest {
     LspStartSession,
     /// Restart the language server session, resetting the circuit breaker (PKT-LSP-C T1/T3).
     LspRestartSession,
+    /// Explicitly configure the local TypeScript toolchain.
+    ConfigureTypeScriptToolchain {
+        /// Local TypeScript language-server archive.
+        server_archive: PathBuf,
+        /// Local TypeScript compiler archive.
+        compiler_archive: PathBuf,
+        /// Explicit Node executable.
+        node_executable: PathBuf,
+    },
+    /// Clear the local TypeScript toolchain configuration.
+    ClearTypeScriptToolchain,
 }
 
 /// Minimal editor command port used by app command routing.
@@ -10111,6 +10621,20 @@ pub trait AppEditorCommandPort {
         buffer_id: BufferId,
         edit: TextEdit,
     ) -> Result<TextTransactionDescriptor, AppCompositionError>;
+
+    /// Replace every directed caret range through editor authority.
+    fn replace_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        text: String,
+    ) -> Result<TextTransactionDescriptor, AppCompositionError>;
+
+    /// Delete each directed caret's selection or adjacent grapheme cluster.
+    fn delete_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        backward: bool,
+    ) -> Result<Option<TextTransactionDescriptor>, AppCompositionError>;
 
     /// Undo a buffer through editor authority.
     fn undo(
@@ -10134,6 +10658,33 @@ impl AppEditorCommandPort for EditorEngine {
         let record =
             EditorEngine::apply_edit(self, buffer_id, edit, TransactionSource::User, None, None)?;
         Ok(record.to_protocol_descriptor())
+    }
+
+    fn replace_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        text: String,
+    ) -> Result<TextTransactionDescriptor, AppCompositionError> {
+        Ok(
+            EditorEngine::replace_directed_carets(self, buffer_id, text, None)?
+                .to_protocol_descriptor(),
+        )
+    }
+
+    fn delete_directed_carets(
+        &mut self,
+        buffer_id: BufferId,
+        backward: bool,
+    ) -> Result<Option<TextTransactionDescriptor>, AppCompositionError> {
+        let direction = if backward {
+            legion_editor::DeleteDirection::Backward
+        } else {
+            legion_editor::DeleteDirection::Forward
+        };
+        Ok(
+            EditorEngine::delete_directed_carets(self, buffer_id, direction, None)?
+                .map(|record| record.to_protocol_descriptor()),
+        )
     }
 
     fn undo(
@@ -10276,6 +10827,24 @@ impl CommandExecutionService {
                     editor.apply_edit(*buffer_id, edit.clone())?,
                 )))
             }
+            AppCommandRequest::ReplaceDirectedCarets { buffer_id, text } => {
+                state.ensure_active_buffer(*buffer_id)?;
+                Ok(Some(AppCommandOutcome::Edited(
+                    editor.replace_directed_carets(*buffer_id, text.clone())?,
+                )))
+            }
+            AppCommandRequest::DeleteDirectedCarets {
+                buffer_id,
+                backward,
+            } => {
+                state.ensure_active_buffer(*buffer_id)?;
+                Ok(Some(
+                    match editor.delete_directed_carets(*buffer_id, *backward)? {
+                        Some(descriptor) => AppCommandOutcome::Edited(descriptor),
+                        None => AppCommandOutcome::Noop,
+                    },
+                ))
+            }
             AppCommandRequest::Save { .. }
             | AppCommandRequest::ClipboardCopy { .. }
             | AppCommandRequest::ClipboardCut { .. }
@@ -10287,6 +10856,12 @@ impl CommandExecutionService {
             | AppCommandRequest::SaveAll
             | AppCommandRequest::SetCursor { .. }
             | AppCommandRequest::SetSelection { .. }
+            | AppCommandRequest::MoveToBoundary { .. }
+            | AppCommandRequest::MoveHorizontally { .. }
+            | AppCommandRequest::SetDirectedSelection { .. }
+            | AppCommandRequest::SetVisualCursor { .. }
+            | AppCommandRequest::SetVisualDirectedSelection { .. }
+            | AppCommandRequest::MoveVertically { .. }
             | AppCommandRequest::SetViewportScroll { .. }
             | AppCommandRequest::OpenPalette { .. }
             | AppCommandRequest::ClosePalette
@@ -10380,6 +10955,8 @@ impl CommandExecutionService {
             | AppCommandRequest::RequestRenameProposal { .. }
             | AppCommandRequest::RequestOrganizeImportsProposal { .. }
             | AppCommandRequest::RequestCodeActionProposal { .. }
+            | AppCommandRequest::RequestCodeActions { .. }
+            | AppCommandRequest::SelectCodeAction { .. }
             | AppCommandRequest::ActivateLanguageCodeLens { .. }
             | AppCommandRequest::CancelLanguageOperation { .. }
             | AppCommandRequest::TerminalLaunch { .. }
@@ -10411,7 +10988,9 @@ impl CommandExecutionService {
             | AppCommandRequest::LeaveCollaborationSession { .. }
             | AppCommandRequest::PublishCollaborationPresence { .. }
             | AppCommandRequest::LspStartSession
-            | AppCommandRequest::LspRestartSession => Ok(None),
+            | AppCommandRequest::LspRestartSession
+            | AppCommandRequest::ConfigureTypeScriptToolchain { .. }
+            | AppCommandRequest::ClearTypeScriptToolchain => Ok(None),
             AppCommandRequest::RefreshExplorer => {
                 let workspace_id = state.require_workspace_id()?;
                 let tree = workspace.tree_snapshot(workspace_id)?;
@@ -11130,10 +11709,20 @@ fn semantic_kind_for_scope_stack(scope_stack: &ScopeStack) -> Option<ViewportSem
 struct ProjectionBuilder;
 
 impl ProjectionBuilder {
+    fn apply_line_wrapping_policy(
+        viewport: &mut ViewportProjection,
+        settings: &SettingsProjection,
+    ) {
+        let settings = settings.clone().normalized();
+        viewport.line_wrapping_policy = settings.editor.line_wrapping_policy;
+        viewport.wrap_column = settings.editor.wrap_column;
+    }
+
     fn active_buffer_projection(
         active: &ActiveDocumentController,
         editor: &EditorEngine,
         layout: &ShellLayoutProjection,
+        settings: &SettingsProjection,
     ) -> Result<ActiveBufferProjection, AppCompositionError> {
         let Some(buffer_id) = active.active_buffer_id else {
             return Ok(ActiveBufferProjection::empty());
@@ -11150,6 +11739,9 @@ impl ProjectionBuilder {
 
         let active_text = editor.text(buffer_id).ok();
         let mut viewport = editor.viewport_projection(request).ok();
+        if let Some(viewport) = &mut viewport {
+            Self::apply_line_wrapping_policy(viewport, settings);
+        }
         if let (Some(viewport), Some(path)) = (&mut viewport, active.active_file_path.as_deref()) {
             add_semantic_token_overlays(path, active_text, viewport);
         }
@@ -11517,6 +12109,7 @@ fn capture_workspace_session_record(
         },
         dock_layouts: Vec::new(),
         workbench_settings: WorkbenchSettingsRecord::default(),
+        language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
         memory_snapshot_json: None,
         dirty_indicators,
         saved_at: TimestampMillis::now(),
@@ -14259,6 +14852,9 @@ pub struct AppComposition {
     /// Assist publishes nothing until the worker exists, and a Delegate turn is
     /// already half written by the time the spawn is attempted.
     injected_delegate_chat_spawn_failure: bool,
+    /// One-shot workspace-edit preflight barrier used by in-crate atomicity tests.
+    #[cfg(test)]
+    workspace_edit_preflight_hook: Option<Box<dyn FnOnce()>>,
     /// Test-only interruption seam after a Pending proposal observation is
     /// durable but before its proposals are published to the live ledger.
     #[cfg(any(test, feature = "test-helpers"))]
@@ -14312,6 +14908,19 @@ pub struct AppComposition {
     terminal_workflow: TerminalWorkflow,
     /// Background LSP session lifecycle (PKT-LSP-B T1 / D4).
     lsp_session: crate::language::LspSessionHandle,
+    /// App-owned language startup authority and selected adapter registry.
+    language_startup_authority: crate::language::LanguageStartupAuthority,
+    language_server_registry: legion_lsp::LanguageServerAdapterRegistry,
+    language_server_configured_paths: HashMap<LanguageServerId, std::path::PathBuf>,
+    language_server_downloaded: HashMap<LanguageServerId, LanguageDownloadedStartup>,
+    language_server_local_downloads: HashMap<LanguageServerId, LanguageDownloadedLocalConfig>,
+    typescript_bundles: HashMap<LanguageServerId, TypeScriptBundleStartup>,
+    typescript_node_approval: Option<PathBuf>,
+    /// Persisted metadata for the operator-configured local TypeScript bundle.
+    /// This is configuration only; startup authority and receipts remain
+    /// process-local and are rebuilt after every explicit start.
+    language_toolchain_settings: LanguageToolchainSettingsRecord,
+    document_sync_ledger: HashMap<String, Vec<DesiredDocumentSync>>,
     /// Direction awaiting a `prepareCallHierarchy` response.
     ///
     /// Call hierarchy is two round trips: `prepareCallHierarchy` resolves the
@@ -14319,6 +14928,19 @@ pub struct AppComposition {
     /// for. The direction is chosen at the first step and needed at the second,
     /// so it waits here in between. See `language/call_hierarchy.rs`.
     pending_call_hierarchy: Option<crate::language::PendingCallHierarchy>,
+    /// Accepted write-side LSP requests awaiting their matching server response.
+    pending_lsp_writes: HashMap<String, crate::language::PendingLspWriteOperation>,
+    /// Bounded rename requests admitted while their document sync is queued.
+    deferred_lsp_writes: HashMap<String, crate::language::DeferredLspWrite>,
+    /// Bounded two-step code-action response and selection authority.
+    code_action_authority: crate::language::CodeActionAuthority,
+    code_action_command_sidecars: crate::language::CodeActionCommandSidecars,
+    code_action_diagnostics: crate::language::CodeActionDiagnostics,
+    server_apply_edits: crate::language::ServerApplyEditAuthority,
+    /// Full contexts for command actions currently awaiting a server response.
+    /// Keeping the complete context prevents an inbound applyEdit from being
+    /// authorized solely by a recycled request-id string.
+    pending_code_action_contexts: HashMap<String, legion_protocol::LspOperationContext>,
     /// Arming instant, buffer, and position for the completion debounce (I1).
     lsp_ui_completion_debounce: Option<(Instant, BufferId, TextCoordinate)>,
     /// Count of completions seen at the last pre-sync; used for new-arrival detection (I1).
@@ -14348,6 +14970,77 @@ pub struct AppComposition {
     /// `None` means no org bundle is installed; the type has no unverified
     /// constructor, so a bundle here has had its signature checked.
     org_policy_bundle: Option<legion_security::VerifiedPolicyBundle>,
+}
+
+#[derive(Clone)]
+struct LanguageDownloadedStartup {
+    adapter: legion_lsp::LanguageServerAdapterPlan,
+    descriptor: crate::language::ArtifactDescriptor,
+    artifact: crate::language::MaterializedArtifact,
+    approved_node: crate::language::ApprovedNodeRuntime,
+    runtime_request: crate::language::NodeRuntimeApprovalRequest,
+}
+
+#[derive(Clone)]
+struct LanguageDownloadedLocalConfig {
+    adapter: legion_lsp::LanguageServerAdapterPlan,
+    archive: PathBuf,
+    node_path: PathBuf,
+    cache_root: PathBuf,
+}
+
+#[derive(Clone)]
+struct TypeScriptBundleStartup {
+    descriptor: crate::language::TypeScriptBundleDescriptor,
+    server_archive: PathBuf,
+    compiler_archive: PathBuf,
+    node_path: PathBuf,
+    cache_root: PathBuf,
+}
+
+/// Non-persistent state of the normal TypeScript toolchain controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanguageToolchainConfigurationState {
+    /// No saved operator input exists.
+    Unconfigured,
+    /// Saved metadata exists but has not been explicitly approved in this app
+    /// session (including unsupported schema versions).
+    Draft,
+    /// Metadata and the app-owned runtime bindings are configured.
+    Configured,
+}
+
+#[derive(Clone)]
+enum DesiredDocumentSync {
+    Open {
+        buffer_id: BufferId,
+        language_id: LanguageId,
+        version: i64,
+        needs_open: bool,
+        sent: bool,
+    },
+    Closed {
+        buffer_id: BufferId,
+    },
+}
+
+#[derive(Clone)]
+enum LanguageStartupSelection {
+    Configured(legion_lsp::LspServerProcessConfig),
+    Downloaded(Box<LanguageDownloadedStartup>),
+    DownloadedLocal(Box<LanguageDownloadedLocalConfig>),
+    TypeScriptBundle(Box<TypeScriptBundleStartup>),
+}
+
+struct LanguageStartupInputs {
+    root: String,
+    authority: crate::language::LanguageStartupAuthority,
+    context: crate::language::LanguageStartupContext,
+    server_id: LanguageServerId,
+    language_id: LanguageId,
+    display_name: String,
+    selection: LanguageStartupSelection,
+    root_uri: String,
 }
 
 struct InlinePredictionRequestArgs<'a> {
@@ -14546,6 +15239,39 @@ mod app_document_resolver_uri_tests {
         resolver.insert_canonical_path("C:\\ws\\src\\main.rs", resolved_doc());
         assert!(resolver.resolve("file:///C:/ws/src/other.rs").is_none());
     }
+
+    #[test]
+    fn canonical_file_uri_strips_verbatim_prefix_and_escapes_reserved_names() {
+        assert_eq!(
+            canonical_path_to_uri(r"\\?\C:\Users\A User\#100%?.λ.txt"),
+            "file:///C:/Users/A%20User/%23100%25%3F.%CE%BB.txt"
+        );
+        assert_eq!(
+            canonical_path_to_uri(r"\\?\UNC\server\share\A #?.txt"),
+            "file://server/share/A%20%23%3F.txt"
+        );
+        assert_eq!(
+            canonical_path_to_uri("/tmp/a\\b.rs"),
+            "file:///tmp/a%5Cb.rs"
+        );
+    }
+
+    #[test]
+    fn resolver_preserves_reserved_name_document_identity() {
+        use crate::language::DocumentResolver as _;
+        let mut resolver = AppDocumentResolver {
+            by_uri: HashMap::new(),
+        };
+        let path = r"C:\ws\A #%.λ.txt";
+        resolver.insert_canonical_path(path, resolved_doc());
+        let uri = canonical_path_to_uri(path);
+        assert!(resolver.resolve(&uri).is_some());
+        assert!(
+            resolver
+                .resolve("file:///C:/ws/A%20%23%25.%ce%bb.txt")
+                .is_some()
+        );
+    }
 }
 
 impl AppComposition {
@@ -14577,6 +15303,7 @@ impl AppComposition {
             SecurityPolicy::default(),
             CapabilityNamespace("app".to_string()),
         );
+        let language_policy_store = Arc::new(std::sync::Mutex::new(security.clone()));
         let workspace = Arc::new(WorkspaceActor::with_event_sink(
             fs,
             watcher,
@@ -14631,6 +15358,8 @@ impl AppComposition {
             #[cfg(any(test, feature = "test-helpers"))]
             injected_assist_reply: None,
             injected_delegate_chat_spawn_failure: false,
+            #[cfg(test)]
+            workspace_edit_preflight_hook: None,
             #[cfg(any(test, feature = "test-helpers"))]
             interrupt_after_proposal_observation_store: false,
             #[cfg(feature = "ai")]
@@ -14668,7 +15397,26 @@ impl AppComposition {
             language_tooling: LanguageToolingWorkflow::default(),
             terminal_workflow: TerminalWorkflow::default(),
             lsp_session: crate::language::LspSessionHandle::new(),
+            language_startup_authority:
+                crate::language::LanguageStartupAuthority::with_policy_store(Arc::clone(
+                    &language_policy_store,
+                )),
+            language_server_registry: legion_lsp::LanguageServerAdapterRegistry::tier_two(),
+            language_server_configured_paths: HashMap::new(),
+            language_server_downloaded: HashMap::new(),
+            language_server_local_downloads: HashMap::new(),
+            typescript_bundles: HashMap::new(),
+            typescript_node_approval: None,
+            language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
+            document_sync_ledger: HashMap::new(),
             pending_call_hierarchy: None,
+            pending_lsp_writes: HashMap::new(),
+            deferred_lsp_writes: HashMap::new(),
+            code_action_authority: crate::language::CodeActionAuthority::default(),
+            code_action_command_sidecars: crate::language::CodeActionCommandSidecars::default(),
+            code_action_diagnostics: crate::language::CodeActionDiagnostics::new(),
+            server_apply_edits: crate::language::ServerApplyEditAuthority::default(),
+            pending_code_action_contexts: HashMap::new(),
             lsp_ui_completion_debounce: None,
             lsp_ui_last_completion_count: 0,
             lsp_ui_hover_debounce: None,
@@ -15928,6 +16676,12 @@ impl AppComposition {
         trust: WorkspaceTrustState,
         principal: PrincipalId,
     ) -> Result<WorkspaceOpened, AppCompositionError> {
+        let switching_workspace = self
+            .active_documents
+            .workspace_root_path
+            .as_deref()
+            .map(|current| current != root.as_ref().to_string_lossy().as_ref())
+            .unwrap_or(false);
         let root_path = CanonicalPath(root.as_ref().to_string_lossy().into_owned());
         let request = WorkspaceOpenRequest {
             correlation_id: self.correlation_generator.next(),
@@ -15951,8 +16705,24 @@ impl AppComposition {
         };
         self.active_documents
             .bind_workspace(opened.clone(), root_path, principal, trust.clone());
+        if switching_workspace {
+            self.terminalize_pending_lsp_writes(
+                None,
+                LanguageToolingStatusKind::Stale,
+                "workspace changed while an LSP write was pending",
+            );
+            self.lsp_session.reset_to_idle();
+            self.clear_typescript_toolchain();
+        }
+        self.language_server_registry = legion_lsp::LanguageServerAdapterRegistry::tier_two()
+            .for_workspace(opened.workspace_id)
+            .unwrap_or_default();
         self.debug_workflow.clear_workspace_state();
         self.language_tooling.clear_workspace_state();
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_session();
+        self.server_apply_edits.clear();
+        self.pending_code_action_contexts.clear();
         self.assist_inline_prediction_state = AssistInlinePredictionState::default();
         self.palette = PaletteState::default();
 
@@ -15971,20 +16741,429 @@ impl AppComposition {
         Ok(opened)
     }
 
+    /// Configure one exact language-server executable path for explicit
+    /// operator-approved startup. Paths are canonicalized before storage;
+    /// there is no PATH lookup or wildcard expansion.
+    pub fn configure_language_server_binary(
+        &mut self,
+        server_id: LanguageServerId,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<(), AppCompositionError> {
+        let path = std::fs::canonicalize(path.as_ref()).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: error.to_string(),
+            })
+        })?;
+        if !path.is_file() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: "configured language-server path is not a regular file".to_string(),
+            }));
+        }
+        self.language_startup_authority
+            .allow_exact_binary(&path)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_server_binary_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.language_server_configured_paths
+            .insert(server_id, path);
+        Ok(())
+    }
+
+    /// Bind a verified local artifact and approved Node identity to one
+    /// downloaded adapter. The receipt is revalidated for every startup
+    /// preparation; it is never treated as a download grant.
+    pub fn configure_downloaded_language_server(
+        &mut self,
+        adapter: legion_lsp::LanguageServerAdapterPlan,
+        descriptor: crate::language::ArtifactDescriptor,
+        artifact: crate::language::MaterializedArtifact,
+        approved_node: crate::language::ApprovedNodeRuntime,
+        runtime_request: crate::language::NodeRuntimeApprovalRequest,
+    ) {
+        self.language_server_downloaded.insert(
+            adapter.server_id,
+            LanguageDownloadedStartup {
+                adapter,
+                descriptor,
+                artifact,
+                approved_node,
+                runtime_request,
+            },
+        );
+    }
+
+    /// Configure an offline local archive and explicit Node executable. The
+    /// startup worker performs materialization and runtime approval itself.
+    pub fn configure_downloaded_language_server_local(
+        &mut self,
+        adapter: legion_lsp::LanguageServerAdapterPlan,
+        archive: impl Into<PathBuf>,
+        node_path: impl Into<PathBuf>,
+        cache_root: impl Into<PathBuf>,
+    ) -> Result<(), AppCompositionError> {
+        let node_path = std::fs::canonicalize(node_path.into()).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: error.to_string(),
+            })
+        })?;
+        if !node_path.is_file() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_server_binary_invalid".to_string(),
+                message: "Node executable must be a regular file".to_string(),
+            }));
+        }
+        self.language_startup_authority
+            .allow_exact_binary(&node_path)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_server_binary_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.language_server_local_downloads.insert(
+            adapter.server_id,
+            LanguageDownloadedLocalConfig {
+                adapter,
+                archive: archive.into(),
+                node_path,
+                cache_root: cache_root.into(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Configure the pinned offline TypeScript server/compiler bundle.
+    pub fn configure_typescript_bundle(
+        &mut self,
+        server_id: LanguageServerId,
+        server_archive: impl Into<PathBuf>,
+        compiler_archive: impl Into<PathBuf>,
+        node_path: impl Into<PathBuf>,
+        cache_root: impl Into<PathBuf>,
+    ) -> Result<(), AppCompositionError> {
+        let node_path = std::fs::canonicalize(node_path.into()).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "typescript_node_invalid".into(),
+                message: error.to_string(),
+            })
+        })?;
+        if !node_path.is_file() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "typescript_node_invalid".into(),
+                message: "Node path is not a file".into(),
+            }));
+        }
+        let replaced_node = self
+            .typescript_bundles
+            .get(&server_id)
+            .map(|bundle| bundle.node_path.clone())
+            .or_else(|| self.typescript_node_approval.clone());
+        self.language_startup_authority
+            .allow_exact_binary(&node_path)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "typescript_node_invalid".into(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.typescript_node_approval = Some(node_path.clone());
+        self.typescript_bundles.insert(
+            server_id,
+            TypeScriptBundleStartup {
+                descriptor: crate::language::TypeScriptBundleDescriptor::pinned(),
+                server_archive: server_archive.into(),
+                compiler_archive: compiler_archive.into(),
+                node_path: node_path.clone(),
+                cache_root: cache_root.into(),
+            },
+        );
+        if let Some(replaced_node) = replaced_node
+            && replaced_node != node_path
+            && !self
+                .typescript_bundles
+                .values()
+                .any(|bundle| bundle.node_path.as_path() == replaced_node.as_path())
+            && !self
+                .language_server_configured_paths
+                .values()
+                .any(|path| path == &replaced_node)
+            && !self
+                .language_server_local_downloads
+                .values()
+                .any(|config| config.node_path.as_path() == replaced_node.as_path())
+            && !self
+                .language_server_downloaded
+                .values()
+                .any(|config| config.approved_node.canonical_path() == replaced_node.as_path())
+        {
+            let _ = self
+                .language_startup_authority
+                .revoke_exact_binary(&replaced_node);
+        }
+        Ok(())
+    }
+
+    /// Configure the operator-selected local TypeScript toolchain for the
+    /// active trusted workspace.
+    ///
+    /// This records only canonical input metadata. It does not materialize
+    /// either archive or start a process; each explicit start/restart creates
+    /// fresh artifact and Node receipts through the language authority.
+    pub fn configure_typescript_toolchain(
+        &mut self,
+        server_archive: impl AsRef<Path>,
+        compiler_archive: impl AsRef<Path>,
+        node_executable: impl AsRef<Path>,
+    ) -> Result<(), AppCompositionError> {
+        if self.active_documents.workspace_id().is_none() {
+            return Err(AppCompositionError::WorkspaceNotOpen);
+        }
+        if self.active_documents.active_workspace_trust != Some(WorkspaceTrustState::Trusted) {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_untrusted".to_string(),
+                message: "TypeScript toolchains require a trusted workspace".to_string(),
+            }));
+        }
+
+        fn canonical_regular_file(
+            path: &Path,
+            label: &str,
+        ) -> Result<PathBuf, AppCompositionError> {
+            let canonical = std::fs::canonicalize(path).map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_input_invalid".to_string(),
+                    message: format!("{label} is invalid: {error}"),
+                })
+            })?;
+            if !canonical.is_file() {
+                return Err(AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_input_invalid".to_string(),
+                    message: format!("{label} must be a regular file"),
+                }));
+            }
+            if canonical.to_str().is_none() {
+                return Err(AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_input_invalid".to_string(),
+                    message: format!("{label} path is not valid UTF-8"),
+                }));
+            }
+            Ok(canonical)
+        }
+
+        // Validate every input before changing the policy store or replacing
+        // the existing configuration, so an invalid third path is atomic.
+        let server_archive = canonical_regular_file(server_archive.as_ref(), "server archive")?;
+        let compiler_archive =
+            canonical_regular_file(compiler_archive.as_ref(), "compiler archive")?;
+        let node_executable = canonical_regular_file(node_executable.as_ref(), "Node executable")?;
+        let root = self
+            .active_documents
+            .workspace_root_path
+            .as_deref()
+            .ok_or(AppCompositionError::WorkspaceNotOpen)?;
+        let root = std::fs::canonicalize(root).map_err(|error| {
+            AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_invalid".to_string(),
+                message: error.to_string(),
+            })
+        })?;
+        if !root.is_dir() {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_invalid".to_string(),
+                message: "workspace root must be a directory".to_string(),
+            }));
+        }
+        let previous_node = self.typescript_node_approval.clone();
+        self.language_startup_authority
+            .allow_exact_binary(&node_executable)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_node_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        self.typescript_node_approval = Some(node_executable.clone());
+        let mut replaced_nodes = HashSet::new();
+        for server_id in [
+            LanguageServerId(102),
+            LanguageServerId(106),
+            LanguageServerId(107),
+            LanguageServerId(108),
+        ] {
+            if let Some(bundle) = self.typescript_bundles.get(&server_id) {
+                replaced_nodes.insert(bundle.node_path.clone());
+            }
+            if let Some(path) = self.language_server_configured_paths.remove(&server_id) {
+                replaced_nodes.insert(path);
+            }
+            if let Some(config) = self.language_server_local_downloads.remove(&server_id) {
+                replaced_nodes.insert(config.node_path);
+            }
+            if let Some(config) = self.language_server_downloaded.remove(&server_id) {
+                replaced_nodes.insert(config.approved_node.canonical_path().to_path_buf());
+            }
+        }
+        let cache_root = root.join(".legion").join("language-tools");
+        let descriptor = crate::language::TypeScriptBundleDescriptor::pinned();
+        let settings = TypeScriptToolchainSettings {
+            server_archive: CanonicalPath(server_archive.to_str().unwrap().to_string()),
+            compiler_archive: CanonicalPath(compiler_archive.to_str().unwrap().to_string()),
+            node_executable: CanonicalPath(node_executable.to_str().unwrap().to_string()),
+        };
+        self.language_toolchain_settings.schema_version = 1;
+        for server_id in [
+            LanguageServerId(102),
+            LanguageServerId(106),
+            LanguageServerId(107),
+            LanguageServerId(108),
+        ] {
+            self.typescript_bundles.insert(
+                server_id,
+                TypeScriptBundleStartup {
+                    descriptor: descriptor.clone(),
+                    server_archive: server_archive.clone(),
+                    compiler_archive: compiler_archive.clone(),
+                    node_path: node_executable.clone(),
+                    cache_root: cache_root.clone(),
+                },
+            );
+        }
+        if let Some(previous_node) = previous_node {
+            replaced_nodes.insert(previous_node);
+        }
+        for node in replaced_nodes {
+            if node != node_executable
+                && !self
+                    .language_server_configured_paths
+                    .values()
+                    .any(|path| path == &node)
+                && !self
+                    .language_server_local_downloads
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path())
+                && !self
+                    .language_server_downloaded
+                    .values()
+                    .any(|config| config.approved_node.canonical_path() == node.as_path())
+                && !self
+                    .typescript_bundles
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path())
+            {
+                let _ = self.language_startup_authority.revoke_exact_binary(&node);
+            }
+        }
+        self.language_toolchain_settings.typescript = Some(settings);
+        Ok(())
+    }
+
+    /// Return the metadata-only local language-toolchain configuration.
+    pub fn language_toolchain_settings(&self) -> LanguageToolchainSettingsRecord {
+        self.language_toolchain_settings.clone()
+    }
+
+    /// Return the non-persistent approval/configuration state for UI
+    /// projection. A restored record is always a draft until reconfigured.
+    pub fn language_toolchain_configuration_state(&self) -> LanguageToolchainConfigurationState {
+        if self.language_toolchain_settings.typescript.is_none() {
+            LanguageToolchainConfigurationState::Unconfigured
+        } else if self.language_toolchain_settings.schema_version != 1
+            || ![102_u64, 106, 107, 108]
+                .iter()
+                .all(|id| self.typescript_bundles.contains_key(&LanguageServerId(*id)))
+        {
+            LanguageToolchainConfigurationState::Draft
+        } else {
+            LanguageToolchainConfigurationState::Configured
+        }
+    }
+
+    /// Clear the configured TypeScript toolchain without deleting its cache
+    /// or changing editor buffers and dirty state.
+    pub fn clear_typescript_toolchain(&mut self) {
+        let selected_server_is_typescript = self
+            .lsp_session
+            .selected_server_id()
+            .is_some_and(|server_id| matches!(server_id.0, 102 | 106 | 107 | 108));
+        if selected_server_is_typescript {
+            self.terminalize_pending_lsp_writes(
+                None,
+                LanguageToolingStatusKind::Cancelled,
+                "TypeScript language server configuration was cleared",
+            );
+            self.lsp_session.reset_to_idle();
+        }
+        let prior_node = self.typescript_node_approval.take();
+        let typescript_server_ids = [
+            LanguageServerId(102),
+            LanguageServerId(106),
+            LanguageServerId(107),
+            LanguageServerId(108),
+        ];
+        let mut removed_nodes = HashSet::new();
+        if let Some(node) = prior_node.clone() {
+            removed_nodes.insert(node);
+        }
+        for server_id in typescript_server_ids {
+            if let Some(path) = self.language_server_configured_paths.get(&server_id) {
+                removed_nodes.insert(path.clone());
+            }
+            if let Some(config) = self.language_server_local_downloads.get(&server_id) {
+                removed_nodes.insert(config.node_path.clone());
+            }
+            if let Some(config) = self.language_server_downloaded.get(&server_id) {
+                removed_nodes.insert(config.approved_node.canonical_path().to_path_buf());
+            }
+            if let Some(config) = self.typescript_bundles.get(&server_id) {
+                removed_nodes.insert(config.node_path.clone());
+            }
+            self.typescript_bundles.remove(&server_id);
+            self.language_server_configured_paths.remove(&server_id);
+            self.language_server_local_downloads.remove(&server_id);
+            self.language_server_downloaded.remove(&server_id);
+        }
+        self.language_toolchain_settings.typescript = None;
+        for node in removed_nodes {
+            let retained_elsewhere = self
+                .language_server_configured_paths
+                .values()
+                .any(|path| path == &node)
+                || self
+                    .language_server_local_downloads
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path())
+                || self
+                    .language_server_downloaded
+                    .values()
+                    .any(|config| config.approved_node.canonical_path() == node.as_path())
+                || self
+                    .typescript_bundles
+                    .values()
+                    .any(|config| config.node_path.as_path() == node.as_path());
+            if !retained_elsewhere {
+                let _ = self.language_startup_authority.revoke_exact_binary(&node);
+            }
+        }
+    }
+
     /// Test-only: starts the LSP session using an explicit server binary path,
     /// bypassing PATH-based discovery.  Allows integration tests to inject the
     /// mock server without mutating the process environment (which races in
     /// parallel test execution).
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn force_lsp_start_with_server_path_for_test(&mut self, server_path: std::path::PathBuf) {
-        let Some(root) = self.active_documents.workspace_root_path.clone() else {
-            return;
-        };
-        self.lsp_session.start_for_workspace_with_server_path(
-            std::path::Path::new(&root),
-            true,
-            Some(server_path),
-        );
+        if self
+            .configure_language_server_binary(LanguageServerId(101), server_path)
+            .is_ok()
+        {
+            self.try_start_lsp_session_for_current_workspace();
+        }
     }
 
     /// Test-only: inject a live health record with given capabilities, so tests
@@ -15995,6 +17174,52 @@ impl AppComposition {
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn set_lsp_health_for_test(&mut self, health: legion_protocol::LspServerHealthRecord) {
         self.lsp_session.set_live_health_for_test(health);
+    }
+
+    /// Test-only: install a live LSP session and return its production request
+    /// queue receiver for observing fire-and-forget edit notifications.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn set_lsp_request_receiver_for_test(
+        &mut self,
+        health: legion_protocol::LspServerHealthRecord,
+    ) -> std::sync::mpsc::Receiver<LspWorkerRequest> {
+        let rx = self
+            .lsp_session
+            .set_live_with_request_receiver_for_test(health);
+        // Edit-observer tests assert the next `didChange`, not the injected
+        // handshake. Mark open buffers ready and drain the cap-one queue so
+        // the replacement they dispatch is the first message they see.
+        self.mark_injected_lsp_documents_ready_for_test();
+        while rx.try_recv().is_ok() {}
+        rx
+    }
+
+    /// Test-only: install a cap-one live session and retain its result sender
+    /// so draining does not mistake a dropped harness channel for worker death.
+    ///
+    /// Does not flush document sync: harness tests own `didOpen` / `didClose`
+    /// ordering and the pre-ready rejection gate.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn set_lsp_request_harness_for_test(
+        &mut self,
+        health: legion_protocol::LspServerHealthRecord,
+    ) -> (
+        std::sync::mpsc::Receiver<LspWorkerRequest>,
+        std::sync::mpsc::SyncSender<crate::language::LspWorkerResult>,
+    ) {
+        self.lsp_session
+            .set_live_with_request_and_result_sender_for_test(health)
+    }
+
+    /// Test-only: run a one-shot callback after workspace-edit preflight and
+    /// before the first mutation. This gives atomicity tests a deterministic
+    /// late external-change point without exposing a production seam.
+    #[cfg(test)]
+    pub(crate) fn set_workspace_edit_preflight_hook_for_test<F>(&mut self, hook: F)
+    where
+        F: FnOnce() + 'static,
+    {
+        self.workspace_edit_preflight_hook = Some(Box::new(hook));
     }
 
     /// Test-only: inject a pre-created cancellation flag so that tests can
@@ -16193,7 +17418,19 @@ impl AppComposition {
     /// opening an actual `.rs` file.  PKT-LSP-C T1 / T5.
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn force_lsp_start_for_test(&mut self) {
-        self.try_start_lsp_session_for_current_workspace();
+        if let Some(root) = self.active_documents.workspace_root_path.clone()
+            && !Path::new(&root).join("Cargo.toml").exists()
+        {
+            let trusted = self
+                .active_documents
+                .active_workspace_trust
+                .as_ref()
+                .is_some_and(|trust| *trust == WorkspaceTrustState::Trusted);
+            self.lsp_session
+                .start_for_workspace(Path::new(&root), trusted);
+        } else {
+            self.try_start_lsp_session_for_current_workspace();
+        }
     }
 
     /// Attempt to start the LSP session for the currently-open workspace.
@@ -16203,18 +17440,161 @@ impl AppComposition {
     /// If the workspace is untrusted the session immediately enters Refused.
     /// PKT-LSP-C T1.
     fn try_start_lsp_session_for_current_workspace(&mut self) {
-        let Some(root) = self.active_documents.workspace_root_path.clone() else {
+        let Some(inputs) = self.language_startup_inputs() else {
+            let Some(root) = self.active_documents.workspace_root_path.clone() else {
+                return;
+            };
+            let language_id = self
+                .active_documents
+                .active_file_path
+                .as_ref()
+                .map(|path| language_id_for_path(&CanonicalPath(path.clone())))
+                .unwrap_or_else(|| LanguageId("unknown".to_string()));
+            self.lsp_session.start_preparing(
+                PathBuf::from(root),
+                crate::language::LspSelectedServerMetadata {
+                    server_id: LanguageServerId(0),
+                    language_id,
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                },
+                |_cancel| {
+                Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "no explicitly configured language-server binary or verified local artifact for the active language".to_string(),
+                ))
+                },
+            );
             return;
         };
-        let trust = self
-            .active_documents
-            .active_workspace_trust
-            .as_ref()
-            .cloned()
-            .unwrap_or(WorkspaceTrustState::Untrusted);
-        let trusted = trust == WorkspaceTrustState::Trusted;
+        let LanguageStartupInputs {
+            root,
+            authority,
+            context,
+            server_id,
+            language_id,
+            display_name,
+            selection,
+            root_uri,
+        } = inputs;
+        let correlation_generator = self.correlation_generator.clone();
+        let preparation_selection = selection.clone();
+        let preparation_language_id = language_id.clone();
+        let preparation_display_name = display_name.clone();
+        let preparation_root_uri = root_uri.clone();
+        let preparation = move |cancel: Arc<std::sync::atomic::AtomicBool>| {
+            if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "language startup preparation cancelled".to_string(),
+                ));
+            }
+            let correlation_id = correlation_generator.next();
+            let mut context = context.clone();
+            context.correlation_id = correlation_id;
+            context.causality_id = CausalityId(uuid::Uuid::now_v7());
+            match &preparation_selection {
+                LanguageStartupSelection::Configured(process) => authority.prepare_configured(
+                    &context,
+                    server_id,
+                    preparation_language_id.clone(),
+                    preparation_display_name.clone(),
+                    process.clone(),
+                    preparation_root_uri.clone(),
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::Downloaded(downloaded) => authority.prepare_downloaded(
+                    &context,
+                    &downloaded.adapter,
+                    &downloaded.descriptor,
+                    &downloaded.artifact,
+                    &downloaded.approved_node,
+                    &crate::language::NodeRuntimeApprovalRequest {
+                        correlation_id: context.correlation_id,
+                        causality_id: context.causality_id,
+                        ..downloaded.runtime_request.clone()
+                    },
+                    Arc::clone(&cancel),
+                    preparation_root_uri.clone(),
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::DownloadedLocal(local) => authority
+                    .prepare_downloaded_local(
+                        &context,
+                        &local.adapter,
+                        &local.archive,
+                        &local.cache_root,
+                        &local.node_path,
+                        Arc::clone(&cancel),
+                        preparation_root_uri.clone(),
+                    ),
+                LanguageStartupSelection::TypeScriptBundle(bundle) => authority
+                    .prepare_typescript_bundle(
+                        &context,
+                        &bundle.descriptor,
+                        &bundle.server_archive,
+                        &bundle.compiler_archive,
+                        &bundle.node_path,
+                        &bundle.cache_root,
+                        Arc::clone(&cancel),
+                        preparation_root_uri.clone(),
+                        preparation_language_id.clone(),
+                        server_id,
+                    ),
+            }
+        };
+        let metadata = match &selection {
+            LanguageStartupSelection::Configured(_) => crate::language::LspSelectedServerMetadata {
+                server_id,
+                language_id: language_id.clone(),
+                binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                artifact_hash: None,
+                version: None,
+                download_decision_id: None,
+            },
+            LanguageStartupSelection::Downloaded(downloaded) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: Some(legion_protocol::FileFingerprint {
+                        algorithm: "sha256-content-v1".to_string(),
+                        value: downloaded.artifact.sha256.clone(),
+                    }),
+                    version: Some(format!(
+                        "{}.{}.{}",
+                        downloaded.approved_node.observed_version().major,
+                        downloaded.approved_node.observed_version().minor,
+                        downloaded.approved_node.observed_version().patch,
+                    )),
+                    download_decision_id: None,
+                }
+            }
+            LanguageStartupSelection::DownloadedLocal(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                }
+            }
+            LanguageStartupSelection::TypeScriptBundle(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: Some("6.0.0".into()),
+                    download_decision_id: None,
+                }
+            }
+        };
         self.lsp_session
-            .start_for_workspace(std::path::Path::new(&root), trusted);
+            .start_preparing_with_factory(PathBuf::from(root), metadata, preparation);
     }
 
     /// Restart the LSP session for the currently-open workspace, resetting
@@ -16223,18 +17603,235 @@ impl AppComposition {
     ///
     /// Called from the "Restart language server" palette command (PKT-LSP-C T1/T3).
     fn restart_lsp_session_for_current_workspace(&mut self) {
-        let Some(root) = self.active_documents.workspace_root_path.clone() else {
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_session();
+        self.server_apply_edits.clear();
+        self.pending_code_action_contexts.clear();
+        self.terminalize_pending_lsp_writes(
+            None,
+            LanguageToolingStatusKind::Cancelled,
+            "language server restarted while an LSP write was pending",
+        );
+        let Some(inputs) = self.language_startup_inputs() else {
+            let Some(root) = self.active_documents.workspace_root_path.clone() else {
+                return;
+            };
+            let language_id = self
+                .active_documents
+                .active_file_path
+                .as_ref()
+                .map(|path| language_id_for_path(&CanonicalPath(path.clone())))
+                .unwrap_or_else(|| LanguageId("unknown".to_string()));
+            self.lsp_session.restart_for_workspace_preparing(
+                PathBuf::from(root),
+                crate::language::LspSelectedServerMetadata {
+                    server_id: LanguageServerId(0),
+                    language_id,
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                },
+                |_cancel| {
+                Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "no explicitly configured language-server binary or verified local artifact for the active language".to_string(),
+                ))
+                },
+            );
             return;
         };
+        let LanguageStartupInputs {
+            root,
+            authority,
+            context,
+            server_id,
+            language_id,
+            display_name,
+            selection,
+            root_uri,
+        } = inputs;
+        let correlation_id = self.correlation_generator.next();
+        let mut context = context;
+        context.correlation_id = correlation_id;
+        context.causality_id = CausalityId(uuid::Uuid::now_v7());
+        let metadata = match &selection {
+            LanguageStartupSelection::Configured(_) => crate::language::LspSelectedServerMetadata {
+                server_id,
+                language_id: language_id.clone(),
+                binary_provenance: legion_protocol::LspServerBinaryProvenance::Configured,
+                artifact_hash: None,
+                version: None,
+                download_decision_id: None,
+            },
+            LanguageStartupSelection::Downloaded(downloaded) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: Some(legion_protocol::FileFingerprint {
+                        algorithm: "sha256-content-v1".to_string(),
+                        value: downloaded.artifact.sha256.clone(),
+                    }),
+                    version: Some(format!(
+                        "{}.{}.{}",
+                        downloaded.approved_node.observed_version().major,
+                        downloaded.approved_node.observed_version().minor,
+                        downloaded.approved_node.observed_version().patch,
+                    )),
+                    download_decision_id: None,
+                }
+            }
+            LanguageStartupSelection::DownloadedLocal(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: None,
+                    download_decision_id: None,
+                }
+            }
+            LanguageStartupSelection::TypeScriptBundle(_) => {
+                crate::language::LspSelectedServerMetadata {
+                    server_id,
+                    language_id: language_id.clone(),
+                    binary_provenance: legion_protocol::LspServerBinaryProvenance::Downloaded,
+                    artifact_hash: None,
+                    version: Some("6.0.0".into()),
+                    download_decision_id: None,
+                }
+            }
+        };
+        let preparation = move |cancel: Arc<std::sync::atomic::AtomicBool>| {
+            if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(crate::language::LanguageSessionError::InvalidConfiguration(
+                    "language startup preparation cancelled".to_string(),
+                ));
+            }
+            match selection {
+                LanguageStartupSelection::Configured(process) => authority.prepare_configured(
+                    &context,
+                    server_id,
+                    language_id,
+                    display_name,
+                    process,
+                    root_uri,
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::Downloaded(downloaded) => authority.prepare_downloaded(
+                    &context,
+                    &downloaded.adapter,
+                    &downloaded.descriptor,
+                    &downloaded.artifact,
+                    &downloaded.approved_node,
+                    &crate::language::NodeRuntimeApprovalRequest {
+                        correlation_id: context.correlation_id,
+                        causality_id: context.causality_id,
+                        ..downloaded.runtime_request
+                    },
+                    Arc::clone(&cancel),
+                    root_uri,
+                    None,
+                    None,
+                ),
+                LanguageStartupSelection::DownloadedLocal(local) => authority
+                    .prepare_downloaded_local(
+                        &context,
+                        &local.adapter,
+                        &local.archive,
+                        &local.cache_root,
+                        &local.node_path,
+                        Arc::clone(&cancel),
+                        root_uri,
+                    ),
+                LanguageStartupSelection::TypeScriptBundle(bundle) => authority
+                    .prepare_typescript_bundle(
+                        &context,
+                        &bundle.descriptor,
+                        &bundle.server_archive,
+                        &bundle.compiler_archive,
+                        &bundle.node_path,
+                        &bundle.cache_root,
+                        Arc::clone(&cancel),
+                        root_uri,
+                        language_id,
+                        server_id,
+                    ),
+            }
+        };
+        self.lsp_session.restart_for_workspace_preparing(
+            PathBuf::from(root),
+            metadata,
+            preparation,
+        );
+    }
+
+    /// Captures the app-owned language selection and real workspace identity
+    /// for one explicit start/restart request. No filesystem or process work
+    /// occurs here; the resulting preparation closure runs on the startup
+    /// worker.
+    fn language_startup_inputs(&self) -> Option<LanguageStartupInputs> {
+        let root = self.active_documents.workspace_root_path.clone()?;
+        let canonical_root = std::fs::canonicalize(&root).unwrap_or_else(|_| PathBuf::from(&root));
+        let canonical_root_str = canonical_root.to_string_lossy().into_owned();
+        let opened = self.active_documents.opened_workspace.clone()?;
+        let principal_id = self.active_documents.active_principal_id.clone()?;
         let trust = self
             .active_documents
             .active_workspace_trust
-            .as_ref()
-            .cloned()
+            .clone()
             .unwrap_or(WorkspaceTrustState::Untrusted);
-        let trusted = trust == WorkspaceTrustState::Trusted;
-        self.lsp_session
-            .restart_for_workspace(std::path::Path::new(&root), trusted);
+        let language_id = self
+            .active_documents
+            .active_file_path
+            .as_ref()
+            .map(|path| language_id_for_path(&CanonicalPath(path.clone())))
+            .unwrap_or_else(|| LanguageId("rust".to_string()));
+        let adapter = self
+            .language_server_registry
+            .adapters_for_workspace_language(opened.workspace_id, &language_id)
+            .ok()?
+            .into_iter()
+            .find(|adapter| adapter.is_primary)?;
+        let selection = if let Some(bundle) = self.typescript_bundles.get(&adapter.server_id) {
+            LanguageStartupSelection::TypeScriptBundle(Box::new(bundle.clone()))
+        } else if let Some(local) = self.language_server_local_downloads.get(&adapter.server_id) {
+            let mut local = local.clone();
+            local.adapter = adapter.clone();
+            LanguageStartupSelection::DownloadedLocal(Box::new(local))
+        } else if let Some(downloaded) = self.language_server_downloaded.get(&adapter.server_id) {
+            let mut downloaded = downloaded.clone();
+            downloaded.adapter = adapter.clone();
+            LanguageStartupSelection::Downloaded(Box::new(downloaded))
+        } else {
+            let configured_path = self
+                .language_server_configured_paths
+                .get(&adapter.server_id)
+                .cloned()?;
+            let mut process = adapter.process.clone();
+            process.command = configured_path.to_str()?.to_string();
+            process.cwd = Some(canonical_root.clone());
+            LanguageStartupSelection::Configured(process)
+        };
+        Some(LanguageStartupInputs {
+            root: canonical_root_str.clone(),
+            authority: self.language_startup_authority.clone(),
+            context: crate::language::LanguageStartupContext {
+                workspace_id: opened.workspace_id,
+                root_id: opened.root_id,
+                workspace_root: canonical_root,
+                principal_id,
+                trust,
+                correlation_id: CorrelationId(1),
+                causality_id: CausalityId(uuid::Uuid::now_v7()),
+            },
+            server_id: adapter.server_id,
+            language_id,
+            display_name: adapter.display_name.clone(),
+            selection,
+            root_uri: canonical_path_to_uri(&canonical_root_str),
+        })
     }
 
     /// Sends `textDocument/didChange` to the live LSP session after a buffer
@@ -16244,15 +17841,265 @@ impl AppComposition {
         buffer_id: BufferId,
         descriptor: &legion_protocol::TextTransactionDescriptor,
     ) {
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_buffer(buffer_id);
+        self.server_apply_edits.clear();
+        self.pending_code_action_contexts.clear();
         let Some(meta) = self.active_documents.metadata_for_buffer(buffer_id) else {
             return;
         };
         let uri = canonical_path_to_uri(&meta.identity.canonical_path.0);
         let version = descriptor.post_buffer_version.0 as i64;
-        if let Ok(text) = self.editor.text(buffer_id) {
-            self.lsp_session
-                .send_did_change(uri, version, text.to_string());
+        if let Some(entries) = self.document_sync_ledger.get_mut(&uri) {
+            // A URI has at most one current open intent.  Keep a pending
+            // close marker, but discard superseded open intents so repeated
+            // edits cannot grow this offline ledger.
+            entries.retain(|entry| {
+                matches!(entry, DesiredDocumentSync::Closed { .. })
+                    || matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+            });
+            if let Some(DesiredDocumentSync::Open {
+                buffer_id: entry_buffer,
+                version: desired_version,
+                needs_open,
+                sent,
+                ..
+            }) = entries.iter_mut().rev().find(|entry| {
+                matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+            }) {
+                *desired_version = version;
+                if *sent {
+                    *needs_open = false;
+                }
+                *sent = false;
+                *entry_buffer = buffer_id;
+            } else {
+                entries.push(DesiredDocumentSync::Open {
+                    buffer_id,
+                    language_id: language_id_for_path(&CanonicalPath(
+                        meta.identity.canonical_path.0.clone(),
+                    )),
+                    version,
+                    needs_open: true,
+                    sent: false,
+                });
+            }
+        } else {
+            self.document_sync_ledger.insert(
+                uri.clone(),
+                vec![DesiredDocumentSync::Open {
+                    buffer_id,
+                    language_id: language_id_for_path(&CanonicalPath(
+                        meta.identity.canonical_path.0.clone(),
+                    )),
+                    version,
+                    needs_open: true,
+                    sent: false,
+                }],
+            );
         }
+        self.flush_document_sync_uri(&uri);
+    }
+
+    /// Sends the current contents to a live language session after a buffer is
+    /// opened. Existing buffers are replayed when startup transitions to Live.
+    fn notify_lsp_did_open(&mut self, buffer_id: BufferId) {
+        let Some(meta) = self.active_documents.metadata_for_buffer(buffer_id) else {
+            return;
+        };
+        let uri = canonical_path_to_uri(&meta.identity.canonical_path.0);
+        let language_id =
+            language_id_for_path(&CanonicalPath(meta.identity.canonical_path.0.clone()));
+        let Ok(version) = self.editor.buffer_version(buffer_id) else {
+            return;
+        };
+        let entries = self.document_sync_ledger.entry(uri.clone()).or_default();
+        entries.retain(|entry| {
+            matches!(entry, DesiredDocumentSync::Closed { .. })
+                || matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+        });
+        if let Some(DesiredDocumentSync::Open {
+            version: desired,
+            sent,
+            language_id: id,
+            needs_open,
+            ..
+        }) = entries.iter_mut().rev().find(|entry| {
+            matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+        })
+        {
+            *desired = version.0 as i64;
+            *id = language_id.clone();
+            *needs_open = true;
+            *sent = false;
+        } else {
+            entries.push(DesiredDocumentSync::Open {
+                buffer_id,
+                language_id,
+                version: version.0 as i64,
+                needs_open: true,
+                sent: false,
+            });
+        }
+        self.flush_document_sync_uri(&uri);
+    }
+
+    fn flush_document_sync_uri(&mut self, uri: &str) {
+        let Some(entries) = self.document_sync_ledger.get(uri).cloned() else {
+            return;
+        };
+        for entry in entries {
+            match entry {
+                DesiredDocumentSync::Closed { buffer_id } => {
+                    if self.lsp_session.send_did_close(uri.to_string()) {
+                        if let Some(items) = self.document_sync_ledger.get_mut(uri) {
+                            items.retain(|item| !matches!(item, DesiredDocumentSync::Closed { buffer_id: id } if *id == buffer_id));
+                        }
+                    } else {
+                        // Preserve per-URI ordering: a later open must not
+                        // overtake a close that is still queued for retry.
+                        break;
+                    }
+                }
+                DesiredDocumentSync::Open {
+                    buffer_id,
+                    language_id,
+                    version: _,
+                    needs_open,
+                    sent,
+                } if !sent => {
+                    let Ok(current_version) = self.editor.buffer_version(buffer_id) else {
+                        break;
+                    };
+                    let current_version = current_version.0 as i64;
+                    let event_context = self.next_event_context();
+                    let snapshot_id = self
+                        .editor
+                        .current_snapshot(buffer_id)
+                        .ok()
+                        .map(|snapshot| snapshot.snapshot_id);
+                    let operation_context = snapshot_id.and_then(|snapshot_id| {
+                        self.lsp_operation_context(buffer_id, snapshot_id, event_context)
+                    });
+                    let editor = &self.editor;
+                    let delivered = if needs_open {
+                        self.lsp_session.send_did_open_deferred_with_context(
+                            uri.to_string(),
+                            language_id.0,
+                            current_version,
+                            buffer_id,
+                            || editor.text(buffer_id).ok().map(|text| text.to_string()),
+                            operation_context,
+                        )
+                    } else {
+                        self.lsp_session.send_did_change_deferred_with_context(
+                            uri.to_string(),
+                            current_version,
+                            || editor.text(buffer_id).ok().map(|text| text.to_string()),
+                            operation_context,
+                        )
+                    };
+                    if delivered
+                        && let Some(items) = self.document_sync_ledger.get_mut(uri)
+                        && let Some(DesiredDocumentSync::Open {
+                            version,
+                            needs_open,
+                            sent,
+                            ..
+                        }) = items.iter_mut().rev().find(|item| matches!(item, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id))
+                    {
+                        *version = current_version;
+                        *needs_open = false;
+                        *sent = true;
+                    } else if !delivered {
+                        // The cap-one worker queue is full or no longer live;
+                        // retry this URI before considering later entries.
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self
+            .document_sync_ledger
+            .get(uri)
+            .is_some_and(|items| items.is_empty())
+        {
+            self.document_sync_ledger.remove(uri);
+        }
+    }
+
+    fn flush_document_sync_ledger(&mut self) {
+        let uris = self
+            .document_sync_ledger
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for uri in uris {
+            self.flush_document_sync_uri(&uri);
+        }
+    }
+
+    fn reset_document_sync_for_new_session(&mut self) {
+        for entries in self.document_sync_ledger.values_mut() {
+            for entry in entries {
+                if let DesiredDocumentSync::Open {
+                    needs_open, sent, ..
+                } = entry
+                {
+                    *needs_open = true;
+                    *sent = false;
+                }
+            }
+        }
+    }
+
+    /// LSP reads must observe a document only after its latest desired sync
+    /// has entered the worker queue.  The ledger stores metadata only; text is
+    /// read from the authoritative editor when the sync is flushed.
+    fn lsp_document_sync_ready(&self, buffer_id: BufferId) -> bool {
+        let Some(meta) = self.active_documents.metadata_for_buffer(buffer_id) else {
+            return false;
+        };
+        let uri = canonical_path_to_uri(&meta.identity.canonical_path.0);
+        let Some(entries) = self.document_sync_ledger.get(&uri) else {
+            return false;
+        };
+        let Some(DesiredDocumentSync::Open {
+            version,
+            sent: true,
+            buffer_id: entry_buffer,
+            ..
+        }) = entries.iter().rev().find(|entry| {
+            matches!(entry, DesiredDocumentSync::Open { buffer_id: candidate, .. } if *candidate == buffer_id)
+        }) else {
+            return false;
+        };
+        let Ok(current_version) = self.editor.buffer_version(buffer_id) else {
+            return false;
+        };
+        *entry_buffer == buffer_id && *version == current_version.0 as i64
+    }
+
+    /// Workspace-sensitive LSP reads must wait until every open document has
+    /// entered the worker queue and no close is waiting to overtake an open.
+    /// The worker request channel is intentionally bounded to one item, so a
+    /// per-buffer check can otherwise let a workspace read race another tab's
+    /// pending `didOpen`.
+    pub(crate) fn lsp_workspace_sync_ready(&self) -> bool {
+        if self.document_sync_ledger.values().flatten().any(|entry| {
+            matches!(
+                entry,
+                DesiredDocumentSync::Closed { .. } | DesiredDocumentSync::Open { sent: false, .. }
+            )
+        }) {
+            return false;
+        }
+        self.active_documents
+            .open_tabs
+            .iter()
+            .copied()
+            .all(|buffer_id| self.lsp_document_sync_ready(buffer_id))
     }
 
     /// Returns the current LSP server health record, if available.
@@ -16283,6 +18130,45 @@ impl AppComposition {
     /// to inspect the product-session rust-analyzer's stderr at wedge time.
     pub fn lsp_session_log_projection(&self) -> Option<legion_protocol::LspSessionLogProjection> {
         self.lsp_session.stderr_log_projection()
+    }
+
+    /// Acquire a bounded read lease for the desktop UI snapshot path.
+    pub fn lease_ui_snapshot(
+        &mut self,
+        buffer_id: BufferId,
+    ) -> Result<SnapshotLeaseDescriptor, EditorError> {
+        self.editor
+            .lease_snapshot(buffer_id, SnapshotConsumerKind::Ui)
+    }
+
+    /// Convert an exact UI lease descriptor into an editor-owned, revocable
+    /// handle suitable for a desktop worker.  The editor remains the authority
+    /// for lease identity, expiry, and snapshot lifetime.
+    pub fn owned_ui_snapshot(
+        &mut self,
+        lease: &SnapshotLeaseDescriptor,
+    ) -> Result<OwnedSnapshotLease, EditorError> {
+        if lease.consumer_kind != SnapshotConsumerKind::Ui {
+            return Err(EditorError::InvalidEdit("UI snapshot lease required"));
+        }
+        self.editor.owned_snapshot_lease(lease)
+    }
+
+    /// Read one bounded logical-line chunk through a UI snapshot lease.
+    pub fn read_ui_snapshot_line_chunk(
+        &self,
+        lease: &SnapshotLeaseDescriptor,
+        line: usize,
+        start_byte: usize,
+        max_bytes: usize,
+    ) -> Result<SnapshotLeaseLineChunk, EditorError> {
+        self.editor
+            .read_snapshot_lease_line_chunk(lease, line, start_byte, max_bytes)
+    }
+
+    /// Release a desktop UI snapshot lease.
+    pub fn release_ui_snapshot(&mut self, lease_id: uuid::Uuid) -> Option<SnapshotLeaseDescriptor> {
+        self.editor.release_snapshot_lease(lease_id)
     }
 
     // ── LSP UI debounce authority (I1) ──────────────────────────────────────
@@ -16430,6 +18316,7 @@ impl AppComposition {
             )?;
 
         self.active_documents.bind_opened_file(&opened, buffer_id);
+        self.notify_lsp_did_open(buffer_id);
         // Lexical retrieval indexing is not on the open path (GAP-09.3). Language
         // reads, Delegate retrieval, and the symbol palette index on demand. Save
         // and first paint must not wait on LexicalIndexer.
@@ -16449,6 +18336,7 @@ impl AppComposition {
         let descriptor =
             self.apply_edit_to_buffer_with_correlation(buffer_id, edit.clone(), correlation_id)?;
         self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(buffer_id, &descriptor);
         let _ = self.maybe_request_next_edit_prediction_after_edit(
             buffer_id,
             edit.range.start.line as u32,
@@ -17666,64 +19554,37 @@ impl AppComposition {
         Ok(Some(outcome))
     }
 
-    /// Delete backwards at every cursor when more than one is active.
-    ///
-    /// The mirror of [`Self::dispatch_multi_cursor_insert`], and needed for the
-    /// same reason: without it, typing reaches every cursor but Backspace
-    /// reaches only the caret, so a multi-cursor edit could be made and not
-    /// unmade. `None` keeps the ordinary single-cursor case on the normal path.
-    ///
-    /// The incoming range is ignored deliberately. It was computed by the
-    /// renderer from the active cursor alone and describes one deletion;
-    /// `delete_before_all` recomputes every position from the text, which is
-    /// the only view that stays valid once the first character is removed.
-    fn dispatch_multi_cursor_delete(
+    /// Route a native directional deletion through editor authority.
+    fn dispatch_directed_caret_delete(
         &mut self,
         intent: &CommandDispatchIntent,
         event_context: &EventContext,
     ) -> Result<Option<AppCommandOutcome>, AppCompositionError> {
-        let CommandDispatchIntent::Delete { buffer_id, .. } = intent else {
+        let CommandDispatchIntent::DeleteDirectedCarets {
+            buffer_id,
+            backward,
+        } = intent
+        else {
             return Ok(None);
         };
-        let cursors: Vec<legion_editor::TextPosition> = self
-            .editor
-            .cursors(*buffer_id)?
-            .iter()
-            .map(|cursor| cursor.position)
-            .collect();
-        if cursors.len() < 2 {
-            return Ok(None);
-        }
-
-        let before = self.editor.text(*buffer_id)?.to_string();
-        let (after, moved) = legion_editor::multi_cursor::delete_before_all(&before, &cursors);
-        if after == before {
-            // No cursor had anything before it to delete. Hard to reach —
-            // `delete_before_all` skips only offset zero, and normalization
-            // leaves at most one cursor there — but an empty edit would push an
-            // undo step that undoes nothing, which is worse than a branch that
-            // rarely runs.
-            return Ok(Some(AppCommandOutcome::Noop));
-        }
-
-        // One whole-buffer edit, for the same reason as the insert path: the
-        // positions are valid only against the text they were computed from.
-        let edit = TextEdit::new(
-            legion_editor::TextRange::new(
-                legion_editor::TextPosition::new(0, 0),
-                end_position(&before),
-            ),
-            after,
-        );
-        let outcome = self.apply_vim_edit(*buffer_id, edit, event_context)?;
-        self.editor.set_cursors(
+        self.active_documents.ensure_active_buffer(*buffer_id)?;
+        let direction = if *backward {
+            legion_editor::DeleteDirection::Backward
+        } else {
+            legion_editor::DeleteDirection::Forward
+        };
+        let Some(record) = self.editor.delete_directed_carets(
             *buffer_id,
-            moved
-                .into_iter()
-                .map(|position| legion_editor::Cursor { position })
-                .collect(),
-        )?;
-        Ok(Some(outcome))
+            direction,
+            Some(event_context.correlation_id),
+        )?
+        else {
+            return Ok(Some(AppCommandOutcome::Noop));
+        };
+        let descriptor = record.to_protocol_descriptor();
+        self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(*buffer_id, &descriptor);
+        Ok(Some(AppCommandOutcome::Edited(descriptor)))
     }
 
     /// Handle a multi-cursor intent, or return `None` if it is not one.
@@ -18127,6 +19988,95 @@ impl AppComposition {
         self.buffer_search_state.find_bar_visible
     }
 
+    /// Project the exact ordered editor carets and freshness metadata for visual navigation.
+    pub fn visual_navigation_projection(
+        &self,
+        buffer_id: BufferId,
+    ) -> Result<VisualNavigationProjection, AppCompositionError> {
+        let snapshot = self.editor.current_snapshot(buffer_id)?;
+        let carets = self
+            .editor
+            .directed_carets(buffer_id)?
+            .into_iter()
+            .map(visual_navigation_caret_from_editor)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(VisualNavigationProjection {
+            snapshot_id: snapshot.snapshot_id,
+            buffer_version: snapshot.buffer_version,
+            logical_line_count: u32::try_from(snapshot.line_count).map_err(|_| {
+                AppCompositionError::Editor(EditorError::InvalidEdit(
+                    "visual navigation line count overflows wire coordinate",
+                ))
+            })?,
+            carets,
+        })
+    }
+
+    /// Return a bounded primary-caret text window for renderer shaping.
+    ///
+    /// The editor/text authority supplies the fragment and true grapheme
+    /// boundaries; the app only attaches freshness metadata and performs
+    /// checked wire-coordinate conversion.
+    pub fn visual_navigation_window(
+        &self,
+        buffer_id: BufferId,
+        position: VisualNavigationPosition,
+        max_bytes: usize,
+    ) -> Result<VisualNavigationWindow, AppCompositionError> {
+        const MAX_WINDOW_BYTES: usize = 96 * 1024;
+        if max_bytes == 0 || max_bytes > MAX_WINDOW_BYTES {
+            return Err(AppCompositionError::Editor(EditorError::InvalidEdit(
+                "visual navigation window exceeds 96 KiB bound",
+            )));
+        }
+        let snapshot = self.editor.current_snapshot(buffer_id)?;
+        let line = usize::try_from(position.line).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "visual navigation line overflows host coordinate",
+            ))
+        })?;
+        let column = usize::try_from(position.byte_column).map_err(|_| {
+            AppCompositionError::Editor(EditorError::InvalidEdit(
+                "visual navigation byte offset overflows host coordinate",
+            ))
+        })?;
+        let caret_byte = self
+            .editor
+            .buffer_byte_offset(buffer_id, TextPosition::new(line, column))?;
+        let window = self
+            .editor
+            .line_window_around_byte(buffer_id, caret_byte, max_bytes)?;
+        let wire = |value: usize| {
+            u64::try_from(value).map_err(|_| {
+                AppCompositionError::Editor(EditorError::InvalidEdit(
+                    "visual navigation window offset overflows wire coordinate",
+                ))
+            })
+        };
+        Ok(VisualNavigationWindow {
+            snapshot_id: snapshot.snapshot_id,
+            buffer_version: snapshot.buffer_version,
+            line: u32::try_from(window.line).map_err(|_| {
+                AppCompositionError::Editor(EditorError::InvalidEdit(
+                    "visual navigation line overflows wire coordinate",
+                ))
+            })?,
+            line_start_byte: wire(window.line_start_byte)?,
+            caret_byte: wire(window.caret_byte)?,
+            start_byte: wire(window.start_byte)?,
+            end_byte: wire(window.end_byte)?,
+            logical_end_byte: wire(window.logical_end_byte)?,
+            complete_logical_start: window.complete_logical_start,
+            complete_logical_end: window.complete_logical_end,
+            grapheme_boundaries: window
+                .grapheme_boundaries
+                .into_iter()
+                .map(wire)
+                .collect::<Result<Vec<_>, _>>()?,
+            text: window.text,
+        })
+    }
+
     /// Route a UI dispatch intent through editor and workspace authorities.
     pub fn dispatch_ui_intent(
         &mut self,
@@ -18146,8 +20096,23 @@ impl AppComposition {
         if let Some(outcome) = self.dispatch_multi_cursor_insert(&intent, &event_context)? {
             return Ok(outcome);
         }
-        if let Some(outcome) = self.dispatch_multi_cursor_delete(&intent, &event_context)? {
+        if let Some(outcome) = self.dispatch_directed_caret_delete(&intent, &event_context)? {
             return Ok(outcome);
+        }
+
+        if let CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text } = &intent {
+            self.active_documents.ensure_active_buffer(*buffer_id)?;
+            let descriptor = self
+                .editor
+                .replace_directed_carets(
+                    *buffer_id,
+                    text.clone(),
+                    Some(event_context.correlation_id),
+                )?
+                .to_protocol_descriptor();
+            self.emit_transaction_event(&descriptor);
+            self.notify_lsp_did_change(*buffer_id, &descriptor);
+            return Ok(AppCommandOutcome::Edited(descriptor));
         }
 
         // Vim intents need the buffer's text and cursor, which the pure
@@ -18237,14 +20202,13 @@ impl AppComposition {
                         let replacement = self.buffer_search_state.replace_text.clone();
                         let edit =
                             TextEdit::new(CommandDispatcher::editor_range(range), replacement);
-                        if self
-                            .apply_edit_to_buffer_with_correlation(
-                                buffer_id,
-                                edit,
-                                event_context.correlation_id,
-                            )
-                            .is_ok()
-                        {
+                        if let Ok(descriptor) = self.apply_edit_to_buffer_with_correlation(
+                            buffer_id,
+                            edit,
+                            event_context.correlation_id,
+                        ) {
+                            self.emit_transaction_event(&descriptor);
+                            self.notify_lsp_did_change(buffer_id, &descriptor);
                             self.refresh_buffer_search_matches(buffer_id);
                         }
                     }
@@ -18281,14 +20245,18 @@ impl AppComposition {
                             )
                         })
                         .collect();
-                    if !edits.is_empty() {
-                        let _ = self.editor.apply_edits(
+                    if !edits.is_empty()
+                        && let Ok(record) = self.editor.apply_edits(
                             buffer_id,
                             edits,
                             TransactionSource::User,
                             None,
                             Some(event_context.correlation_id),
-                        );
+                        )
+                    {
+                        let descriptor = record.to_protocol_descriptor();
+                        self.emit_transaction_event(&descriptor);
+                        self.notify_lsp_did_change(buffer_id, &descriptor);
                     }
                     self.refresh_buffer_search_matches(buffer_id);
                 }
@@ -18330,6 +20298,15 @@ impl AppComposition {
             _ => {}
         }
 
+        // Explicit range deletion keeps the editor-mapped directed caret vector
+        // when multiple carets are active. The primary-only post-edit cursor
+        // helper is retained for ordinary single-caret compatibility.
+        let preserve_mapped_delete_carets =
+            if let CommandDispatchIntent::Delete { buffer_id, .. } = &intent {
+                self.editor.cursors(*buffer_id)?.len() > 1
+            } else {
+                false
+            };
         let request = CommandDispatcher::route_intent(
             intent,
             AppCommandRouteContext::from_active(&self.active_documents),
@@ -18343,7 +20320,9 @@ impl AppComposition {
                     edit.clone(),
                     event_context.correlation_id,
                 )?;
-                self.set_cursor_after_edit(*buffer_id, edit)?;
+                if !preserve_mapped_delete_carets {
+                    self.set_cursor_after_edit(*buffer_id, edit)?;
+                }
                 self.emit_transaction_event(&descriptor);
                 // PKT-LSP-B T3: notify live LSP session of the buffer change.
                 // `did_change` is a fire-and-forget notification; the underlying
@@ -18369,12 +20348,19 @@ impl AppComposition {
                     )?;
                     self.collapse_selection_to_cursor(*buffer_id, selection.start)?;
                     self.emit_transaction_event(&descriptor);
+                    self.notify_lsp_did_change(*buffer_id, &descriptor);
                 }
                 return Ok(AppCommandOutcome::ClipboardUpdated(metadata));
             }
             AppCommandRequest::SelectAll { buffer_id } => {
                 self.select_all_buffer(*buffer_id)?;
                 return Ok(AppCommandOutcome::SelectionSet(*buffer_id));
+            }
+            AppCommandRequest::MoveVertically { buffer_id, request } => {
+                self.active_documents.ensure_active_buffer(*buffer_id)?;
+                let request = visual_navigation_request(request)?;
+                self.editor.move_vertically(*buffer_id, request)?;
+                return Ok(AppCommandOutcome::CursorSet(*buffer_id));
             }
             _ => {}
         }
@@ -18434,6 +20420,102 @@ impl AppComposition {
             }
             AppCommandRequest::SetSelection { buffer_id, range } => {
                 self.set_buffer_selection(buffer_id, range)?;
+                Ok(AppCommandOutcome::SelectionSet(buffer_id))
+            }
+            AppCommandRequest::SetVisualCursor {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                cursor,
+                affinity,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.set_visual_directed_carets(
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    vec![
+                        legion_editor::DirectedCaret::new(
+                            CommandDispatcher::editor_position(cursor),
+                            None,
+                        )
+                        .with_affinity(affinity),
+                    ],
+                )?;
+                Ok(AppCommandOutcome::CursorSet(buffer_id))
+            }
+            AppCommandRequest::SetVisualDirectedSelection {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                anchor,
+                head,
+                head_affinity,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.set_visual_directed_carets(
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    vec![
+                        legion_editor::DirectedCaret::new(
+                            CommandDispatcher::editor_position(head),
+                            Some(CommandDispatcher::editor_position(anchor)),
+                        )
+                        .with_affinity(head_affinity),
+                    ],
+                )?;
+                Ok(AppCommandOutcome::SelectionSet(buffer_id))
+            }
+            AppCommandRequest::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            } => {
+                let boundary = match boundary {
+                    legion_ui::EditorBoundaryKind::LineStart => {
+                        legion_editor::BoundaryKind::LineStart
+                    }
+                    legion_ui::EditorBoundaryKind::LineEnd => legion_editor::BoundaryKind::LineEnd,
+                    legion_ui::EditorBoundaryKind::DocumentStart => {
+                        legion_editor::BoundaryKind::DocumentStart
+                    }
+                    legion_ui::EditorBoundaryKind::DocumentEnd => {
+                        legion_editor::BoundaryKind::DocumentEnd
+                    }
+                };
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.move_to_boundary(buffer_id, boundary, extend)?;
+                Ok(AppCommandOutcome::CursorSet(buffer_id))
+            }
+            AppCommandRequest::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                let direction = if left {
+                    legion_editor::HorizontalDirection::Left
+                } else {
+                    legion_editor::HorizontalDirection::Right
+                };
+                self.editor
+                    .move_horizontally(buffer_id, direction, extend)?;
+                Ok(AppCommandOutcome::CursorSet(buffer_id))
+            }
+            AppCommandRequest::SetDirectedSelection {
+                buffer_id,
+                anchor,
+                head,
+            } => {
+                self.active_documents.ensure_active_buffer(buffer_id)?;
+                self.editor.set_directed_carets(
+                    buffer_id,
+                    vec![legion_editor::DirectedCaret::new(
+                        CommandDispatcher::editor_position(head),
+                        Some(CommandDispatcher::editor_position(anchor)),
+                    )],
+                )?;
                 Ok(AppCommandOutcome::SelectionSet(buffer_id))
             }
             AppCommandRequest::SetViewportScroll { buffer_id, scroll } => {
@@ -18976,24 +21058,9 @@ impl AppComposition {
                     )?,
                 ))
             }
-            AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => {
-                if let Some(range) = self.whole_document_utf16_range(buffer_id) {
-                    self.issue_lsp_code_action_request(buffer_id, range, true);
-                }
-                Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
-                        LanguageProposalKind::OrganizeImports,
-                        TextCoordinate {
-                            line: 0,
-                            character: 0,
-                            byte_offset: Some(0),
-                            utf16_offset: Some(0),
-                        },
-                        "organize-imports".to_string(),
-                    )?,
-                ))
-            }
+            AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => Ok(
+                AppCommandOutcome::language_tooling(self.run_organize_imports_proposal(buffer_id)?),
+            ),
             AppCommandRequest::RequestCodeActionProposal {
                 buffer_id,
                 action_id,
@@ -19010,10 +21077,72 @@ impl AppComposition {
                     action_id,
                 )?,
             )),
+            AppCommandRequest::RequestCodeActions { buffer_id, range } => {
+                let issued = self.request_code_actions(buffer_id, range);
+                if !issued && let Some(input) = self.language_request_input_for_failure(buffer_id) {
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        LanguageProposalKind::CodeAction,
+                        "code actions unavailable until a live capable language server is ready"
+                            .to_string(),
+                    );
+                }
+                Ok(AppCommandOutcome::language_tooling(
+                    self.language_tooling.projection(),
+                ))
+            }
+            AppCommandRequest::SelectCodeAction {
+                response_id,
+                action_id,
+            } => {
+                let failure_buffer = self
+                    .code_action_authority
+                    .candidate_buffer_id(&response_id, &action_id);
+                let failure_kind = self
+                    .code_action_authority
+                    .candidate_is_organize_imports(&response_id, &action_id)
+                    .map(|organize| {
+                        if organize {
+                            LanguageProposalKind::OrganizeImports
+                        } else {
+                            LanguageProposalKind::CodeAction
+                        }
+                    });
+                if let Err(error) = self.select_code_action_and_propose(&response_id, &action_id)
+                    && let Some(buffer_id) =
+                        failure_buffer.or(self.active_documents.active_buffer_id)
+                    && let Some(input) = self.language_request_input_for_failure(buffer_id)
+                {
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        failure_kind.unwrap_or(LanguageProposalKind::CodeAction),
+                        format!("code action selection refused: {error}"),
+                    );
+                }
+                Ok(AppCommandOutcome::language_tooling(
+                    self.language_tooling.projection(),
+                ))
+            }
             AppCommandRequest::CancelLanguageOperation { operation_id } => {
+                if !self
+                    .code_action_authority
+                    .remove_resolve_attempt(&operation_id)
+                {
+                    self.clear_code_actions();
+                }
                 let event_context = self.next_event_context();
-                self.language_tooling
-                    .cancel_operation(operation_id, event_context);
+                self.deferred_lsp_writes.remove(&operation_id);
+                if let Some(pending) = self.pending_lsp_writes.remove(&operation_id) {
+                    let _ = self.language_tooling.upsert_write_operation(
+                        &pending,
+                        LanguageToolingStatusKind::Cancelled,
+                        "cancelled by app authority".to_string(),
+                        None,
+                    );
+                } else {
+                    self.language_tooling
+                        .cancel_operation(operation_id, event_context);
+                }
                 Ok(AppCommandOutcome::language_tooling(
                     self.language_tooling.projection(),
                 ))
@@ -19246,9 +21375,34 @@ impl AppComposition {
                 Ok(AppCommandOutcome::Opened(self.open_file(path)?))
             }
             AppCommandRequest::OpenPathAtPosition { path, position } => {
+                let previous_buffer = self.active_documents.active_buffer_id;
+                let previous_cursors =
+                    previous_buffer.and_then(|buffer_id| self.editor.cursors(buffer_id).ok());
                 let outcome = self.open_file(path)?;
                 if let Some(buffer_id) = self.active_documents.active_buffer_id {
-                    self.set_buffer_cursor(buffer_id, position)?;
+                    let cursor = match self.editor.protocol_position(
+                        buffer_id,
+                        position.line,
+                        position.character,
+                    ) {
+                        Ok(cursor) => cursor,
+                        Err(error) => {
+                            // Opening the destination is intentionally retained as a tab, but a
+                            // bad protocol coordinate must not strand navigation on that tab.
+                            // Restore the prior authority-selected tab and its caret set before
+                            // returning the validation error.
+                            if let Some(previous_buffer) = previous_buffer {
+                                let _ = self.switch_tab(previous_buffer);
+                                if let Some(previous_cursors) = previous_cursors {
+                                    let _ =
+                                        self.editor.set_cursors(previous_buffer, previous_cursors);
+                                }
+                            }
+                            return Err(error.into());
+                        }
+                    };
+                    self.editor
+                        .set_cursors(buffer_id, vec![legion_editor::Cursor { position: cursor }])?;
                 }
                 // A definition result is a one-shot navigation surface. Do
                 // not carry the source file's picker data into the destination.
@@ -19390,6 +21544,22 @@ impl AppComposition {
             }
             AppCommandRequest::LspRestartSession => {
                 self.restart_lsp_session_for_current_workspace();
+                Ok(AppCommandOutcome::Noop)
+            }
+            AppCommandRequest::ConfigureTypeScriptToolchain {
+                server_archive,
+                compiler_archive,
+                node_executable,
+            } => {
+                self.configure_typescript_toolchain(
+                    server_archive,
+                    compiler_archive,
+                    node_executable,
+                )?;
+                Ok(AppCommandOutcome::Noop)
+            }
+            AppCommandRequest::ClearTypeScriptToolchain => {
+                self.clear_typescript_toolchain();
                 Ok(AppCommandOutcome::Noop)
             }
             _ => unreachable!("command execution service handled non-workflow command"),
@@ -19644,6 +21814,7 @@ impl AppComposition {
         }
         let descriptor = self.apply_collaboration_operation_through_editor(operation)?;
         self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(descriptor.buffer_id, &descriptor);
         let audit = self.collaboration_audit_record(Some(descriptor.correlation_id), None, None)?;
         self.persist_collaboration_audit(audit)?;
         Ok(Some(AppCommandOutcome::CollaborationOperationApplied(
@@ -25091,15 +27262,27 @@ impl AppComposition {
             });
         }
 
+        self.clear_code_actions();
+        self.code_action_diagnostics.clear_buffer(buffer_id);
+
         let lsp_uri = self
             .active_documents
             .metadata_for_buffer(buffer_id)
             .map(|metadata| canonical_path_to_uri(&metadata.identity.canonical_path.0));
+        self.terminalize_pending_lsp_writes(
+            Some(buffer_id),
+            LanguageToolingStatusKind::Stale,
+            "buffer closed while an LSP write was pending",
+        );
         self.editor.close_buffer(buffer_id)?;
         if let Some(uri) = lsp_uri {
-            // Keep the language server's open-document set in sync with the
-            // editor.  This is best-effort and non-blocking, like didChange.
-            let _ = self.lsp_session.send_did_close(uri);
+            let entries = self.document_sync_ledger.entry(uri.clone()).or_default();
+            // A close supersedes an unsent open for this buffer.  Retain the
+            // close marker so a later reopen of the same URI is ordered as
+            // close(old buffer) then open(new buffer).
+            entries.clear();
+            entries.push(DesiredDocumentSync::Closed { buffer_id });
+            self.flush_document_sync_uri(&uri);
         }
         self.active_documents.remove_open_tab(buffer_id);
         self.assist_inline_prediction_state
@@ -26184,7 +28367,22 @@ impl AppComposition {
 
     /// Return the current app-owned language tooling projection.
     pub fn language_tooling_projection(&self) -> LanguageToolingProjection {
-        self.language_tooling.projection()
+        let mut projection = self.language_tooling.projection();
+        projection.typescript_toolchain = TypeScriptToolchainProjection {
+            settings: self.language_toolchain_settings.typescript.clone(),
+            status: match self.language_toolchain_configuration_state() {
+                LanguageToolchainConfigurationState::Unconfigured => {
+                    LanguageToolchainConfigurationStatus::Unconfigured
+                }
+                LanguageToolchainConfigurationState::Draft => {
+                    LanguageToolchainConfigurationStatus::Draft
+                }
+                LanguageToolchainConfigurationState::Configured => {
+                    LanguageToolchainConfigurationStatus::Configured
+                }
+            },
+        };
+        projection
     }
 
     /// Build an LSP `textDocument/completion` request for an already-open buffer.
@@ -27409,6 +29607,7 @@ impl AppComposition {
             })?;
         let descriptor = record.to_protocol_descriptor();
         self.emit_transaction_event(&descriptor);
+        self.notify_lsp_did_change(buffer_id, &descriptor);
         self.mark_inline_prediction_lifecycle(index, InlinePredictionResultState::Accepted)?;
         Ok(self.assist_inline_prediction_projection(TimestampMillis::now()))
     }
@@ -28002,257 +30201,6 @@ impl AppComposition {
         }
     }
 
-    fn run_language_proposal(
-        &mut self,
-        buffer_id: BufferId,
-        kind: LanguageProposalKind,
-        position: TextCoordinate,
-        label: String,
-    ) -> Result<LanguageToolingProjection, AppCompositionError> {
-        let event_context = self.next_event_context();
-        let input = self.language_request_input(buffer_id, event_context)?;
-        let proposal_id = self.proposal_coordinator.next_id();
-        let capability = CapabilityId("fs.write".to_string());
-        let preconditions = ProposalVersionPreconditions {
-            file_version: Some(input.metadata.file_content_version),
-            buffer_version: Some(input.buffer_version),
-            snapshot_id: Some(input.snapshot_id),
-            generation: Some(input.metadata.workspace_generation),
-            file_content_version: Some(input.metadata.file_content_version),
-            workspace_generation: Some(input.metadata.workspace_generation),
-            expected_fingerprint: Some(input.metadata.fingerprint.clone()),
-            expected_file_length: input.metadata.file_length,
-            expected_modified_at: input.metadata.modified_at,
-        };
-        let source = match kind {
-            LanguageProposalKind::Formatting => WorkspaceEditSourceKind::LspFormatting,
-            LanguageProposalKind::Rename => WorkspaceEditSourceKind::LspRename,
-            LanguageProposalKind::OrganizeImports | LanguageProposalKind::CodeAction => {
-                WorkspaceEditSourceKind::LspCodeAction
-            }
-        };
-        let title = match kind {
-            LanguageProposalKind::Formatting => "Format active buffer".to_string(),
-            LanguageProposalKind::Rename => {
-                format!("Rename symbol to {}", bounded_label(&label, 64))
-            }
-            LanguageProposalKind::OrganizeImports => "Organize imports".to_string(),
-            LanguageProposalKind::CodeAction => {
-                format!("Apply code action {}", bounded_label(&label, 64))
-            }
-        };
-        let (workspace_edit, diagnostics) = match kind {
-            LanguageProposalKind::Rename => {
-                // When the LSP session is live, route through `textDocument/rename`
-                // for multi-file rename coverage (PKT-LSP-C I-2).  The result
-                // arrives asynchronously via `ingest_lsp_rename_result` and is
-                // projected into `language_tooling` on the next drain call.
-                if self.lsp_session.is_live()
-                    && self.issue_lsp_rename_request_inner(buffer_id, position, label.clone())
-                {
-                    return Ok(self.language_tooling.projection());
-                }
-                // --- local (non-LSP) rename path ---
-                let replacement = bounded_label(&label, 128);
-                if replacement.trim().is_empty() {
-                    return Ok(self.language_tooling.record_proposal_failure(
-                        &input,
-                        kind,
-                        "Rename proposal requires a non-empty replacement label".to_string(),
-                    ));
-                }
-                let Some(range) =
-                    identifier_byte_range_at(&input.text, position.byte_offset.unwrap_or(0))
-                else {
-                    return Ok(self.language_tooling.record_proposal_failure(
-                        &input,
-                        kind,
-                        "Rename proposal requires an identifier at the requested position"
-                            .to_string(),
-                    ));
-                };
-                let target = ProposalAffectedTarget {
-                    target_id: format!("file:{}", input.metadata.identity.file_id.0),
-                    kind: ProposalTargetKind::OpenBuffer,
-                    workspace_id: Some(input.workspace_id),
-                    file_id: Some(input.metadata.identity.file_id),
-                    buffer_id: Some(buffer_id),
-                    path: Some(input.metadata.identity.canonical_path.clone()),
-                    terminal_session_id: None,
-                    plugin_id: None,
-                    remote_authority: None,
-                    collaboration_session_id: None,
-                    byte_ranges: vec![range],
-                    redaction_hints: vec![RedactionHint::MetadataOnly],
-                };
-                let workspace_edit = WorkspaceEditProposalPayload {
-                    workspace_id: input.workspace_id,
-                    edit_id: uuid::Uuid::now_v7(),
-                    title: title.clone(),
-                    source,
-                    target_coverage: ProposalTargetCoverage {
-                        coverage_kind: ProposalTargetCoverageKind::Complete,
-                        targets: vec![target],
-                        omitted_target_count: 0,
-                        redaction_hints: vec![RedactionHint::MetadataOnly],
-                    },
-                    file_edits: vec![WorkspaceTextEdit {
-                        file: input.metadata.identity.clone(),
-                        buffer_id: Some(buffer_id),
-                        edits: EditBatch {
-                            edits: vec![ProtocolWorkspaceTextEdit {
-                                range: ProtocolEditTextRange::byte(range.start, range.end),
-                                replacement,
-                            }],
-                        },
-                        preconditions: preconditions.clone(),
-                    }],
-                    file_operations: Vec::new(),
-                    required_capability: capability.clone(),
-                    diagnostics: Vec::new(),
-                    schema_version: 1,
-                };
-                (workspace_edit, Vec::new())
-            }
-            LanguageProposalKind::Formatting
-            | LanguageProposalKind::OrganizeImports
-            | LanguageProposalKind::CodeAction => {
-                let mut diagnostics = Vec::new();
-                diagnostics.push(ProtocolDiagnostic {
-                    code: "language_tooling.runtime_edit_unavailable".to_string(),
-                    message: format!(
-                        "{title} is represented as a safe no-op preview until live LSP edits are wired"
-                    ),
-                    severity: ProtocolDiagnosticSeverity::Warning,
-                    path: Some(input.metadata.identity.canonical_path.clone()),
-                    range: None,
-                });
-                let target = ProposalAffectedTarget {
-                    target_id: format!("file:{}", input.metadata.identity.file_id.0),
-                    kind: ProposalTargetKind::OpenBuffer,
-                    workspace_id: Some(input.workspace_id),
-                    file_id: Some(input.metadata.identity.file_id),
-                    buffer_id: Some(buffer_id),
-                    path: Some(input.metadata.identity.canonical_path.clone()),
-                    terminal_session_id: None,
-                    plugin_id: None,
-                    remote_authority: None,
-                    collaboration_session_id: None,
-                    byte_ranges: vec![ByteRange::new(0, input.text.len() as u64)],
-                    redaction_hints: vec![RedactionHint::MetadataOnly],
-                };
-                let workspace_edit = WorkspaceEditProposalPayload {
-                    workspace_id: input.workspace_id,
-                    edit_id: uuid::Uuid::now_v7(),
-                    title: title.clone(),
-                    source,
-                    target_coverage: ProposalTargetCoverage {
-                        coverage_kind: ProposalTargetCoverageKind::Complete,
-                        targets: vec![target],
-                        omitted_target_count: 0,
-                        redaction_hints: vec![RedactionHint::MetadataOnly],
-                    },
-                    file_edits: vec![WorkspaceTextEdit {
-                        file: input.metadata.identity.clone(),
-                        buffer_id: Some(buffer_id),
-                        edits: EditBatch {
-                            edits: vec![ProtocolWorkspaceTextEdit {
-                                range: ProtocolEditTextRange::byte(0, input.text.len() as u64),
-                                replacement: input.text.clone(),
-                            }],
-                        },
-                        preconditions: preconditions.clone(),
-                    }],
-                    file_operations: Vec::new(),
-                    required_capability: capability.clone(),
-                    diagnostics: diagnostics.clone(),
-                    schema_version: 1,
-                };
-                (workspace_edit, diagnostics)
-            }
-        };
-        let request = LspRequestCorrelation {
-            request_id: legion_protocol::LspRequestId(uuid::Uuid::now_v7()),
-            server_id: legion_protocol::LanguageServerId(1),
-            workspace_id: input.workspace_id,
-            file_id: Some(input.metadata.identity.file_id),
-            snapshot_id: Some(input.snapshot_id),
-            buffer_version: Some(input.buffer_version),
-            correlation_id: input.event_context.correlation_id,
-            causality_id: input.event_context.causality_id,
-            cancellation_token: Some(CancellationTokenId(uuid::Uuid::now_v7())),
-            privacy_scope: SemanticPrivacyScope::Workspace,
-            issued_at: TimestampMillis::now(),
-            schema_version: 1,
-        };
-        let proposal = legion_protocol::convert_lsp_edit_to_workspace_proposal(
-            LspEditProposalConversionInput {
-                proposal_id,
-                principal: input.principal.clone(),
-                capability,
-                request,
-                workspace_edit,
-                preconditions,
-                lifecycle_state: ProposalLifecycleState::Created,
-                privacy_label: legion_protocol::ProposalPrivacyLabel::WorkspaceMetadata,
-                preview: PreviewSummary {
-                    summary: title.clone(),
-                    details: vec![
-                        "language_tooling.proposal_preview".to_string(),
-                        format!("buffer_version={}", input.buffer_version.0),
-                        format!("snapshot_id={}", input.snapshot_id.0),
-                    ],
-                },
-                expires_at: None,
-                created_at: TimestampMillis::now(),
-                diagnostics,
-                schema_version: 1,
-            },
-        )
-        .map_err(|error| AppCompositionError::LanguageTooling(format!("{error:?}")))?;
-        self.proposal_coordinator
-            .register_lifecycle_context(proposal.proposal_id, input.event_context);
-        let created = self.proposal_coordinator.created_response(&proposal);
-        if !matches!(created, ProposalResponse::Created(_)) {
-            return Ok(self.language_tooling.record_proposal_failure(
-                &input,
-                kind,
-                format!("{} proposal creation failed: {created:?}", title),
-            ));
-        }
-        let validated = self
-            .proposal_coordinator
-            .handle(ProposalRequest::Validate(proposal.clone()));
-        if !matches!(validated, Ok(ProposalResponse::Validated(_))) {
-            return Ok(self.language_tooling.record_proposal_failure(
-                &input,
-                kind,
-                format!("{} proposal validation failed: {validated:?}", title),
-            ));
-        }
-        let previewed = self
-            .proposal_coordinator
-            .handle(ProposalRequest::Preview(proposal.clone()));
-        if !matches!(previewed, Ok(ProposalResponse::Previewed { .. })) {
-            return Ok(self.language_tooling.record_proposal_failure(
-                &input,
-                kind,
-                format!("{} proposal preview failed: {previewed:?}", title),
-            ));
-        }
-        Ok(self.language_tooling.record_proposal(
-            &input,
-            kind,
-            proposal.proposal_id,
-            if matches!(kind, LanguageProposalKind::CodeAction) {
-                Some(label.as_str())
-            } else {
-                None
-            },
-            format!("{} proposal preview created", title),
-        ))
-    }
-
     fn run_active_file_structural_search(
         &self,
         query_id: &str,
@@ -28566,6 +30514,7 @@ impl AppComposition {
     ) -> Result<WorkspaceSessionRecord, AppCompositionError> {
         let mut record = capture_workspace_session_record(&self.active_documents, &self.editor)?;
         record.workbench_settings = workbench_settings_record_from_projection(&self.settings);
+        record.language_toolchain_settings = self.language_toolchain_settings.clone();
         record.memory_snapshot_json = Some(
             serde_json::to_string(
                 &self
@@ -28583,6 +30532,10 @@ impl AppComposition {
         record: &WorkspaceSessionRecord,
     ) -> Result<AppSessionRestoreOutcome, AppCompositionError> {
         self.settings = settings_projection_from_workbench_record(&record.workbench_settings);
+        // Restore metadata only. Stored paths remain an unapproved draft until
+        // the operator explicitly configures the toolchain again.
+        self.clear_typescript_toolchain();
+        self.language_toolchain_settings = record.language_toolchain_settings.clone();
         // Apply user-level terminal shell preference from loaded settings.
         self.terminal_workflow
             .set_user_shell_selection(TerminalShellSelection::from_label(
@@ -28643,7 +30596,13 @@ impl AppComposition {
         &self,
         layout: &ShellLayoutProjection,
     ) -> Result<ActiveBufferProjection, AppCompositionError> {
-        ProjectionBuilder::active_buffer_projection(&self.active_documents, &self.editor, layout)
+        let settings = self.settings_projection();
+        ProjectionBuilder::active_buffer_projection(
+            &self.active_documents,
+            &self.editor,
+            layout,
+            &settings,
+        )
     }
 
     fn selected_proposal_trust_projections(
@@ -28873,6 +30832,7 @@ impl AppComposition {
         title: impl Into<String>,
     ) -> Result<ShellProjectionSnapshot, AppCompositionError> {
         let layout_projection = ShellLayoutProjection::plain(title);
+        let settings_projection = self.settings_projection();
         let generated_at = TimestampMillis::now();
         let proposal_ledger_projection = self
             .proposal_coordinator
@@ -28916,7 +30876,7 @@ impl AppComposition {
             status_messages: Vec::new(),
             palette_projection: self.palette.projection(),
             command_registry_projection,
-            settings_projection: self.settings_projection(),
+            settings_projection: settings_projection.clone(),
             proposal_ledger_projection,
             artifact_ledger_projection,
             verification_run_projection,
@@ -29001,7 +30961,7 @@ impl AppComposition {
             language_tooling_projection: {
                 // D2: inject live LSP health records from the background session handle.
                 // PKT-LSP-C T3: also inject session lifecycle status (backoff countdown etc).
-                let mut p = self.language_tooling.projection();
+                let mut p = self.language_tooling_projection();
                 if let Some(record) = self.lsp_session.health_record() {
                     p.lsp_health_records.push(record);
                 }
@@ -29455,7 +31415,106 @@ impl AppComposition {
                 );
                 Ok(response)
             }
-            ProposalRequest::Apply(proposal) => self.apply_workspace_proposal(proposal),
+            ProposalRequest::Apply(proposal) => {
+                let proposal_id = proposal.proposal_id;
+                let mixed_command = self.code_action_command_sidecars.take(proposal_id);
+                let command_buffer_id = mixed_command
+                    .as_ref()
+                    .map(|command| command.identity.buffer_id);
+                if let Some(command) = mixed_command.as_ref()
+                    && !self
+                        .lsp_session
+                        .supports_execute_command(&command.command_id)
+                {
+                    return Err(AppCompositionError::Protocol(ProtocolError {
+                        code: "code_action_command_unadvertised".to_string(),
+                        message:
+                            "language server no longer advertises the retained code-action command"
+                                .to_string(),
+                    }));
+                }
+                let requires_mixed_command =
+                    self.proposal_coordinator
+                        .proposal_for_id(proposal_id)
+                        .is_some_and(|canonical| {
+                            canonical.preview.details.iter().any(|detail| {
+                                detail == "language_tooling.code_action_mixed_command"
+                            })
+                        });
+                if requires_mixed_command && mixed_command.is_none() {
+                    return Err(AppCompositionError::Protocol(ProtocolError {
+                        code: "code_action_command_sidecar_missing".to_string(),
+                        message: "mixed code action command authorization is no longer live"
+                            .to_string(),
+                    }));
+                }
+                self.server_apply_edits.expire();
+                let server_apply_edit_proposal = self
+                    .proposal_coordinator
+                    .proposal_for_id(proposal_id)
+                    .is_some_and(|canonical| {
+                        canonical
+                            .preview
+                            .details
+                            .iter()
+                            .any(|detail| detail == "language_tooling.server_apply_edit")
+                    });
+                if server_apply_edit_proposal && !self.server_apply_edits.is_live(proposal_id) {
+                    return Err(AppCompositionError::Protocol(ProtocolError {
+                        code: "workspace_apply_edit_expired".to_string(),
+                        message:
+                            "server-originated workspace/applyEdit proposal is no longer authorized"
+                                .to_string(),
+                    }));
+                }
+                let apply_edit_reply = if server_apply_edit_proposal {
+                    let Some((claim, reply)) = self.server_apply_edits.claim(proposal_id) else {
+                        return Err(AppCompositionError::Protocol(ProtocolError {
+                            code: "workspace_apply_edit_expired".to_string(),
+                            message:
+                                "server-originated workspace/applyEdit proposal is no longer authorized"
+                                    .to_string(),
+                        }));
+                    };
+                    Some((claim, reply))
+                } else {
+                    None
+                };
+                let response = self.apply_workspace_proposal(proposal);
+                if let Some((claim, reply)) = apply_edit_reply {
+                    match &response {
+                        Ok(ProposalResponse::Applied(_)) => {
+                            crate::language::ServerApplyEditAuthority::finish_claimed(
+                                claim,
+                                reply,
+                                true,
+                                String::new(),
+                            )
+                        }
+                        Ok(_) | Err(_) => {
+                            crate::language::ServerApplyEditAuthority::finish_claimed(
+                                claim,
+                                reply,
+                                false,
+                                "workspace/applyEdit proposal was not applied".to_string(),
+                            )
+                        }
+                    }
+                }
+                if let (Ok(ProposalResponse::Applied(_)), Some(command)) =
+                    (&response, mixed_command)
+                    && let Err(error) = self.issue_code_action_command_sidecar(command)
+                    && let Some(buffer_id) = command_buffer_id
+                    && let Some(input) = self.language_request_input_for_failure(buffer_id)
+                {
+                    let _ = self.language_tooling.record_proposal_failure(
+                        &input,
+                        LanguageProposalKind::CodeAction,
+                        format!("code-action edit applied but command dispatch failed: {error}"),
+                    );
+                }
+                response
+            }
             ProposalRequest::Approve(command) => {
                 self.handle_lifecycle_command_request(ProposalRequest::Approve(command))
             }
@@ -29475,6 +31534,10 @@ impl AppComposition {
         &mut self,
         request: ProposalRequest,
     ) -> Result<ProposalResponse, AppCompositionError> {
+        let terminalizes_server_apply_edit = matches!(
+            &request,
+            ProposalRequest::Reject(_) | ProposalRequest::Cancel(_) | ProposalRequest::Rollback(_)
+        );
         let proposal_id = match &request {
             ProposalRequest::Approve(command)
             | ProposalRequest::Reject(command)
@@ -29490,6 +31553,13 @@ impl AppComposition {
             .proposal_coordinator
             .handle(request)
             .map_err(AppCompositionError::Protocol)?;
+        if terminalizes_server_apply_edit {
+            self.server_apply_edits.finish(
+                proposal_id,
+                false,
+                "workspace/applyEdit proposal was rejected or cancelled".to_string(),
+            );
+        }
         if let Some(proposal) = self.proposal_coordinator.proposal(proposal_id)
             && let Err(failure) = SaveWorkflowService::observe_proposal_response(
                 &mut self.proposal_coordinator,
@@ -30340,6 +32410,7 @@ impl AppComposition {
         if let Ok(record) = self.editor.undo(buffer_id, Some(proposal.correlation_id)) {
             let descriptor = record.to_protocol_descriptor();
             self.emit_transaction_event(&descriptor);
+            self.notify_lsp_did_change(buffer_id, &descriptor);
         }
     }
 
@@ -30491,6 +32562,14 @@ impl AppComposition {
         let buffer_version = self.editor.buffer_version(buffer_id)?;
         let snapshot_id = self.editor.current_snapshot(buffer_id)?.snapshot_id;
         let metadata = self.active_documents.metadata_for_buffer(buffer_id);
+        let fingerprint = metadata.and_then(|metadata| {
+            self.workspace
+                .current_file_fingerprint(
+                    metadata.identity.workspace_id,
+                    &metadata.identity.canonical_path.0,
+                )
+                .ok()
+        });
         Ok(VersionContext {
             file_version: metadata
                 .map(|metadata| metadata.file_content_version)
@@ -30506,7 +32585,7 @@ impl AppComposition {
             workspace_generation: metadata
                 .map(|metadata| metadata.workspace_generation)
                 .unwrap_or(WorkspaceGeneration(0)),
-            fingerprint: metadata.map(|metadata| metadata.fingerprint.clone()),
+            fingerprint,
             file_length: metadata.and_then(|metadata| metadata.file_length),
             modified_at: metadata.and_then(|metadata| metadata.modified_at),
         })
@@ -30772,6 +32851,7 @@ impl AppComposition {
             Ok(record) => {
                 let descriptor = record.to_protocol_descriptor();
                 self.emit_transaction_event(&descriptor);
+                self.notify_lsp_did_change(buffer_id, &descriptor);
                 Ok(())
             }
             Err(err) => Err(self.failed_apply_response(
@@ -31131,6 +33211,11 @@ impl AppComposition {
             {
                 return response;
             }
+        }
+
+        #[cfg(test)]
+        if let Some(hook) = self.workspace_edit_preflight_hook.take() {
+            hook();
         }
 
         let mut committed = Vec::new();
@@ -32704,2663 +34789,8 @@ pub fn default_workspace_root() -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-    #[cfg(feature = "ai")]
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    };
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn retryable_search_palette_rows_dispatch_the_existing_run_search_intent() {
-        for status_kind in [
-            SearchStatusKindProjection::NoResults,
-            SearchStatusKindProjection::ValidationError,
-            SearchStatusKindProjection::Error,
-            SearchStatusKindProjection::Cancelled,
-            SearchStatusKindProjection::DegradedLimited,
-        ] {
-            let mut app = AppComposition::new();
-            app.palette.open = true;
-            app.palette.mode = PaletteMode::Search;
-            app.palette.query = "/needle".to_string();
-            app.palette.scope = SearchScopeProjection::Workspace;
-            app.search_projection = SearchProjection {
-                query_id: Some("search:failed".to_string()),
-                scope: SearchScopeProjection::Workspace,
-                query_label: "needle".to_string(),
-                status: SearchStatusProjection {
-                    kind: status_kind,
-                    message: "Retryable search state".to_string(),
-                },
-                results: Vec::new(),
-                result_limit: 20,
-                omitted_result_count: 0,
-                omitted_file_count: 0,
-                skipped_binary_count: 0,
-                case_sensitive: false,
-                whole_word: false,
-                use_regex: false,
-                diagnostics: Vec::new(),
-                generated_at: TimestampMillis(1),
-                schema_version: 1,
-            };
-
-            app.sync_search_palette_results();
-
-            assert_eq!(app.palette.results.len(), 1, "{status_kind:?}");
-            let retry = &app.palette.results[0];
-            assert_eq!(retry.id, "search:retry", "{status_kind:?}");
-            assert_eq!(retry.disabled_reason, None, "{status_kind:?}");
-            assert_eq!(
-                app.palette_result_intent(retry),
-                Some(CommandDispatchIntent::RunSearch {
-                    scope: SearchScopeProjection::Workspace,
-                    query: "needle".to_string(),
-                    limit: 0,
-                    case_sensitive: None,
-                    whole_word: None,
-                    use_regex: None,
-                }),
-                "{status_kind:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn search_palette_does_not_restore_results_from_a_different_scope() {
-        let mut app = AppComposition::new();
-        app.search_projection = SearchProjection {
-            query_id: Some("search:workspace".to_string()),
-            scope: SearchScopeProjection::Workspace,
-            query_label: "needle".to_string(),
-            status: SearchStatusProjection {
-                kind: SearchStatusKindProjection::NoResults,
-                message: "No workspace matches".to_string(),
-            },
-            results: Vec::new(),
-            result_limit: 20,
-            omitted_result_count: 0,
-            omitted_file_count: 0,
-            skipped_binary_count: 0,
-            case_sensitive: false,
-            whole_word: false,
-            use_regex: false,
-            diagnostics: Vec::new(),
-            generated_at: TimestampMillis(1),
-            schema_version: 1,
-        };
-
-        let palette = app
-            .open_palette(
-                PaletteMode::Search,
-                "needle".to_string(),
-                SearchScopeProjection::ActiveFile,
-            )
-            .expect("active-file Search should open");
-
-        assert_eq!(palette.scope, SearchScopeProjection::ActiveFile);
-        assert_eq!(palette.results.len(), 1);
-        assert_eq!(palette.results[0].id, "search:run");
-        assert_eq!(
-            palette.results[0].title,
-            "Search active file for \"needle\""
-        );
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn workflow_provider_boundary_denies_workspace_read_capabilities() {
-        let broker = LegionWorkflowProposalOnlyCapabilityBroker;
-        let decision_for = |capability: &str| {
-            broker
-                .handle(CapabilityRequest::Request {
-                    principal_id: PrincipalId("workflow-provider-test".to_string()),
-                    capability_id: CapabilityId(capability.to_string()),
-                    workspace_trust_state: WorkspaceTrustState::Trusted,
-                    target_path: None,
-                    decision_id: None,
-                    context: CapabilityRequestContext::default(),
-                    correlation_id: CorrelationId(1),
-                })
-                .expect("capability decision")
-        };
-
-        assert!(matches!(
-            decision_for("delegate.tool.read"),
-            CapabilityResponse::Decision(CapabilityDecision { granted: false, .. })
-        ));
-        assert!(matches!(
-            decision_for("delegate.tool.grep"),
-            CapabilityResponse::Decision(CapabilityDecision { granted: false, .. })
-        ));
-        assert!(matches!(
-            decision_for("delegate.tool.edit-as-proposal"),
-            CapabilityResponse::Decision(CapabilityDecision { granted: true, .. })
-        ));
-
-        let scope = AppComposition::new().legion_workflow_worker_scope();
-        assert_eq!(
-            scope.allowed_tools,
-            vec![legion_protocol::LegionToolKind::EditAsProposal]
-        );
-    }
-
-    #[test]
-    fn parse_terminal_keeps_unterminated_osc_bytes() {
-        // OSC introducer with no BEL/ST terminator must not silently drop the
-        // trailing bytes of the output.
-        let payload = "before\x1b]7;file://localhost/home";
-        let parsed = legion_terminal::osc::parse_terminal_shell_output(payload);
-        assert_eq!(parsed.visible_output, "before\x1b]7;file://localhost/home");
-        assert_eq!(parsed.cwd, None);
-    }
-
-    #[test]
-    fn parse_terminal_handles_terminated_osc() {
-        let payload = "out\x1b]7;file:///home/user\x07tail";
-        let parsed = legion_terminal::osc::parse_terminal_shell_output(payload);
-        assert_eq!(parsed.visible_output, "outtail");
-        assert_eq!(parsed.cwd.as_deref(), Some("/home/user"));
-    }
-
-    #[test]
-    fn osc7_cwd_decodes_windows_drive_and_percent() {
-        assert_eq!(
-            legion_terminal::osc::parse_terminal_shell_output(
-                "\x1b]7;file:///C:/Users/My%20Project\x1b\\"
-            )
-            .cwd
-            .as_deref(),
-            Some("C:/Users/My Project")
-        );
-    }
-
-    #[test]
-    fn osc7_cwd_handles_localhost_and_unc() {
-        assert_eq!(
-            legion_terminal::osc::parse_terminal_shell_output(
-                "\x1b]7;file://localhost/home/user\x1b\\"
-            )
-            .cwd
-            .as_deref(),
-            Some("/home/user")
-        );
-        assert_eq!(
-            legion_terminal::osc::parse_terminal_shell_output(
-                "\x1b]7;file://server/share/dir\x1b\\"
-            )
-            .cwd
-            .as_deref(),
-            Some("//server/share/dir")
-        );
-    }
-
-    fn unique_temp_dir(prefix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("legion-{prefix}-{nanos}"));
-        fs::create_dir_all(&path).expect("create temp root");
-        path
-    }
-
-    fn save_proposal(proposal_id: ProposalId) -> WorkspaceProposal {
-        let file = FileIdentity {
-            file_id: FileId(1),
-            workspace_id: WorkspaceId(1),
-            canonical_path: CanonicalPath("C:/repo/file.txt".to_string()),
-            content_version: FileContentVersion(1),
-            content_hash: None,
-        };
-        let fingerprint = FileFingerprint {
-            algorithm: "test".to_string(),
-            value: "hash:test".to_string(),
-        };
-        WorkspaceProposal {
-            proposal_id,
-            principal: PrincipalId("trusted".to_string()),
-            capability: CapabilityId("fs.write".to_string()),
-            correlation_id: CorrelationId(1),
-            payload: ProposalPayload::SaveFile(SaveFileProposal {
-                file: file.clone(),
-                buffer_id: BufferId(1),
-                file_id: file.file_id,
-                snapshot_id: legion_protocol::SnapshotId(1),
-                buffer_version: legion_protocol::BufferVersion(1),
-                file_content_version: FileContentVersion(1),
-                workspace_generation: WorkspaceGeneration(1),
-                expected_fingerprint: Some(fingerprint.clone()),
-                save_intent: SaveIntent::Manual,
-                conflict_policy: SaveConflictPolicy::RejectIfChanged,
-                trust_decision: TrustDecisionContext {
-                    workspace_trust_state: WorkspaceTrustState::Trusted,
-                    decision_id: None,
-                    decided_at: Some(TimestampMillis(1)),
-                },
-                required_capability: CapabilityId("fs.write".to_string()),
-                principal: PrincipalId("trusted".to_string()),
-                correlation_id: CorrelationId(1),
-                diagnostics: Vec::new(),
-            }),
-            preconditions: ProposalVersionPreconditions {
-                file_version: Some(FileContentVersion(1)),
-                buffer_version: Some(legion_protocol::BufferVersion(1)),
-                snapshot_id: Some(legion_protocol::SnapshotId(1)),
-                generation: Some(WorkspaceGeneration(1)),
-                file_content_version: Some(FileContentVersion(1)),
-                workspace_generation: Some(WorkspaceGeneration(1)),
-                expected_fingerprint: Some(fingerprint),
-                expected_file_length: None,
-                expected_modified_at: None,
-            },
-            preview: PreviewSummary {
-                summary: "test save".to_string(),
-                details: Vec::new(),
-            },
-            expires_at: None,
-            created_at: TimestampMillis(1),
-        }
-    }
-
-    fn command(
-        proposal_id: ProposalId,
-        action: legion_protocol::ProposalLifecycleAction,
-    ) -> ProposalLifecycleCommand {
-        ProposalLifecycleCommand {
-            proposal_id,
-            action,
-            principal: PrincipalId("trusted".to_string()),
-            capability: CapabilityId("fs.write".to_string()),
-            correlation_id: CorrelationId(1),
-            causality_id: CausalityId(uuid::Uuid::now_v7()),
-            reason: None,
-            diagnostics: Vec::new(),
-            requested_at: TimestampMillis(1),
-            schema_version: 1,
-        }
-    }
-
-    fn register_created(coordinator: &AppProposalCoordinator, proposal: &WorkspaceProposal) {
-        coordinator
-            .register_lifecycle_context(proposal.proposal_id, EventContext::new(CorrelationId(1)));
-        assert!(matches!(
-            coordinator.created_response(proposal),
-            ProposalResponse::Created(_)
-        ));
-    }
-
-    fn proposal_intent_route_context(
-        proposal: Option<WorkspaceProposal>,
-    ) -> AppProposalIntentRouteContext {
-        AppProposalIntentRouteContext {
-            proposal,
-            principal: PrincipalId("trusted".to_string()),
-            capability: CapabilityId("fs.write".to_string()),
-            correlation_id: CorrelationId(99),
-            causality_id: CausalityId(
-                uuid::Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
-            ),
-            requested_at: TimestampMillis(123),
-        }
-    }
-
-    fn plugin_manifest(plugin_id: PluginId) -> PluginManifest {
-        PluginManifest {
-            plugin_id,
-            name: "phase5.test".to_string(),
-            version: "0.1.0".to_string(),
-            schema_version: 1,
-            min_abi_version: 1,
-            max_abi_version: 1,
-            module_hash: "sha256:phase5".to_string(),
-            manifest_id: "manifest:phase5".to_string(),
-            trust: legion_protocol::PluginTrustMetadata {
-                source: legion_protocol::PluginTrustSource::ExplicitLocalAllow,
-                decision: legion_protocol::PluginTrustDecision::ExplicitlyAllowed,
-                reason: "test allow".to_string(),
-            },
-            signature: None,
-            activation_events: vec![legion_protocol::PluginActivationEvent::OnCommand {
-                command: "phase5.run".to_string(),
-            }],
-            contributions: vec![legion_protocol::PluginContribution::Command(
-                legion_protocol::PluginCommandDescriptor {
-                    command_id: "phase5.run".to_string(),
-                    title: "Phase 5 Run".to_string(),
-                    required_capability: CapabilityId("plugin.command".to_string()),
-                },
-            )],
-            requested_capabilities: vec![CapabilityId("plugin.command".to_string())],
-            storage_namespace: legion_plugin::plugin_namespace(plugin_id, "state"),
-            quotas: legion_protocol::PluginQuotaDeclaration {
-                max_fuel: 1000,
-                max_wall_time_ms: 50,
-                max_memory_pages: 8,
-                max_storage_bytes: 4096,
-                max_host_calls: 4,
-                max_events: 4,
-                max_output_bytes: 128,
-            },
-        }
-    }
-
-    #[test]
-    fn instruction_prefix_bundle_collects_workspace_and_user_layers_in_order() {
-        let workspace_root = unique_temp_dir("workspace");
-        let workspace_legion_rules = workspace_root.join(".legion/rules");
-        let user_root = unique_temp_dir("user-home");
-        let user_legion_rules = user_root.join(".legion/rules");
-
-        fs::create_dir_all(&workspace_legion_rules).expect("create workspace rules dir");
-        fs::create_dir_all(&user_legion_rules).expect("create user rules dir");
-        fs::write(
-            workspace_root.join("AGENTS.md"),
-            "workspace agent line 1\nworkspace agent line 2\n",
-        )
-        .expect("write workspace AGENTS.md");
-        fs::write(
-            workspace_legion_rules.join("b-rule.md"),
-            "workspace rule b\n",
-        )
-        .expect("write workspace rule b");
-        fs::write(
-            workspace_legion_rules.join("a-rule.md"),
-            "workspace rule a\n",
-        )
-        .expect("write workspace rule a");
-        fs::write(user_legion_rules.join("user-rule.md"), "user rule\n").expect("write user rule");
-
-        let bundle = instruction_prefix_bundle(
-            WorkspaceId(11),
-            TimestampMillis(1),
-            Some(workspace_root.as_path()),
-            Some(user_root.as_path()),
-        );
-
-        assert!(
-            bundle
-                .prompt_prefix
-                .starts_with("source=workspace-agents\npath=")
-        );
-        assert!(bundle.prompt_prefix.contains("workspace agent line 1"));
-        assert!(bundle.prompt_prefix.contains("workspace rule a"));
-        assert!(bundle.prompt_prefix.contains("workspace rule b"));
-        assert!(bundle.prompt_prefix.contains("user rule"));
-        assert_eq!(bundle.manifest_items.len(), 4);
-        assert_eq!(
-            bundle.manifest_items[0]
-                .path
-                .as_ref()
-                .map(|path| path.0.as_str()),
-            Some(
-                workspace_root
-                    .join("AGENTS.md")
-                    .to_str()
-                    .expect("workspace path text")
-            )
-        );
-        assert!(
-            bundle.manifest_items[0]
-                .labels
-                .iter()
-                .any(|label| label == "phase4.context.instruction_source")
-        );
-        assert_eq!(
-            bundle.manifest_items[3]
-                .path
-                .as_ref()
-                .map(|path| path.0.as_str()),
-            Some(
-                user_legion_rules
-                    .join("user-rule.md")
-                    .to_str()
-                    .expect("user path text")
-            )
-        );
-
-        let _ = fs::remove_dir_all(&workspace_root);
-        let _ = fs::remove_dir_all(&user_root);
-    }
-
-    fn assert_transition_diagnostic(response: &ProposalResponse, expected_code: &str) {
-        let diagnostics = match response {
-            ProposalResponse::Created(transition)
-            | ProposalResponse::Validated(transition)
-            | ProposalResponse::Approved(transition)
-            | ProposalResponse::Applied(transition) => &transition.diagnostics,
-            ProposalResponse::Previewed { transition, .. } => &transition.diagnostics,
-            ProposalResponse::Rejected { transition, .. }
-            | ProposalResponse::Denied { transition, .. }
-            | ProposalResponse::Failed { transition, .. }
-            | ProposalResponse::RolledBack { transition, .. }
-            | ProposalResponse::Stale { transition, .. }
-            | ProposalResponse::Conflict { transition, .. }
-            | ProposalResponse::Cancelled { transition, .. } => &transition.diagnostics,
-        };
-
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == expected_code),
-            "expected diagnostic {expected_code}, got {diagnostics:?}"
-        );
-    }
-
-    #[test]
-    fn rust_tree_sitter_overlay_pipeline_returns_keyword_function_and_string_tokens() {
-        let text = "pub fn demo() {\n    let s = \"hi\";\n}\n";
-        let line_slices = logical_lines_with_offsets(text)
-            .into_iter()
-            .map(|(line_number, start_byte, line)| ViewportLineSlice {
-                line_number,
-                visible_text: line.to_string(),
-                byte_range: ByteRange {
-                    start: start_byte as u64,
-                    end: start_byte.saturating_add(line.len()) as u64,
-                },
-                utf16_range: legion_protocol::Utf16Range {
-                    start: legion_protocol::Utf16Position {
-                        line: line_number,
-                        character: 0,
-                    },
-                    end: legion_protocol::Utf16Position {
-                        line: line_number,
-                        character: line.encode_utf16().count() as u32,
-                    },
-                },
-                chunk_hash: FileFingerprint {
-                    algorithm: "test".to_string(),
-                    value: format!("line:{line_number}"),
-                },
-                truncation_state: legion_protocol::ViewportLineTruncationState::None,
-            })
-            .collect::<Vec<_>>();
-
-        let overlays = tree_sitter_semantic_token_overlays_for_visible_lines(
-            "/workspace/src/highlights.rs",
-            &line_slices,
-            Some(text),
-        )
-        .expect("rust full-text input should use tree-sitter overlays");
-        let cache_key = tree_sitter_overlay_cache_key("/workspace/src/highlights.rs", text);
-        assert!(
-            tree_sitter_overlay_cache_guard().get(&cache_key).is_some(),
-            "tree-sitter highlight captures should be cached by content hash"
-        );
-        assert_ne!(
-            cache_key,
-            tree_sitter_overlay_cache_key("/workspace/src/highlights.rs", &format!("{text} ")),
-            "cache key should include length so hash collisions across lengths stay separated"
-        );
-        assert!(
-            tree_sitter_semantic_token_overlays_for_visible_lines(
-                "/workspace/src/highlights.txt",
-                &line_slices,
-                Some(text),
-            )
-            .is_none(),
-            "non-Rust paths should skip tree-sitter overlays"
-        );
-        let cached_overlays = tree_sitter_semantic_token_overlays_for_visible_lines(
-            "/workspace/src/highlights.rs",
-            &line_slices,
-            Some(text),
-        )
-        .expect("cached rust full-text input should use tree-sitter overlays");
-        assert_eq!(overlays, cached_overlays);
-
-        assert!(overlays.iter().any(|overlay| {
-            overlay.line_number == 0
-                && overlay.start_col == 0
-                && overlay.end_col == 3
-                && overlay.kind == ViewportSemanticTokenKind::Keyword
-        }));
-        assert!(overlays.iter().any(|overlay| {
-            overlay.line_number == 0
-                && overlay.start_col == 7
-                && overlay.end_col == 11
-                && overlay.kind == ViewportSemanticTokenKind::Function
-        }));
-        assert!(overlays.iter().any(|overlay| {
-            overlay.line_number == 1 && overlay.kind == ViewportSemanticTokenKind::String
-        }));
-    }
-
-    #[test]
-    fn tree_sitter_overlay_pipeline_splits_multiline_string_captures() {
-        let text = "message = \"\"\"first\nsecond\nthird\"\"\"\n";
-        let line_slices = logical_lines_with_offsets(text)
-            .into_iter()
-            .map(|(line_number, start_byte, line)| ViewportLineSlice {
-                line_number,
-                visible_text: line.to_string(),
-                byte_range: ByteRange {
-                    start: start_byte as u64,
-                    end: start_byte.saturating_add(line.len()) as u64,
-                },
-                utf16_range: legion_protocol::Utf16Range {
-                    start: legion_protocol::Utf16Position {
-                        line: line_number,
-                        character: 0,
-                    },
-                    end: legion_protocol::Utf16Position {
-                        line: line_number,
-                        character: line.encode_utf16().count() as u32,
-                    },
-                },
-                chunk_hash: FileFingerprint {
-                    algorithm: "test".to_string(),
-                    value: format!("line:{line_number}"),
-                },
-                truncation_state: legion_protocol::ViewportLineTruncationState::None,
-            })
-            .collect::<Vec<_>>();
-
-        let overlays = tree_sitter_semantic_token_overlays_for_visible_lines(
-            "/workspace/src/multiline.py",
-            &line_slices,
-            Some(text),
-        )
-        .expect("Python full-text input should use tree-sitter overlays");
-
-        for line_number in 0..3 {
-            assert!(
-                overlays.iter().any(|overlay| {
-                    overlay.line_number == line_number
-                        && overlay.kind == ViewportSemanticTokenKind::String
-                        && overlay.start_col < overlay.end_col
-                }),
-                "expected a string overlay on logical line {line_number}, got {overlays:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn terminal_control_input_is_not_line_normalized() {
-        assert_eq!(terminal_input_payload_to_send("echo ready"), "echo ready\n");
-        assert_eq!(terminal_input_payload_to_send(""), "\n");
-        assert_eq!(terminal_input_payload_to_send("\r"), "\r");
-        assert_eq!(terminal_input_payload_to_send("\x03"), "\x03");
-        assert_eq!(terminal_input_payload_to_send("\x1b[A"), "\x1b[A");
-        assert_eq!(terminal_input_payload_to_send("\t"), "\t");
-    }
-
-    #[test]
-    fn tree_sitter_overlay_cache_evicts_oldest_inserted_entry() {
-        let mut cache = TreeSitterOverlayCache::default();
-        let first = tree_sitter_overlay_cache_key("/workspace/src/first.rs", "fn first() {}\n");
-        cache.insert_if_absent(first.clone(), Vec::new());
-        for index in 0..TREE_SITTER_OVERLAY_CACHE_MAX_ENTRIES {
-            cache.insert_if_absent(
-                tree_sitter_overlay_cache_key(
-                    &format!("/workspace/src/{index}.rs"),
-                    &format!("fn f_{index}() {{}}\n"),
-                ),
-                Vec::new(),
-            );
-        }
-
-        assert!(
-            cache.get(&first).is_none(),
-            "oldest entry should be evicted"
-        );
-        assert_eq!(cache.entries.len(), TREE_SITTER_OVERLAY_CACHE_MAX_ENTRIES);
-    }
-
-    #[test]
-    fn audit_rollback_failure_diagnostics_are_preserved_on_failed_response() {
-        let path = CanonicalPath("C:/repo/locked-file.txt".to_string());
-        let diagnostic = ProtocolDiagnostic {
-            code: "proposal.audit_rollback_workspace_failed".to_string(),
-            message: "audit failure rollback did not restore workspace state: locked".to_string(),
-            severity: ProtocolDiagnosticSeverity::Error,
-            path: Some(path.clone()),
-            range: None,
-        };
-        let mut response = ProposalResponse::Failed {
-            transition: ProposalLifecycleTransition {
-                proposal_id: ProposalId(99),
-                lifecycle_state: ProposalLifecycleState::Failed,
-                timestamp: TimestampMillis(1),
-                principal: PrincipalId("trusted".to_string()),
-                capability: CapabilityId("fs.write".to_string()),
-                correlation_id: CorrelationId(1),
-                causality_id: CausalityId(uuid::Uuid::now_v7()),
-                diagnostics: vec![AppProposalCoordinator::diagnostic(
-                    "proposal.audit_storage_failed",
-                    "audit storage failed",
-                )],
-            },
-            reason: ProposalFailureReason::StorageFailed,
-        };
-
-        AppComposition::append_response_diagnostics(&mut response, vec![diagnostic]);
-
-        assert_transition_diagnostic(&response, "proposal.audit_storage_failed");
-        assert_transition_diagnostic(&response, "proposal.audit_rollback_workspace_failed");
-        let ProposalResponse::Failed { transition, .. } = response else {
-            panic!("expected failed response");
-        };
-        let rollback_diagnostic = transition
-            .diagnostics
-            .iter()
-            .find(|diagnostic| diagnostic.code == "proposal.audit_rollback_workspace_failed")
-            .expect("rollback diagnostic");
-        assert_eq!(rollback_diagnostic.path.as_ref(), Some(&path));
-        assert!(rollback_diagnostic.message.contains("locked"));
-    }
-
-    fn text_edit_proposal(proposal_id: ProposalId) -> WorkspaceProposal {
-        WorkspaceProposal {
-            proposal_id,
-            principal: PrincipalId("trusted".to_string()),
-            capability: CapabilityId("editor.write".to_string()),
-            correlation_id: CorrelationId(1),
-            payload: ProposalPayload::TextEdit(legion_protocol::TextEditProposal {
-                file_id: FileId(1),
-                edits: legion_protocol::EditBatch {
-                    edits: vec![legion_protocol::TextEdit {
-                        range: legion_protocol::TextRange::new(
-                            legion_protocol::TextOffset::byte(0),
-                            legion_protocol::TextOffset::byte(0),
-                        ),
-                        replacement: "replacement".to_string(),
-                    }],
-                },
-            }),
-            preconditions: ProposalVersionPreconditions {
-                file_version: None,
-                buffer_version: None,
-                snapshot_id: None,
-                generation: None,
-                file_content_version: None,
-                workspace_generation: None,
-                expected_fingerprint: None,
-                expected_file_length: None,
-                expected_modified_at: None,
-            },
-            preview: PreviewSummary {
-                summary: "test text edit".to_string(),
-                details: Vec::new(),
-            },
-            expires_at: None,
-            created_at: TimestampMillis(1),
-        }
-    }
-
-    fn test_file(file_id: u128, path: &str) -> FileIdentity {
-        FileIdentity {
-            file_id: FileId(file_id),
-            workspace_id: WorkspaceId(1),
-            canonical_path: CanonicalPath(path.to_string()),
-            content_version: FileContentVersion(1),
-            content_hash: None,
-        }
-    }
-
-    fn complete_file_preconditions() -> ProposalVersionPreconditions {
-        ProposalVersionPreconditions {
-            file_version: Some(FileContentVersion(1)),
-            buffer_version: Some(legion_protocol::BufferVersion(1)),
-            snapshot_id: Some(legion_protocol::SnapshotId(1)),
-            generation: Some(WorkspaceGeneration(1)),
-            file_content_version: Some(FileContentVersion(1)),
-            workspace_generation: Some(WorkspaceGeneration(1)),
-            expected_fingerprint: Some(FileFingerprint {
-                algorithm: "test".to_string(),
-                value: "hash:test".to_string(),
-            }),
-            expected_file_length: None,
-            expected_modified_at: None,
-        }
-    }
-
-    fn proposal_with(
-        proposal_id: ProposalId,
-        capability: &str,
-        payload: ProposalPayload,
-    ) -> WorkspaceProposal {
-        WorkspaceProposal {
-            proposal_id,
-            principal: PrincipalId("trusted".to_string()),
-            capability: CapabilityId(capability.to_string()),
-            correlation_id: CorrelationId(1),
-            payload,
-            preconditions: complete_file_preconditions(),
-            preview: PreviewSummary {
-                summary: "test proposal".to_string(),
-                details: Vec::new(),
-            },
-            expires_at: None,
-            created_at: TimestampMillis(1),
-        }
-    }
-
-    fn workspace_edit_payload() -> ProposalPayload {
-        let path = CanonicalPath("C:/repo/workspace-created.rs".to_string());
-        ProposalPayload::WorkspaceEdit(legion_protocol::WorkspaceEditProposalPayload {
-            workspace_id: WorkspaceId(1),
-            edit_id: uuid::Uuid::now_v7(),
-            title: "workspace create".to_string(),
-            source: legion_protocol::WorkspaceEditSourceKind::User,
-            target_coverage: ProposalTargetCoverage {
-                coverage_kind: ProposalTargetCoverageKind::Complete,
-                targets: vec![AppProposalCoordinator::path_target(
-                    "workspace-create".to_string(),
-                    ProposalTargetKind::PathOnly,
-                    path.clone(),
-                    Vec::new(),
-                )],
-                omitted_target_count: 0,
-                redaction_hints: vec![RedactionHint::MetadataOnly],
-            },
-            file_edits: Vec::new(),
-            file_operations: vec![legion_protocol::WorkspaceFileOperation::Create {
-                path,
-                initial_content_hash: None,
-            }],
-            required_capability: CapabilityId("fs.write".to_string()),
-            diagnostics: Vec::new(),
-            schema_version: 1,
-        })
-    }
-
-    fn terminal_payload() -> ProposalPayload {
-        ProposalPayload::TerminalCommand(legion_protocol::TerminalCommandProposal {
-            session_id: Some(legion_protocol::TerminalSessionId(7)),
-            command: "cargo test".to_string(),
-            cwd: Some(CanonicalPath("C:/repo".to_string())),
-            env: HashMap::new(),
-        })
-    }
-
-    #[test]
-    fn proposal_coordinator_enforces_preview_after_validation() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(1));
-        register_created(&coordinator, &proposal);
-
-        let preview = coordinator
-            .handle(ProposalRequest::Preview(proposal.clone()))
-            .expect("preview response");
-        let ProposalResponse::Rejected { transition, reason } = preview else {
-            panic!("preview before validation should reject");
-        };
-        assert_eq!(reason, ProposalRejectionReason::ValidationFailed);
-        assert!(
-            transition
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "proposal.invalid_lifecycle_transition")
-        );
-
-        let validation = coordinator
-            .handle(ProposalRequest::Validate(proposal.clone()))
-            .expect("validate response");
-        assert!(matches!(validation, ProposalResponse::Validated(_)));
-        let preview = coordinator
-            .handle(ProposalRequest::Preview(proposal))
-            .expect("preview response");
-        assert!(matches!(preview, ProposalResponse::Previewed { .. }));
-    }
-
-    #[test]
-    fn command_dispatcher_maps_projection_only_proposal_intents_to_protocol_requests() {
-        let proposal = save_proposal(ProposalId(42));
-        let preview = CommandDispatcher::route_proposal_intent(
-            CommandDispatchIntent::PreviewProposal {
-                proposal_id: ProposalId(42),
-            },
-            proposal_intent_route_context(Some(proposal.clone())),
-        )
-        .expect("preview intent maps")
-        .expect("preview request");
-        assert!(
-            matches!(preview, ProposalRequest::Preview(mapped) if mapped.proposal_id == ProposalId(42))
-        );
-
-        let approve = CommandDispatcher::route_proposal_intent(
-            CommandDispatchIntent::ApproveProposal {
-                proposal_id: ProposalId(42),
-            },
-            proposal_intent_route_context(None),
-        )
-        .expect("approve intent maps")
-        .expect("approve request");
-        let ProposalRequest::Approve(command) = approve else {
-            panic!("expected approve request");
-        };
-        assert_eq!(command.proposal_id, ProposalId(42));
-        assert_eq!(command.action, ProposalLifecycleAction::Approve);
-        assert_eq!(command.principal, PrincipalId("trusted".to_string()));
-
-        let reject = CommandDispatcher::route_proposal_intent(
-            CommandDispatchIntent::RejectProposal {
-                proposal_id: ProposalId(42),
-                reason: ProposalRejectionReason::UserRejected,
-            },
-            proposal_intent_route_context(None),
-        )
-        .expect("reject intent maps")
-        .expect("reject request");
-        let ProposalRequest::Reject(command) = reject else {
-            panic!("expected reject request");
-        };
-        assert!(matches!(
-            command.reason,
-            Some(ProposalLifecycleCommandReason::Rejection(
-                ProposalRejectionReason::UserRejected
-            ))
-        ));
-
-        let details = CommandDispatcher::route_proposal_intent(
-            CommandDispatchIntent::OpenProposalDetails {
-                proposal_id: ProposalId(42),
-            },
-            proposal_intent_route_context(Some(proposal)),
-        )
-        .expect("details intent maps");
-        assert!(details.is_none());
-    }
-
-    #[test]
-    fn command_dispatcher_routes_manual_clipboard_input_intents_to_app_requests() {
-        let active = AppCommandRouteContext {
-            workspace_id: Some(WorkspaceId(1)),
-            buffer_id: Some(BufferId(9)),
-            file_id: Some(FileId(2)),
-        };
-
-        let copy = CommandDispatcher::route_intent(
-            CommandDispatchIntent::ClipboardCopy {
-                buffer_id: BufferId(9),
-            },
-            active,
-            CorrelationId(1),
-        )
-        .expect("copy routes");
-        assert_eq!(
-            copy,
-            AppCommandRequest::ClipboardCopy {
-                buffer_id: BufferId(9)
-            }
-        );
-
-        let cut = CommandDispatcher::route_intent(
-            CommandDispatchIntent::ClipboardCut {
-                buffer_id: BufferId(9),
-            },
-            active,
-            CorrelationId(1),
-        )
-        .expect("cut routes");
-        assert_eq!(
-            cut,
-            AppCommandRequest::ClipboardCut {
-                buffer_id: BufferId(9)
-            }
-        );
-
-        let select_all = CommandDispatcher::route_intent(
-            CommandDispatchIntent::SelectAll {
-                buffer_id: BufferId(9),
-            },
-            active,
-            CorrelationId(1),
-        )
-        .expect("select-all routes");
-        assert_eq!(
-            select_all,
-            AppCommandRequest::SelectAll {
-                buffer_id: BufferId(9)
-            }
-        );
-    }
-
-    #[test]
-    fn plugin_command_intent_routes_through_app_owned_plugin_runtime() {
-        let mut app = AppComposition::new();
-        let plugin_id = app
-            .load_plugin_manifest(plugin_manifest(PluginId(7)))
-            .expect("plugin manifest loads");
-
-        let outcome = app
-            .dispatch_ui_intent(CommandDispatchIntent::InvokePluginCommand {
-                plugin_id,
-                command_id: "phase5.run".to_string(),
-                metadata_label: "metadata-only".to_string(),
-            })
-            .expect("plugin command routes through app");
-
-        match outcome {
-            AppCommandOutcome::PluginCommandInvoked(response) => {
-                assert!(matches!(
-                    response.as_ref(),
-                    PluginHostCallResponse::Accepted { metadata_label }
-                        if metadata_label == "metadata-only"
-                ));
-            }
-            other => panic!("unexpected plugin command outcome: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn command_dispatcher_routes_collaboration_intents_to_app_requests() {
-        let active = AppCommandRouteContext {
-            workspace_id: Some(WorkspaceId(1)),
-            buffer_id: Some(BufferId(1)),
-            file_id: Some(FileId(1)),
-        };
-        let join = CommandDispatcher::route_intent(
-            CommandDispatchIntent::JoinCollaborationSession {
-                session_id: CollaborationSessionId(7),
-            },
-            active,
-            CorrelationId(1),
-        )
-        .expect("join routes");
-        assert_eq!(
-            join,
-            AppCommandRequest::JoinCollaborationSession {
-                session_id: CollaborationSessionId(7)
-            }
-        );
-
-        let presence = CommandDispatcher::route_intent(
-            CommandDispatchIntent::PublishCollaborationPresence {
-                session_id: CollaborationSessionId(7),
-                participant_id: CollaborationParticipantId(9),
-            },
-            active,
-            CorrelationId(1),
-        )
-        .expect("presence routes");
-        assert_eq!(
-            presence,
-            AppCommandRequest::PublishCollaborationPresence {
-                session_id: CollaborationSessionId(7),
-                participant_id: CollaborationParticipantId(9),
-            }
-        );
-    }
-
-    #[test]
-    fn shared_collaboration_route_wraps_existing_safe_targets_only() {
-        let editor_target = ProposalAffectedTarget {
-            target_id: "editor".to_string(),
-            kind: ProposalTargetKind::OpenBuffer,
-            workspace_id: Some(WorkspaceId(1)),
-            file_id: Some(FileId(1)),
-            buffer_id: Some(BufferId(1)),
-            path: None,
-            terminal_session_id: None,
-            plugin_id: None,
-            remote_authority: None,
-            collaboration_session_id: None,
-            byte_ranges: Vec::new(),
-            redaction_hints: vec![RedactionHint::MetadataOnly],
-        };
-        let collaboration_target = ProposalAffectedTarget {
-            target_id: "collaboration".to_string(),
-            kind: ProposalTargetKind::CollaborationSession,
-            workspace_id: Some(WorkspaceId(1)),
-            file_id: Some(FileId(1)),
-            buffer_id: Some(BufferId(1)),
-            path: None,
-            terminal_session_id: None,
-            plugin_id: None,
-            remote_authority: None,
-            collaboration_session_id: Some("7".to_string()),
-            byte_ranges: Vec::new(),
-            redaction_hints: vec![RedactionHint::MetadataOnly],
-        };
-        let shared = ProposalTargetCoverage {
-            coverage_kind: ProposalTargetCoverageKind::Complete,
-            targets: vec![editor_target, collaboration_target.clone()],
-            omitted_target_count: 0,
-            redaction_hints: vec![RedactionHint::MetadataOnly],
-        };
-        assert_eq!(
-            ProposalExecutionRoute::for_payload(
-                &text_edit_proposal(ProposalId(70)).payload,
-                &shared
-            ),
-            ProposalExecutionRoute::SharedCollaboration
-        );
-
-        let pure_collaboration = ProposalTargetCoverage {
-            coverage_kind: ProposalTargetCoverageKind::Complete,
-            targets: vec![collaboration_target],
-            omitted_target_count: 0,
-            redaction_hints: vec![RedactionHint::MetadataOnly],
-        };
-        assert_eq!(
-            ProposalExecutionRoute::for_payload(
-                &text_edit_proposal(ProposalId(71)).payload,
-                &pure_collaboration
-            ),
-            ProposalExecutionRoute::Unsupported
-        );
-    }
-
-    #[test]
-    fn command_dispatcher_rejects_apply_intent_without_app_owned_matching_proposal() {
-        let missing = CommandDispatcher::route_proposal_intent(
-            CommandDispatchIntent::ApplyProposal {
-                proposal_id: ProposalId(42),
-            },
-            proposal_intent_route_context(None),
-        );
-        assert!(matches!(
-            missing,
-            Err(AppCompositionError::ProposalIntentMissingProposal)
-        ));
-
-        let mismatch = CommandDispatcher::route_proposal_intent(
-            CommandDispatchIntent::ApplyProposal {
-                proposal_id: ProposalId(42),
-            },
-            proposal_intent_route_context(Some(save_proposal(ProposalId(7)))),
-        );
-        assert!(matches!(
-            mismatch,
-            Err(AppCompositionError::ProposalIntentMismatch {
-                target: ProposalId(42),
-                active: Some(ProposalId(7))
-            })
-        ));
-    }
-
-    #[test]
-    fn proposal_coordinator_allows_created_validated_previewed_approved_applied_path() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(10));
-        register_created(&coordinator, &proposal);
-
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Validate(proposal.clone())),
-            Ok(ProposalResponse::Validated(_))
-        ));
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Preview(proposal.clone())),
-            Ok(ProposalResponse::Previewed { .. })
-        ));
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Approve(command(
-                proposal.proposal_id,
-                legion_protocol::ProposalLifecycleAction::Approve,
-            ))),
-            Ok(ProposalResponse::Approved(_))
-        ));
-
-        let transition = coordinator
-            .record_transition(&proposal, ProposalLifecycleState::Applied, "apply")
-            .expect("approved proposal can apply");
-        assert_eq!(transition.lifecycle_state, ProposalLifecycleState::Applied);
-        assert_eq!(
-            coordinator.current_lifecycle_state(proposal.proposal_id),
-            Some(ProposalLifecycleState::Applied)
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_exports_and_recovers_lifecycle_snapshot() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(20));
-        register_created(&coordinator, &proposal);
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Validate(proposal.clone())),
-            Ok(ProposalResponse::Validated(_))
-        ));
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Preview(proposal.clone())),
-            Ok(ProposalResponse::Previewed { .. })
-        ));
-
-        let snapshot = coordinator.proposal_lifecycle_recovery_snapshot();
-        assert_eq!(snapshot.records.len(), 1);
-        assert!(snapshot.generated_at.0 > 0);
-
-        let recovered = AppProposalCoordinator::new(SharedEventSink::default());
-        recovered.recover_lifecycle_from_snapshot(snapshot);
-
-        assert_eq!(
-            recovered.current_lifecycle_state(proposal.proposal_id),
-            Some(ProposalLifecycleState::Previewed)
-        );
-        assert!(recovered.has_lifecycle_context(proposal.proposal_id));
-        assert_eq!(
-            recovered
-                .proposal(proposal.proposal_id)
-                .map(|proposal| proposal.proposal_id),
-            Some(proposal.proposal_id)
-        );
-
-        let ledger = recovered.proposal_ledger_projection(TimestampMillis(99));
-        assert_eq!(ledger.rows.len(), 1);
-        assert_eq!(ledger.selected_proposal_id, Some(proposal.proposal_id));
-        assert_eq!(
-            ledger.rows[0].lifecycle.state,
-            ProposalLifecycleState::Previewed
-        );
-        assert_eq!(ledger.rows[0].updated_at, TimestampMillis(99));
-        assert!(
-            ledger.rows[0]
-                .redaction_hints
-                .contains(&RedactionHint::MetadataOnly)
-        );
-    }
-
-    #[cfg(feature = "ai")]
-    fn delegated_output_from(
-        proposal: WorkspaceProposal,
-        suffix: &str,
-    ) -> legion_protocol::AssistedAiEditProposalOutput {
-        legion_protocol::AssistedAiEditProposalOutput {
-            output_id: format!("delegated-output-{suffix}"),
-            request_id: format!("delegated-request-{suffix}"),
-            provider_id: "provider:test".to_string(),
-            proposal_id: ProposalId(0),
-            principal: proposal.principal,
-            capability: proposal.capability,
-            correlation_id: proposal.correlation_id,
-            causality_id: CausalityId(uuid::Uuid::now_v7()),
-            payload: proposal.payload,
-            preconditions: proposal.preconditions,
-            preview: proposal.preview,
-            expires_at: proposal.expires_at,
-            created_at: proposal.created_at,
-            context_manifest: trust_reference(
-                "delegated-context-test",
-                legion_protocol::AssistedAiTrustProjectionKind::ContextManifest,
-            ),
-            approval_checklist: trust_reference(
-                "delegated-approval-test",
-                legion_protocol::AssistedAiTrustProjectionKind::ProposalApprovalChecklist,
-            ),
-            redaction_hints: vec![RedactionHint::MetadataOnly],
-            schema_version: 1,
-        }
-    }
-
-    #[cfg(feature = "ai")]
-    #[derive(Clone)]
-    struct FailSecondAtomicBatchSink {
-        recorder: legion_observability::InMemoryEventSink,
-        fail_second: Arc<AtomicBool>,
-        legacy_emit_calls: Arc<AtomicUsize>,
-        batch_emit_calls: Arc<AtomicUsize>,
-    }
-
-    #[cfg(feature = "ai")]
-    impl EventSinkPort for FailSecondAtomicBatchSink {
-        fn emit(&self, request: EventSinkRequest) -> ProtocolResult<()> {
-            self.legacy_emit_calls.fetch_add(1, Ordering::SeqCst);
-            self.recorder.emit(request)
-        }
-
-        fn emit_batch(&self, requests: Vec<EventSinkRequest>) -> ProtocolResult<()> {
-            self.batch_emit_calls.fetch_add(1, Ordering::SeqCst);
-            for (index, request) in requests.iter().enumerate() {
-                legion_observability::validate_envelope(
-                    &request.envelope,
-                    legion_observability::EventSinkConfig::default(),
-                )
-                .map_err(|error| ProtocolError {
-                    code: "test_sink_validation_failed".to_string(),
-                    message: error.to_string(),
-                })?;
-                if index == 1 && self.fail_second.load(Ordering::SeqCst) {
-                    return Err(ProtocolError {
-                        code: "test_sink_validation_failed".to_string(),
-                        message: "injected validation failure at second batch item".to_string(),
-                    });
-                }
-            }
-            self.recorder.emit_batch(requests)
-        }
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_proposal_preflight_failure_keeps_ledger_and_storage_unchanged() {
-        let event_sink = legion_observability::InMemoryEventSink::new();
-        let mut app = AppComposition::with_event_sink(SharedEventSink::new(event_sink.clone()));
-        let mut rejected = delegated_output_from(save_proposal(ProposalId(101)), "second");
-        rejected.correlation_id = CorrelationId(0);
-
-        let error = app
-            .register_delegated_task_proposals(vec![
-                delegated_output_from(save_proposal(ProposalId(100)), "first"),
-                rejected,
-            ])
-            .expect_err("invalid second proposal rejects the staged batch");
-        assert!(matches!(error, AppCompositionError::AiRuntime(_)));
-        assert_eq!(
-            app.delegate_workflow.runtime_activation,
-            DelegatedTaskRuntimeActivationState::Failed
-        );
-        assert!(
-            app.proposal_coordinator
-                .proposal_ledger_projection(TimestampMillis(99))
-                .rows
-                .is_empty()
-        );
-        assert!(event_sink.events().expect("event snapshot").is_empty());
-        assert!(
-            app.storage
-                .pending_proposal_observation_batches()
-                .expect("pending batches")
-                .is_empty()
-        );
-        for proposal_id in [ProposalId(1), ProposalId(2)] {
-            assert!(matches!(
-                app.storage
-                    .handle(StorageRepositoryRequest::ReadProposalAuditRecord(
-                        proposal_id
-                    ))
-                    .expect("read audit record"),
-                StorageRepositoryResponse::ProposalAuditRecord(None)
-            ));
-        }
-
-        let registered = app
-            .register_delegated_task_proposals(vec![delegated_output_from(
-                save_proposal(ProposalId(102)),
-                "retry",
-            )])
-            .expect("valid retry after staged rollback");
-        assert_eq!(registered[0].proposal_id, ProposalId(1));
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_proposal_storage_failure_keeps_ledger_and_ids_unchanged() {
-        let event_sink = legion_observability::InMemoryEventSink::new();
-        let mut app = AppComposition::with_event_sink(SharedEventSink::new(event_sink.clone()));
-        app.storage
-            .fail_proposal_observation_batch_at_item_for_test(1);
-        let error = app
-            .register_delegated_task_proposals(vec![
-                delegated_output_from(save_proposal(ProposalId(100)), "first"),
-                delegated_output_from(save_proposal(ProposalId(101)), "second"),
-            ])
-            .expect_err("the injected second-item storage failure rejects the full batch");
-
-        assert!(matches!(
-            error,
-            AppCompositionError::Protocol(ProtocolError { code, .. }) if code == "storage_failed"
-        ));
-        assert_eq!(
-            app.delegate_workflow.runtime_activation,
-            DelegatedTaskRuntimeActivationState::Failed
-        );
-        let ledger = app
-            .proposal_coordinator
-            .proposal_ledger_projection(TimestampMillis(99));
-        assert!(ledger.rows.is_empty());
-        assert!(
-            event_sink.events().expect("event snapshot").is_empty(),
-            "storage rejection must not emit any Created event"
-        );
-        assert!(app.proposal_coordinator.proposal(ProposalId(1)).is_none());
-        assert!(
-            app.storage
-                .pending_proposal_observation_batches()
-                .expect("pending batches")
-                .is_empty()
-        );
-        for proposal_id in [ProposalId(1), ProposalId(2)] {
-            assert!(matches!(
-                app.storage
-                    .handle(StorageRepositoryRequest::ReadProposalAuditRecord(
-                        proposal_id
-                    ))
-                    .expect("read audit record"),
-                StorageRepositoryResponse::ProposalAuditRecord(None)
-            ));
-        }
-        let storage_debug = app
-            .storage
-            .with_storage(|storage| format!("{storage:?}"))
-            .expect("storage snapshot");
-        assert!(storage_debug.contains("protocol_event_metadata: {}"));
-        assert!(storage_debug.contains("protocol_proposal_audit: {}"));
-        assert!(storage_debug.contains("protocol_proposal_observation_outbox: {}"));
-
-        let registered = app
-            .register_delegated_task_proposals(vec![delegated_output_from(
-                save_proposal(ProposalId(102)),
-                "retry",
-            )])
-            .expect("a valid retry should register after rollback");
-        assert_eq!(registered[0].proposal_id, ProposalId(1));
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_proposal_sink_failure_schedules_production_retry() {
-        let recorder = legion_observability::InMemoryEventSink::new();
-        let fail_second = Arc::new(AtomicBool::new(true));
-        let legacy_emit_calls = Arc::new(AtomicUsize::new(0));
-        let batch_emit_calls = Arc::new(AtomicUsize::new(0));
-        let sink = FailSecondAtomicBatchSink {
-            recorder: recorder.clone(),
-            fail_second: Arc::clone(&fail_second),
-            legacy_emit_calls: Arc::clone(&legacy_emit_calls),
-            batch_emit_calls: Arc::clone(&batch_emit_calls),
-        };
-        let mut app = AppComposition::with_event_sink(SharedEventSink::new(sink));
-
-        let registered = app
-            .register_delegated_task_proposals(vec![
-                delegated_output_from(save_proposal(ProposalId(100)), "first"),
-                delegated_output_from(save_proposal(ProposalId(101)), "second"),
-            ])
-            .expect("sink failure must retain registration and schedule delivery retry");
-
-        assert_eq!(
-            registered
-                .iter()
-                .map(|proposal| proposal.proposal_id)
-                .collect::<Vec<_>>(),
-            vec![ProposalId(1), ProposalId(2)]
-        );
-        let ledger = app
-            .proposal_coordinator
-            .proposal_ledger_projection(TimestampMillis(99));
-        assert_eq!(ledger.rows.len(), 2);
-        assert_eq!(
-            ledger
-                .rows
-                .iter()
-                .map(|row| row.proposal_id)
-                .collect::<Vec<_>>(),
-            vec![ProposalId(1), ProposalId(2)]
-        );
-        assert!(recorder.events().expect("event snapshot").is_empty());
-        assert_eq!(legacy_emit_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(batch_emit_calls.load(Ordering::SeqCst), 1);
-
-        let pending = app
-            .storage
-            .pending_proposal_observation_batches()
-            .expect("pending batch");
-        assert_eq!(pending.len(), 1);
-        assert!(pending[0].batch.batch_id.starts_with("dpr3-"));
-        assert_eq!(pending[0].batch.batch_id.len(), "dpr3-".len() + 64);
-        assert_eq!(pending[0].batch.event_metadata.len(), 2);
-        assert_eq!(pending[0].batch.proposal_audits.len(), 2);
-        assert_eq!(
-            pending[0].batch.schema_version,
-            PROPOSAL_OBSERVATION_BATCH_SCHEMA_VERSION
-        );
-        for ((event, metadata), audit) in pending[0]
-            .batch
-            .events
-            .iter()
-            .zip(&pending[0].batch.event_metadata)
-            .zip(&pending[0].batch.proposal_audits)
-        {
-            assert_eq!(event.event_id, metadata.event_id);
-            assert_eq!(
-                event.payload["proposal_id"].as_u64(),
-                Some(audit.proposal_id.0)
-            );
-            assert_eq!(event.correlation_id, audit.correlation_id);
-            assert_eq!(event.causality_id, audit.causality_id);
-            assert_eq!(event.occurred_at, audit.timestamp);
-            assert_eq!(audit.lifecycle_state, ProposalLifecycleState::Created);
-            assert!(matches!(
-                app.storage
-                    .handle(StorageRepositoryRequest::ReadProposalAuditRecord(
-                        audit.proposal_id
-                    ))
-                    .expect("read audit record"),
-                StorageRepositoryResponse::ProposalAuditRecord(Some(stored))
-                    if stored.lifecycle_state == ProposalLifecycleState::Created
-            ));
-        }
-        for metadata in &pending[0].batch.event_metadata {
-            assert!(matches!(
-                app.storage
-                    .handle(StorageRepositoryRequest::ReadEventMetadata(
-                        metadata.event_id
-                    ))
-                    .expect("read event metadata"),
-                StorageRepositoryResponse::EventMetadata(Some(_))
-            ));
-        }
-
-        let still_pending = app
-            .retry_pending_proposal_observations()
-            .expect("failed retry report");
-        assert_eq!(still_pending.delivered_count, 0);
-        assert_eq!(still_pending.pending_count, 1);
-        assert_eq!(still_pending.attempts.len(), 1);
-        assert_eq!(
-            still_pending.attempts[0].delivery_state,
-            legion_storage::ProposalObservationDeliveryState::Pending
-        );
-        assert_eq!(
-            still_pending.attempts[0].error_code.as_deref(),
-            Some("test_sink_validation_failed")
-        );
-        assert_eq!(
-            still_pending.attempts[0].error_kind,
-            Some(legion_storage::ProposalObservationRetryErrorKind::Transient)
-        );
-        assert_eq!(recorder.events().expect("event snapshot").len(), 0);
-
-        fail_second.store(false, Ordering::SeqCst);
-        assert!(
-            app.poll_product_ai_stream(),
-            "production polling must service the scheduled observation retry"
-        );
-        assert_eq!(recorder.events().expect("event snapshot").len(), 2);
-        assert!(
-            app.storage
-                .pending_proposal_observation_batches()
-                .expect("pending batches after retry")
-                .is_empty()
-        );
-        assert_eq!(legacy_emit_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(batch_emit_calls.load(Ordering::SeqCst), 3);
-
-        let empty = app
-            .retry_pending_proposal_observations()
-            .expect("idempotent empty retry");
-        assert_eq!(empty.delivered_count, 0);
-        assert_eq!(empty.pending_count, 0);
-        assert!(empty.attempts.is_empty());
-        assert_eq!(recorder.events().expect("event snapshot").len(), 2);
-        assert_eq!(legacy_emit_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(batch_emit_calls.load(Ordering::SeqCst), 3);
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_registration_key_canonicalizes_hash_map_insertion_order() {
-        let mut first = delegated_output_from(save_proposal(ProposalId(100)), "canonical");
-        let mut first_env = HashMap::new();
-        first_env.insert("B_KEY".to_string(), "two".to_string());
-        first_env.insert("A_KEY".to_string(), "one".to_string());
-        first.payload =
-            ProposalPayload::TerminalCommand(legion_protocol::TerminalCommandProposal {
-                session_id: None,
-                command: "cargo test".to_string(),
-                cwd: Some(CanonicalPath("C:/repo".to_string())),
-                env: first_env,
-            });
-
-        let mut second = first.clone();
-        let mut second_env = HashMap::new();
-        second_env.insert("A_KEY".to_string(), "one".to_string());
-        second_env.insert("B_KEY".to_string(), "two".to_string());
-        if let ProposalPayload::TerminalCommand(command) = &mut second.payload {
-            command.env = second_env;
-        } else {
-            panic!("test payload must remain a terminal command");
-        }
-
-        assert_eq!(
-            AppComposition::delegated_registration_keys(&[first]).expect("first canonical key"),
-            AppComposition::delegated_registration_keys(&[second]).expect("second canonical key")
-        );
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn durable_proposal_observation_rejects_near_terminal_identity_floors() {
-        let app_sink = legion_observability::InMemoryEventSink::new();
-        let mut app = AppComposition::with_event_sink(SharedEventSink::new(app_sink));
-        let proposal_id = ProposalId(MAX_DURABLE_PROPOSAL_OBSERVATION_FLOOR);
-        let proposal = save_proposal(proposal_id);
-        let causality_id = CausalityId(uuid::Uuid::now_v7());
-        let transition = ProposalLifecycleTransition {
-            proposal_id,
-            lifecycle_state: ProposalLifecycleState::Created,
-            timestamp: TimestampMillis(1),
-            principal: proposal.principal.clone(),
-            capability: proposal.capability.clone(),
-            correlation_id: proposal.correlation_id,
-            causality_id,
-            diagnostics: Vec::new(),
-        };
-        let event = proposal_created_event_with_transition(
-            &proposal,
-            &transition,
-            EventSequence(MAX_DURABLE_PROPOSAL_OBSERVATION_FLOOR),
-        )
-        .expect("near-limit event remains structurally valid");
-        let batch = ProposalObservationBatch {
-            batch_id: "near-terminal-floor".to_string(),
-            event_metadata: vec![event_metadata_record(&event)],
-            proposal_audits: vec![
-                proposal_audit_record(&proposal, &transition).expect("near-limit audit"),
-            ],
-            events: vec![event],
-            schema_version: PROPOSAL_OBSERVATION_BATCH_SCHEMA_VERSION,
-        };
-        app.storage
-            .store_proposal_observation_batch(batch)
-            .expect("store near-limit untrusted durable record");
-
-        let error = app
-            .reserve_durable_proposal_observation_identities()
-            .expect_err("near-terminal durable floors must fail closed");
-        assert_eq!(error.code, "proposal_observation_identity_exhausted");
-        assert_eq!(app.proposal_coordinator.next_proposal_id.get(), 0);
-        assert_eq!(app.proposal_coordinator.next_event_sequence.get(), 0);
-    }
-
-    #[test]
-    fn proposal_persistence_late_enable_rejects_live_identity_overlap() {
-        let workspace_root = unique_temp_dir("proposal-persistence-late-enable");
-        let mut app = AppComposition::new();
-        let live = save_proposal(ProposalId(1));
-        register_created(&app.proposal_coordinator, &live);
-
-        let error = app
-            .enable_proposal_audit_persistence(&workspace_root)
-            .expect_err("persistence enable after live proposals must fail closed");
-        assert!(matches!(
-            error,
-            AppCompositionError::Protocol(ProtocolError { code, .. })
-                if code == "proposal_observation_publication_conflict"
-        ));
-        assert!(
-            !workspace_root.join(".legion").exists(),
-            "rejected late enable must not bind or create the durability root"
-        );
-
-        fs::remove_dir_all(&workspace_root).expect("remove late-enable test workspace");
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn proposal_observation_retry_skips_orphan_without_blocking_published_batch() {
-        let recorder = legion_observability::InMemoryEventSink::new();
-        let fail_second = Arc::new(AtomicBool::new(true));
-        let sink = FailSecondAtomicBatchSink {
-            recorder: recorder.clone(),
-            fail_second: Arc::clone(&fail_second),
-            legacy_emit_calls: Arc::new(AtomicUsize::new(0)),
-            batch_emit_calls: Arc::new(AtomicUsize::new(0)),
-        };
-        let mut app = AppComposition::with_event_sink(SharedEventSink::new(sink));
-        let published = app
-            .register_delegated_task_proposals(vec![
-                delegated_output_from(save_proposal(ProposalId(100)), "published-first"),
-                delegated_output_from(save_proposal(ProposalId(101)), "published-second"),
-            ])
-            .expect("published batch remains Pending with a scheduled retry");
-        let first_published = app
-            .proposal_coordinator
-            .proposal(published[0].proposal_id)
-            .expect("published proposal");
-        assert!(matches!(
-            app.proposal_coordinator
-                .handle(ProposalRequest::Validate(first_published)),
-            Ok(ProposalResponse::Validated(_))
-        ));
-
-        let orphan_proposal = save_proposal(ProposalId(900));
-        let orphan_transition = ProposalLifecycleTransition {
-            proposal_id: orphan_proposal.proposal_id,
-            lifecycle_state: ProposalLifecycleState::Created,
-            timestamp: TimestampMillis(900),
-            principal: orphan_proposal.principal.clone(),
-            capability: orphan_proposal.capability.clone(),
-            correlation_id: orphan_proposal.correlation_id,
-            causality_id: CausalityId(uuid::Uuid::now_v7()),
-            diagnostics: Vec::new(),
-        };
-        let orphan_event = proposal_created_event_with_transition(
-            &orphan_proposal,
-            &orphan_transition,
-            EventSequence(900),
-        )
-        .expect("orphan event");
-        app.storage
-            .store_proposal_observation_batch(ProposalObservationBatch {
-                batch_id: "aaa-orphan".to_string(),
-                event_metadata: vec![event_metadata_record(&orphan_event)],
-                proposal_audits: vec![
-                    proposal_audit_record(&orphan_proposal, &orphan_transition)
-                        .expect("orphan audit"),
-                ],
-                events: vec![orphan_event],
-                schema_version: PROPOSAL_OBSERVATION_BATCH_SCHEMA_VERSION,
-            })
-            .expect("store unassociated orphan");
-
-        fail_second.store(false, Ordering::SeqCst);
-        let report = app
-            .retry_pending_proposal_observations()
-            .expect("retry all pending without head-of-line blocking");
-        assert_eq!(report.attempts.len(), 2);
-        assert_eq!(report.delivered_count, 1);
-        assert_eq!(report.pending_count, 1);
-        assert_eq!(report.attempts[0].batch_id, "aaa-orphan");
-        assert_eq!(
-            report.attempts[0].error_code.as_deref(),
-            Some("proposal_observation_publication_missing")
-        );
-        assert_eq!(
-            report.attempts[0].error_kind,
-            Some(legion_storage::ProposalObservationRetryErrorKind::Permanent)
-        );
-        assert_eq!(
-            report.attempts[1].delivery_state,
-            legion_storage::ProposalObservationDeliveryState::Delivered
-        );
-        assert_eq!(recorder.events().expect("published events").len(), 2);
-        let remaining = app
-            .storage
-            .pending_proposal_observation_batches()
-            .expect("remaining orphan");
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].batch.batch_id, "aaa-orphan");
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_replay_rejects_durable_lifecycle_advanced_beyond_created() {
-        let workspace_root = unique_temp_dir("delegated-observation-advanced");
-        let recorder = legion_observability::InMemoryEventSink::new();
-        let outputs = vec![delegated_output_from(
-            save_proposal(ProposalId(100)),
-            "advanced",
-        )];
-        {
-            let mut interrupted =
-                AppComposition::with_event_sink(SharedEventSink::new(recorder.clone()));
-            interrupted
-                .enable_proposal_audit_persistence(&workspace_root)
-                .expect("enable durable proposal observations");
-            interrupted.interrupt_after_proposal_observation_store = true;
-            interrupted
-                .register_delegated_task_proposals(outputs.clone())
-                .expect_err("inject post-commit interruption");
-            let pending = interrupted
-                .storage
-                .pending_proposal_observation_batches()
-                .expect("pending record");
-            let mut advanced = pending[0].batch.proposal_audits[0].clone();
-            advanced.lifecycle_state = ProposalLifecycleState::Applied;
-            advanced.timestamp = TimestampMillis(advanced.timestamp.0.saturating_add(1));
-            interrupted
-                .storage
-                .handle(StorageRepositoryRequest::SaveProposalAuditRecord(advanced))
-                .expect("persist advanced lifecycle audit");
-        }
-
-        let mut recovered = AppComposition::with_event_sink(SharedEventSink::new(recorder.clone()));
-        recovered
-            .enable_proposal_audit_persistence(&workspace_root)
-            .expect("reopen advanced durable state");
-        let error = recovered
-            .register_delegated_task_proposals(outputs)
-            .expect_err("advanced durable lifecycle must not regress to Created");
-        assert!(matches!(
-            error,
-            AppCompositionError::Protocol(ProtocolError { code, .. })
-                if code == "proposal_observation_replay_lifecycle_advanced"
-        ));
-        assert_eq!(
-            recovered.delegate_workflow.runtime_activation,
-            DelegatedTaskRuntimeActivationState::Failed
-        );
-        assert!(
-            recovered
-                .proposal_coordinator
-                .proposal_ledger_projection(TimestampMillis(99))
-                .rows
-                .is_empty()
-        );
-        assert!(
-            recorder
-                .events()
-                .expect("no regressed Created event")
-                .is_empty()
-        );
-        assert_eq!(
-            recovered
-                .storage
-                .pending_proposal_observation_batches()
-                .expect("advanced record stays pending")
-                .len(),
-            1
-        );
-
-        fs::remove_dir_all(&workspace_root).expect("remove advanced replay workspace");
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_registration_allocates_above_generic_persisted_audit_floor() {
-        let workspace_root = unique_temp_dir("delegated-generic-audit-floor");
-        let historical_id = ProposalId(7);
-        {
-            let mut first = AppComposition::new();
-            first
-                .enable_proposal_audit_persistence(&workspace_root)
-                .expect("enable generic proposal audit persistence");
-            let historical = save_proposal(historical_id);
-            let transition = ProposalLifecycleTransition {
-                proposal_id: historical_id,
-                lifecycle_state: ProposalLifecycleState::Created,
-                timestamp: TimestampMillis(7),
-                principal: historical.principal.clone(),
-                capability: historical.capability.clone(),
-                correlation_id: historical.correlation_id,
-                causality_id: CausalityId(uuid::Uuid::now_v7()),
-                diagnostics: Vec::new(),
-            };
-            let audit = proposal_audit_record(&historical, &transition)
-                .expect("build historical generic audit");
-            first
-                .storage
-                .handle(StorageRepositoryRequest::SaveProposalAuditRecord(audit))
-                .expect("persist generic proposal audit without an outbox batch");
-            assert!(
-                first
-                    .storage
-                    .proposal_observation_batches()
-                    .expect("no first-process outbox")
-                    .is_empty()
-            );
-        }
-
-        let recorder = legion_observability::InMemoryEventSink::new();
-        let mut recovered = AppComposition::with_event_sink(SharedEventSink::new(recorder.clone()));
-        recovered
-            .enable_proposal_audit_persistence(&workspace_root)
-            .expect("reload generic proposal audit floor");
-        assert_eq!(
-            recovered
-                .storage
-                .max_proposal_audit_id()
-                .expect("read generic proposal audit high-watermark"),
-            Some(historical_id)
-        );
-        assert_eq!(
-            recovered.proposal_coordinator.next_proposal_id.get(),
-            historical_id.0
-        );
-
-        let registered = recovered
-            .register_delegated_task_proposals(vec![delegated_output_from(
-                save_proposal(ProposalId(100)),
-                "after-generic-audit",
-            )])
-            .expect("delegated registration allocates above historical audit id");
-        assert_eq!(registered[0].proposal_id, ProposalId(8));
-        assert_eq!(recorder.events().expect("created event").len(), 1);
-
-        fs::remove_dir_all(&workspace_root).expect("remove generic audit floor workspace");
-    }
-
-    #[cfg(feature = "ai")]
-    #[test]
-    fn delegated_proposal_replays_exact_durable_registration_after_interruption() {
-        let workspace_root = unique_temp_dir("delegated-observation-replay");
-        let recorder = legion_observability::InMemoryEventSink::new();
-        let outputs = vec![
-            delegated_output_from(save_proposal(ProposalId(100)), "first"),
-            delegated_output_from(save_proposal(ProposalId(101)), "second"),
-        ];
-
-        let durable_batch = {
-            let mut interrupted =
-                AppComposition::with_event_sink(SharedEventSink::new(recorder.clone()));
-            interrupted
-                .enable_proposal_audit_persistence(&workspace_root)
-                .expect("enable durable proposal observations");
-            interrupted.interrupt_after_proposal_observation_store = true;
-            let error = interrupted
-                .register_delegated_task_proposals(outputs.clone())
-                .expect_err("inject post-commit interruption");
-            assert!(matches!(
-                error,
-                AppCompositionError::Protocol(ProtocolError { code, .. })
-                    if code == "proposal_observation_post_commit_interrupted"
-            ));
-            assert_eq!(
-                interrupted.delegate_workflow.runtime_activation,
-                DelegatedTaskRuntimeActivationState::Failed
-            );
-            assert!(
-                interrupted
-                    .proposal_coordinator
-                    .proposal_ledger_projection(TimestampMillis(99))
-                    .rows
-                    .is_empty()
-            );
-            let orphan = interrupted
-                .retry_pending_proposal_observations()
-                .expect("report unpublished durable batch");
-            assert_eq!(orphan.delivered_count, 0);
-            assert_eq!(orphan.pending_count, 1);
-            assert_eq!(
-                orphan.attempts[0].error_code.as_deref(),
-                Some("proposal_observation_publication_missing")
-            );
-            assert!(recorder.events().expect("no orphan events").is_empty());
-            interrupted
-                .storage
-                .pending_proposal_observation_batches()
-                .expect("durable pending batch")
-                .into_iter()
-                .next()
-                .expect("one pending batch")
-                .batch
-        };
-
-        let mut recovered = AppComposition::with_event_sink(SharedEventSink::new(recorder.clone()));
-        recovered
-            .enable_proposal_audit_persistence(&workspace_root)
-            .expect("reopen durable proposal observations");
-        let orphan = recovered
-            .retry_pending_proposal_observations()
-            .expect("restart must still refuse orphan delivery");
-        assert_eq!(orphan.pending_count, 1);
-        assert_eq!(
-            orphan.attempts[0].error_code.as_deref(),
-            Some("proposal_observation_publication_missing")
-        );
-        assert!(
-            recorder
-                .events()
-                .expect("no restart orphan events")
-                .is_empty()
-        );
-
-        let mut divergent = outputs.clone();
-        let ProposalPayload::SaveFile(save) = &mut divergent[0].payload else {
-            panic!("test payload must remain a save proposal");
-        };
-        save.file.canonical_path.0 = "C:/repo/file.txu".to_string();
-        let error = recovered
-            .register_delegated_task_proposals(divergent)
-            .expect_err("same logical identities with changed payload must fail closed");
-        assert!(matches!(
-            error,
-            AppCompositionError::Protocol(ProtocolError { code, .. })
-                if code == "proposal_observation_replay_mismatch"
-        ));
-        assert!(
-            recovered
-                .proposal_coordinator
-                .proposal_ledger_projection(TimestampMillis(99))
-                .rows
-                .is_empty()
-        );
-
-        let replayed = recovered
-            .register_delegated_task_proposals(outputs.clone())
-            .expect("exact caller-assisted replay");
-        assert_eq!(
-            replayed
-                .iter()
-                .map(|proposal| proposal.proposal_id)
-                .collect::<Vec<_>>(),
-            vec![ProposalId(1), ProposalId(2)]
-        );
-        assert_eq!(
-            recovered
-                .proposal_coordinator
-                .proposal_ledger_projection(TimestampMillis(99))
-                .rows
-                .len(),
-            2
-        );
-        let restored = recovered
-            .storage
-            .proposal_observation_batches()
-            .expect("restored outbox record");
-        assert_eq!(restored.len(), 1);
-        assert_eq!(
-            restored[0].delivery_state,
-            legion_storage::ProposalObservationDeliveryState::Delivered
-        );
-        assert_eq!(restored[0].batch.batch_id, durable_batch.batch_id);
-        assert_eq!(
-            restored[0]
-                .batch
-                .events
-                .iter()
-                .map(|event| (event.event_id, event.occurred_at, event.sequence))
-                .collect::<Vec<_>>(),
-            durable_batch
-                .events
-                .iter()
-                .map(|event| (event.event_id, event.occurred_at, event.sequence))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            serde_json::to_value(&restored[0].batch.proposal_audits)
-                .expect("serialize restored audits"),
-            serde_json::to_value(&durable_batch.proposal_audits)
-                .expect("serialize original audits")
-        );
-        assert_eq!(
-            recorder.events().expect("one atomic replay delivery").len(),
-            2
-        );
-
-        let next = recovered
-            .register_delegated_task_proposals(vec![delegated_output_from(
-                save_proposal(ProposalId(200)),
-                "after-restart",
-            )])
-            .expect("new registration allocates above durable floors");
-        assert_eq!(next[0].proposal_id, ProposalId(3));
-        let records = recovered
-            .storage
-            .proposal_observation_batches()
-            .expect("all observation records");
-        assert_eq!(records.len(), 2);
-        let newest_sequence = records
-            .iter()
-            .flat_map(|record| &record.batch.events)
-            .map(|event| event.sequence.0)
-            .max()
-            .expect("event sequence");
-        assert!(newest_sequence > durable_batch.events[1].sequence.0);
-
-        fs::remove_dir_all(&workspace_root).expect("remove replay test workspace");
-    }
-
-    #[test]
-    fn proposal_coordinator_builds_metadata_only_ledger_projection() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let save = save_proposal(ProposalId(21));
-        let terminal = proposal_with(ProposalId(22), "terminal.spawn", terminal_payload());
-        register_created(&coordinator, &save);
-        register_created(&coordinator, &terminal);
-
-        let ledger = coordinator.proposal_ledger_projection(TimestampMillis(123));
-        assert_eq!(ledger.rows.len(), 2);
-        assert_eq!(ledger.selected_proposal_id, Some(ProposalId(22)));
-        assert!(
-            ledger
-                .redaction_hints
-                .contains(&RedactionHint::MetadataOnly)
-        );
-
-        let save_row = ledger
-            .rows
-            .iter()
-            .find(|row| row.proposal_id == save.proposal_id)
-            .expect("save row");
-        assert_eq!(
-            save_row.payload_kind,
-            legion_protocol::ProposalPayloadKind::SaveFile
-        );
-        assert_eq!(save_row.workspace_id, Some(WorkspaceId(1)));
-        assert!(save_row.diff_summary.full_source_redacted);
-        assert_eq!(
-            save_row.privacy_label,
-            legion_protocol::ProposalPrivacyLabel::WorkspaceMetadata
-        );
-
-        let terminal_row = ledger
-            .rows
-            .iter()
-            .find(|row| row.proposal_id == terminal.proposal_id)
-            .expect("terminal row");
-        assert_eq!(
-            terminal_row.risk_label,
-            legion_protocol::ProposalRiskLabel::High
-        );
-        assert_eq!(
-            terminal_row.rollback,
-            legion_protocol::ProposalRollbackAvailability::Unavailable
-        );
-        assert_eq!(
-            terminal_row.diff_summary.kind,
-            legion_protocol::ProposalDiffSummaryKind::TerminalMetadata
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_allows_validated_denied_path() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(11));
-        register_created(&coordinator, &proposal);
-
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Validate(proposal.clone())),
-            Ok(ProposalResponse::Validated(_))
-        ));
-        let transition = coordinator
-            .record_transition_with_diagnostics(
-                &proposal,
-                ProposalLifecycleState::Denied,
-                "validate",
-                vec![AppProposalCoordinator::diagnostic(
-                    "proposal.validation_denied",
-                    "test validation denial",
-                )],
-            )
-            .expect("validated proposal can deny");
-        assert_eq!(transition.lifecycle_state, ProposalLifecycleState::Denied);
-        assert!(
-            transition
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "proposal.validation_denied")
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_allows_approved_stale_conflict_and_failed_paths() {
-        for (proposal_id, terminal_state) in [
-            (ProposalId(12), ProposalLifecycleState::Stale),
-            (ProposalId(13), ProposalLifecycleState::Conflict),
-            (ProposalId(14), ProposalLifecycleState::Failed),
-        ] {
-            let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-            let proposal = save_proposal(proposal_id);
-            register_created(&coordinator, &proposal);
-            assert!(matches!(
-                coordinator.handle(ProposalRequest::Validate(proposal.clone())),
-                Ok(ProposalResponse::Validated(_))
-            ));
-            assert!(matches!(
-                coordinator.handle(ProposalRequest::Preview(proposal.clone())),
-                Ok(ProposalResponse::Previewed { .. })
-            ));
-            assert!(matches!(
-                coordinator.handle(ProposalRequest::Approve(command(
-                    proposal.proposal_id,
-                    legion_protocol::ProposalLifecycleAction::Approve,
-                ))),
-                Ok(ProposalResponse::Approved(_))
-            ));
-
-            let transition = coordinator
-                .record_transition_with_diagnostics(
-                    &proposal,
-                    terminal_state,
-                    "apply",
-                    vec![AppProposalCoordinator::diagnostic(
-                        "proposal.apply_terminal",
-                        format!("test {terminal_state:?} terminal transition"),
-                    )],
-                )
-                .expect("approved proposal can enter terminal apply state");
-            assert_eq!(transition.lifecycle_state, terminal_state);
-            assert!(
-                transition
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == "proposal.apply_terminal")
-            );
-        }
-    }
-
-    #[test]
-    fn proposal_coordinator_rejects_created_to_applied_without_state_mutation() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(15));
-        register_created(&coordinator, &proposal);
-
-        let response = coordinator
-            .record_transition(&proposal, ProposalLifecycleState::Applied, "apply")
-            .expect_err("created proposal cannot apply directly");
-        assert_transition_diagnostic(&response, "proposal.invalid_lifecycle_transition");
-        assert_eq!(
-            coordinator.current_lifecycle_state(proposal.proposal_id),
-            Some(ProposalLifecycleState::Created)
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_rejects_expired_lifecycle_before_validation() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let mut proposal = save_proposal(ProposalId(16));
-        proposal.expires_at = Some(TimestampMillis(1));
-        register_created(&coordinator, &proposal);
-
-        let response = coordinator
-            .handle(ProposalRequest::Validate(proposal.clone()))
-            .expect("expired validate response");
-        let ProposalResponse::Rejected { reason, .. } = &response else {
-            panic!("expired proposal should reject, got {response:?}");
-        };
-        assert_eq!(*reason, ProposalRejectionReason::Expired);
-        assert_transition_diagnostic(&response, "proposal.expired");
-        assert_eq!(
-            coordinator.current_lifecycle_state(proposal.proposal_id),
-            Some(ProposalLifecycleState::Rejected)
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_rejects_zero_correlation_or_nil_causality_context() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let mut proposal = save_proposal(ProposalId(17));
-        proposal.correlation_id = CorrelationId(0);
-        coordinator.register_lifecycle_context(
-            proposal.proposal_id,
-            EventContext {
-                correlation_id: CorrelationId(0),
-                causality_id: CausalityId(uuid::Uuid::nil()),
-            },
-        );
-
-        let response = coordinator.created_response(&proposal);
-        assert_transition_diagnostic(&response, "proposal.invalid_lifecycle_context");
-        assert_transition_diagnostic(&response, "proposal.zero_correlation_id");
-        assert_transition_diagnostic(&response, "proposal.lifecycle_context_nil_causality_id");
-        assert_eq!(
-            coordinator.current_lifecycle_state(proposal.proposal_id),
-            None
-        );
-
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(18));
-        register_created(&coordinator, &proposal);
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Validate(proposal.clone())),
-            Ok(ProposalResponse::Validated(_))
-        ));
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Preview(proposal.clone())),
-            Ok(ProposalResponse::Previewed { .. })
-        ));
-        let mut approve = command(
-            proposal.proposal_id,
-            legion_protocol::ProposalLifecycleAction::Approve,
-        );
-        approve.correlation_id = CorrelationId(0);
-        approve.causality_id = CausalityId(uuid::Uuid::nil());
-
-        let response = coordinator
-            .handle(ProposalRequest::Approve(approve))
-            .expect("invalid command context response");
-        assert_transition_diagnostic(&response, "proposal.command_zero_correlation_id");
-        assert_transition_diagnostic(&response, "proposal.command_nil_causality_id");
-        assert_eq!(
-            coordinator.current_lifecycle_state(proposal.proposal_id),
-            Some(ProposalLifecycleState::Previewed)
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_rejects_command_without_lifecycle_context() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let response = coordinator
-            .handle(ProposalRequest::Approve(command(
-                ProposalId(99),
-                legion_protocol::ProposalLifecycleAction::Approve,
-            )))
-            .expect("approve response");
-
-        let ProposalResponse::Rejected { transition, reason } = response else {
-            panic!("unknown lifecycle command should reject");
-        };
-        assert_eq!(reason, ProposalRejectionReason::ValidationFailed);
-        assert!(
-            transition
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "proposal.missing_lifecycle_context")
-        );
-    }
-
-    #[test]
-    fn proposal_coordinator_denies_registered_text_edit_missing_preconditions() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = text_edit_proposal(ProposalId(3));
-        coordinator
-            .register_lifecycle_context(proposal.proposal_id, EventContext::new(CorrelationId(1)));
-        assert!(matches!(
-            coordinator.created_response(&proposal),
-            ProposalResponse::Created(_)
-        ));
-
-        let response = coordinator
-            .handle(ProposalRequest::Validate(proposal))
-            .expect("validate response");
-        let ProposalResponse::Denied { transition, reason } = response else {
-            panic!("registered text edit with missing preconditions should deny");
-        };
-        assert_eq!(reason, ProposalDenialReason::PolicyDenied);
-        assert!(transition.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "proposal.missing_buffer_precondition"
-                || diagnostic.code == "proposal.missing_file_precondition"
-        }));
-    }
-
-    #[test]
-    fn proposal_coordinator_rejects_stateless_generic_save_apply() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let proposal = save_proposal(ProposalId(2));
-        coordinator
-            .register_lifecycle_context(proposal.proposal_id, EventContext::new(CorrelationId(1)));
-        assert!(matches!(
-            coordinator.created_response(&proposal),
-            ProposalResponse::Created(_)
-        ));
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Validate(proposal.clone())),
-            Ok(ProposalResponse::Validated(_))
-        ));
-        assert!(matches!(
-            coordinator.handle(ProposalRequest::Preview(proposal.clone())),
-            Ok(ProposalResponse::Previewed { .. })
-        ));
-
-        let response = coordinator
-            .handle(ProposalRequest::Apply(proposal))
-            .expect("apply response");
-        let ProposalResponse::Rejected { transition, reason } = response else {
-            panic!("stateless coordinator save apply should remain denied");
-        };
-        assert_eq!(reason, ProposalRejectionReason::Unsupported);
-        assert!(transition.diagnostics.iter().any(|diagnostic| {
-            diagnostic
-                .message
-                .contains("use AppComposition::save_active_buffer")
-        }));
-    }
-
-    #[test]
-    fn proposal_coordinator_discovers_targets_for_every_payload_variant() {
-        let file = test_file(10, "C:/repo/file.rs");
-        let rename_destination = CanonicalPath("C:/repo/renamed.rs".to_string());
-        let cases = vec![
-            (
-                ProposalPayload::TextEdit(legion_protocol::TextEditProposal {
-                    file_id: FileId(10),
-                    edits: legion_protocol::EditBatch {
-                        edits: vec![legion_protocol::TextEdit {
-                            range: legion_protocol::TextRange::new(
-                                legion_protocol::TextOffset::byte(0),
-                                legion_protocol::TextOffset::byte(4),
-                            ),
-                            replacement: "edit".to_string(),
-                        }],
-                    },
-                }),
-                vec![ProposalTargetKind::OpenBuffer],
-            ),
-            (
-                ProposalPayload::CreateFile(legion_protocol::CreateFileProposal {
-                    path: CanonicalPath("C:/repo/new.rs".to_string()),
-                    initial_content: None,
-                }),
-                vec![ProposalTargetKind::PathOnly],
-            ),
-            (
-                ProposalPayload::DeleteFile(legion_protocol::DeleteFileProposal {
-                    file: file.clone(),
-                }),
-                vec![ProposalTargetKind::ClosedFile],
-            ),
-            (
-                ProposalPayload::RenameFile(legion_protocol::RenameFileProposal {
-                    file: file.clone(),
-                    destination: rename_destination,
-                }),
-                vec![ProposalTargetKind::ClosedFile, ProposalTargetKind::PathOnly],
-            ),
-            (
-                save_proposal(ProposalId(40)).payload,
-                vec![ProposalTargetKind::OpenBuffer],
-            ),
-            (
-                ProposalPayload::FormatFile(legion_protocol::FormatFileProposal {
-                    file: file.clone(),
-                    snapshot_id: legion_protocol::SnapshotId(1),
-                    options: HashMap::new(),
-                }),
-                vec![ProposalTargetKind::ClosedFile],
-            ),
-            (
-                ProposalPayload::CodeAction(legion_protocol::CodeActionProposal {
-                    file: file.clone(),
-                    title: "fix".to_string(),
-                    edits: vec![legion_protocol::TextEdit {
-                        range: legion_protocol::TextRange::new(
-                            legion_protocol::TextOffset::byte(1),
-                            legion_protocol::TextOffset::byte(2),
-                        ),
-                        replacement: "x".to_string(),
-                    }],
-                }),
-                vec![ProposalTargetKind::ClosedFile],
-            ),
-            (workspace_edit_payload(), vec![ProposalTargetKind::PathOnly]),
-            (
-                terminal_payload(),
-                vec![ProposalTargetKind::TerminalSession],
-            ),
-            (
-                ProposalPayload::Batch(BatchProposalPayload {
-                    batch_id: uuid::Uuid::now_v7(),
-                    atomicity: ProposalBatchAtomicity::OrderedNonAtomic,
-                    rollback_policy: ProposalBatchRollbackPolicy::NotSupported,
-                    target_coverage: ProposalTargetCoverage {
-                        coverage_kind: ProposalTargetCoverageKind::Complete,
-                        targets: Vec::new(),
-                        omitted_target_count: 0,
-                        redaction_hints: Vec::new(),
-                    },
-                    items: vec![ProposalBatchItem {
-                        order: 0,
-                        item_id: "create".to_string(),
-                        payload: Box::new(ProposalPayload::CreateFile(
-                            legion_protocol::CreateFileProposal {
-                                path: CanonicalPath("C:/repo/batch.rs".to_string()),
-                                initial_content: None,
-                            },
-                        )),
-                        target_ids: Vec::new(),
-                        required_capability: CapabilityId("fs.write".to_string()),
-                        rollback_step_ids: Vec::new(),
-                    }],
-                    dependency_edges: Vec::new(),
-                    rollback_steps: Vec::new(),
-                    partial_failures: Vec::new(),
-                    preview_warnings: Vec::new(),
-                    schema_version: 1,
-                }),
-                vec![ProposalTargetKind::PathOnly],
-            ),
-        ];
-
-        for (payload, expected_kinds) in cases {
-            let coverage = AppProposalCoordinator::affected_target_coverage_for_payload(&payload);
-            let actual_kinds = coverage
-                .targets
-                .iter()
-                .map(|target| target.kind)
-                .collect::<Vec<_>>();
-            assert_eq!(coverage.coverage_kind, ProposalTargetCoverageKind::Complete);
-            assert_eq!(coverage.omitted_target_count, 0);
-            assert_eq!(actual_kinds, expected_kinds, "payload {payload:?}");
-        }
-    }
-
-    #[test]
-    fn proposal_coordinator_denies_duplicate_ambiguous_and_unsupported_targets() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let file = test_file(20, "C:/repo/dup.rs");
-        let mut proposal = proposal_with(
-            ProposalId(41),
-            "fs.write",
-            ProposalPayload::WorkspaceEdit(legion_protocol::WorkspaceEditProposalPayload {
-                workspace_id: WorkspaceId(1),
-                edit_id: uuid::Uuid::now_v7(),
-                title: "duplicate targets".to_string(),
-                source: legion_protocol::WorkspaceEditSourceKind::User,
-                target_coverage: ProposalTargetCoverage {
-                    coverage_kind: ProposalTargetCoverageKind::Complete,
-                    targets: vec![
-                        AppProposalCoordinator::file_identity_target(
-                            "dup".to_string(),
-                            ProposalTargetKind::ClosedFile,
-                            &file,
-                            None,
-                            Vec::new(),
-                        ),
-                        AppProposalCoordinator::file_identity_target(
-                            "dup".to_string(),
-                            ProposalTargetKind::ClosedFile,
-                            &file,
-                            None,
-                            Vec::new(),
-                        ),
-                    ],
-                    omitted_target_count: 0,
-                    redaction_hints: Vec::new(),
-                },
-                file_edits: vec![legion_protocol::WorkspaceTextEdit {
-                    file,
-                    buffer_id: None,
-                    edits: legion_protocol::EditBatch { edits: Vec::new() },
-                    preconditions: complete_file_preconditions(),
-                }],
-                file_operations: Vec::new(),
-                required_capability: CapabilityId("fs.write".to_string()),
-                diagnostics: Vec::new(),
-                schema_version: 1,
-            }),
-        );
-        register_created(&coordinator, &proposal);
-
-        let response = coordinator
-            .handle(ProposalRequest::Validate(proposal.clone()))
-            .expect("validate duplicate targets");
-        let ProposalResponse::Denied { transition, reason } = response else {
-            panic!("duplicate targets should deny, got {response:?}");
-        };
-        assert_eq!(reason, ProposalDenialReason::PolicyDenied);
-        assert!(
-            transition
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "proposal.duplicate_target")
-        );
-
-        proposal.proposal_id = ProposalId(42);
-        let ProposalPayload::WorkspaceEdit(payload) = &mut proposal.payload else {
-            panic!("expected workspace-edit payload");
-        };
-        payload.target_coverage.targets = vec![ProposalAffectedTarget {
-            target_id: "ambiguous".to_string(),
-            kind: ProposalTargetKind::Plugin,
-            workspace_id: Some(WorkspaceId(1)),
-            file_id: Some(FileId(20)),
-            buffer_id: None,
-            path: None,
-            terminal_session_id: None,
-            plugin_id: Some(legion_protocol::PluginId(7)),
-            remote_authority: None,
-            collaboration_session_id: None,
-            byte_ranges: Vec::new(),
-            redaction_hints: Vec::new(),
-        }];
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        register_created(&coordinator, &proposal);
-        let response = coordinator
-            .handle(ProposalRequest::Validate(proposal))
-            .expect("validate ambiguous target");
-        assert_transition_diagnostic(&response, "proposal.ambiguous_target");
-        assert_transition_diagnostic(&response, "proposal.unsupported_target_kind");
-    }
-
-    #[test]
-    fn proposal_coordinator_denies_nested_batch_duplicates_and_unsupported_items() {
-        let coordinator = AppProposalCoordinator::new(SharedEventSink::default());
-        let create_path = CanonicalPath("C:/repo/batch-create.rs".to_string());
-        let duplicate_target = AppProposalCoordinator::path_target(
-            "target-create".to_string(),
-            ProposalTargetKind::PathOnly,
-            create_path.clone(),
-            Vec::new(),
-        );
-        let proposal = proposal_with(
-            ProposalId(43),
-            "fs.write",
-            ProposalPayload::Batch(BatchProposalPayload {
-                batch_id: uuid::Uuid::now_v7(),
-                atomicity: ProposalBatchAtomicity::OrderedNonAtomic,
-                rollback_policy: ProposalBatchRollbackPolicy::NotSupported,
-                target_coverage: ProposalTargetCoverage {
-                    coverage_kind: ProposalTargetCoverageKind::Complete,
-                    targets: vec![duplicate_target.clone(), duplicate_target],
-                    omitted_target_count: 0,
-                    redaction_hints: Vec::new(),
-                },
-                items: vec![
-                    ProposalBatchItem {
-                        order: 0,
-                        item_id: "create".to_string(),
-                        payload: Box::new(ProposalPayload::CreateFile(
-                            legion_protocol::CreateFileProposal {
-                                path: create_path,
-                                initial_content: None,
-                            },
-                        )),
-                        target_ids: vec!["target-create".to_string(), "target-create".to_string()],
-                        required_capability: CapabilityId("fs.write".to_string()),
-                        rollback_step_ids: Vec::new(),
-                    },
-                    ProposalBatchItem {
-                        order: 1,
-                        item_id: "terminal".to_string(),
-                        payload: Box::new(terminal_payload()),
-                        target_ids: vec!["target-missing".to_string()],
-                        required_capability: CapabilityId("terminal.execute".to_string()),
-                        rollback_step_ids: Vec::new(),
-                    },
-                ],
-                dependency_edges: Vec::new(),
-                rollback_steps: Vec::new(),
-                partial_failures: Vec::new(),
-                preview_warnings: Vec::new(),
-                schema_version: 1,
-            }),
-        );
-        register_created(&coordinator, &proposal);
-
-        let response = coordinator
-            .handle(ProposalRequest::Validate(proposal))
-            .expect("validate batch");
-        let ProposalResponse::Denied { transition, reason } = response else {
-            panic!("invalid batch should deny, got {response:?}");
-        };
-        assert_eq!(reason, ProposalDenialReason::PolicyDenied);
-        for expected in [
-            "proposal.duplicate_target",
-            "proposal.duplicate_batch_item_target",
-            "proposal.unknown_batch_target",
-            "proposal.unsupported_batch_item_route",
-        ] {
-            assert!(
-                transition
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == expected),
-                "missing {expected}: {:?}",
-                transition.diagnostics
-            );
-        }
-    }
-
-    #[test]
-    fn paths_equivalent_matches_real_file_with_alternate_separators() {
-        let dir = std::env::temp_dir().join(format!(
-            "legion_app_paths_equivalent_{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file_path = dir.join("test.txt");
-        std::fs::write(&file_path, "hello").unwrap();
-
-        let canonical = file_path.to_string_lossy();
-        let forward = canonical.replace('\\', "/");
-        let backward = canonical.replace('/', "\\");
-
-        // On the current platform, at least one alternate form should be
-        // equivalent to the canonical form via Path comparison or canonicalize.
-        assert!(
-            AppComposition::paths_equivalent(&canonical, &forward)
-                || AppComposition::paths_equivalent(&canonical, &backward),
-            "paths_equivalent should match a real file with alternate separators"
-        );
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// SEARCH.06: frequency bonus lifts heavily-used palette commands.
-    ///
-    /// "Preferences: Theme Dark" and "Preferences: Theme Light" score
-    /// identically for query "preferences theme". The alphabetical
-    /// tiebreaker puts Dark first. After recording 20 usages for Light, its
-    /// +100 frequency bonus lifts it within the canonical View group.
-    #[test]
-    fn palette_usage_frequency_bonus_lifts_heavily_used_command() {
-        let workspace_id = WorkspaceId(42);
-        let mut app = AppComposition::new();
-        // Give the composition a workspace so `workspace_id()` returns `Some`.
-        app.active_documents.opened_workspace = Some(WorkspaceOpened {
-            workspace_id,
-            root_id: legion_protocol::WorkspaceRootId(1),
-            generation: WorkspaceGeneration(1),
-            snapshot_id: legion_protocol::SnapshotId(0),
-            correlation_id: CorrelationId(0),
-        });
-
-        let baseline = app.palette_command_results("preferences theme");
-        let light_pos_base = baseline
-            .iter()
-            .position(|r| r.id == "command:preferences-theme-light")
-            .expect("Theme Light should match 'preferences theme'");
-        let dark_pos_base = baseline
-            .iter()
-            .position(|r| r.id == "command:preferences-theme-dark")
-            .expect("Theme Dark should match 'preferences theme'");
-        assert!(
-            dark_pos_base <= light_pos_base,
-            "Theme Dark should rank at least as high as Theme Light without a frequency boost"
-        );
-
-        // Record 20 usages for Theme Light -> +100 frequency bonus.
-        for _ in 0..20 {
-            app.palette_usage
-                .record_usage(workspace_id, "command:preferences-theme-light");
-        }
-
-        let boosted = app.palette_command_results("preferences theme");
-        let light_pos_boosted = boosted
-            .iter()
-            .position(|r| r.id == "command:preferences-theme-light")
-            .expect("Theme Light should still match after boost");
-        let dark_pos_boosted = boosted
-            .iter()
-            .position(|r| r.id == "command:preferences-theme-dark")
-            .expect("Theme Dark should still match after boost");
-
-        assert!(
-            light_pos_boosted < dark_pos_boosted,
-            "Theme Light (20 usages, +100 frequency bonus) must outrank Theme Dark within View"
-        );
-    }
-
-    #[test]
-    fn cloud_lane_endpoint_parses_bracketed_ipv6_without_port() {
-        let target =
-            parse_cloud_lane_endpoint("https://[::1]").expect("bracketed IPv6 defaults to HTTPS");
-
-        assert_eq!(target.scheme, "https");
-        assert_eq!(target.host, "[::1]");
-        assert_eq!(target.port, Some(443));
-    }
-
-    #[test]
-    fn cloud_lane_endpoint_parses_bracketed_ipv6_with_port() {
-        let target =
-            parse_cloud_lane_endpoint("https://[::1]:9443/path").expect("bracketed IPv6 with port");
-
-        assert_eq!(target.scheme, "https");
-        assert_eq!(target.host, "[::1]");
-        assert_eq!(target.port, Some(9443));
-    }
-}
+#[path = "app_composition_tests.rs"]
+mod tests;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PKT-LSP-C T1: Explicit session start — TDD tests
@@ -35514,7 +34944,8 @@ mod lsp_explicit_start_tests {
     }
 
     /// After a Refused session, dispatching `LspRestartSession` must reset
-    /// state and attempt a new start (ending in Refused again if no Cargo.toml).
+    /// state and attempt a new start (ending in preparation failure without
+    /// explicit language-server configuration).
     /// PKT-LSP-C T1/T3.
     #[test]
     fn t1_restart_resets_refused_session() {
@@ -35532,28 +34963,21 @@ mod lsp_explicit_start_tests {
         let _ = app.open_file(rs_path.to_string_lossy().as_ref());
         assert!(app.lsp_is_idle_for_test(), "file open must not start LSP");
 
-        // Explicitly approve the initial start; it refuses because this
-        // workspace has no Cargo.toml.
+        // Explicitly request the initial start; it leaves Idle and prepares a
+        // visible missing-configuration refusal without implicit startup.
         let result = app.dispatch_ui_intent(CommandDispatchIntent::LspStartSession);
         assert!(result.is_ok(), "start dispatch must succeed");
         assert!(
             !app.lsp_is_idle_for_test(),
             "should have left Idle after explicit start"
         );
-        assert!(
-            !app.lsp_is_starting_for_test(),
-            "should not be Starting without Cargo.toml"
-        );
-        assert!(
-            app.lsp_failure_reason_for_test().is_some(),
-            "should have a failure reason (Refused: no Cargo.toml)"
-        );
+        assert!(app.lsp_is_starting_for_test() || app.lsp_failure_reason_for_test().is_some());
 
         // Restart via the palette command dispatch path.
         let result = app.dispatch_ui_intent(CommandDispatchIntent::LspRestartSession);
         assert!(result.is_ok(), "restart dispatch must succeed");
-        // Session was reset to Idle and re-attempted immediately; without
-        // Cargo.toml it ends up Refused again — still "not Idle".
+        // Session was reset and re-attempted with the same missing
+        // configuration; it remains active while preparation resolves.
         assert!(
             !app.lsp_is_idle_for_test(),
             "session must have re-attempted (Refused again) after restart"

@@ -808,6 +808,7 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
             utf16_offset: Some(10),
         },
         cursors: Vec::new(),
+        cursor_affinities: Vec::new(),
         scroll: ViewportScroll {
             top_line: 120,
             left_column: 4,
@@ -839,6 +840,8 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
         line_metrics: vec![ViewportLineMetric {
             byte_length: 8192,
             utf16_length: 8192,
+            line_start_byte_offset: Some(4096),
+            line_start_utf16_offset: Some(4096),
             line_ending_width: 1,
             exact: false,
         }],
@@ -877,6 +880,7 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
         ],
         "cursor": {"line": 1, "character": 4, "byte_offset": 12, "utf16_offset": 10},
         "cursors": [],
+        "cursor_affinities": [],
         "scroll": {"top_line": 120, "left_column": 4},
         "dimensions": {"width_px": 1280, "height_px": 720},
         "line_wrapping_policy": "viewport",
@@ -902,6 +906,8 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
             {
                 "byte_length": 8192,
                 "utf16_length": 8192,
+                "line_start_byte_offset": 4096,
+                "line_start_utf16_offset": 4096,
                 "line_ending_width": 1,
                 "exact": false
             }
@@ -966,12 +972,39 @@ fn dto_contracts_viewport_projection_golden_and_required_fields() {
     );
     assert_eq!(legacy_roundtrip.wrap_column, None);
     assert!(legacy_roundtrip.large_file_status.is_none());
+    assert!(legacy_roundtrip.cursor_affinities.is_empty());
 
     let mut missing_workspace = value.clone();
     remove_required_field::<ViewportProjection>(&mut missing_workspace, "workspace_id");
 
     let mut missing_schema = value;
     remove_required_field::<ViewportProjection>(&mut missing_schema, "schema_version");
+}
+
+#[test]
+fn viewport_line_metric_origins_are_optional_for_legacy_payloads() {
+    let legacy = json!({
+        "byte_length": 8,
+        "utf16_length": 5,
+        "line_ending_width": 2,
+        "exact": true
+    });
+    let decoded: ViewportLineMetric = serde_json::from_value(legacy).expect("legacy metric");
+    assert_eq!(decoded.line_start_byte_offset, None);
+    assert_eq!(decoded.line_start_utf16_offset, None);
+
+    let current = ViewportLineMetric {
+        byte_length: 8,
+        utf16_length: 5,
+        line_start_byte_offset: Some(13),
+        line_start_utf16_offset: Some(9),
+        line_ending_width: 2,
+        exact: true,
+    };
+    let roundtrip: ViewportLineMetric =
+        serde_json::from_value(serde_json::to_value(current).expect("serialize current metric"))
+            .expect("deserialize current metric");
+    assert_eq!(roundtrip, current);
 }
 
 #[test]
@@ -3996,6 +4029,7 @@ fn dto_contracts_session_record_schema_golden() {
             schema_version: 1,
         }],
         workbench_settings: WorkbenchSettingsRecord::default(),
+        language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
         memory_snapshot_json: None,
         dirty_indicators: vec![SessionDirtyIndicator {
             buffer_id: BufferId(22),
@@ -4085,6 +4119,10 @@ fn dto_contracts_session_record_schema_golden() {
                 "schema_version": 1
             },
             "schema_version": 1
+        },
+        "language_toolchain_settings": {
+            "schema_version": 1,
+            "typescript": null
         },
         "dirty_indicators": [{
             "buffer_id": 22,
@@ -4788,6 +4826,7 @@ fn dto_contracts_text_coordinate_and_viewport_projection_golden() {
             utf16_offset: Some(18),
         },
         cursors: Vec::new(),
+        cursor_affinities: Vec::new(),
         scroll: ViewportScroll {
             top_line: 1,
             left_column: 0,
@@ -4825,6 +4864,7 @@ fn dto_contracts_text_coordinate_and_viewport_projection_golden() {
         }],
         "cursor": {"line": 2, "character": 4, "byte_offset": 20, "utf16_offset": 18},
         "cursors": [],
+        "cursor_affinities": [],
         "scroll": {"top_line": 1, "left_column": 0},
         "dimensions": {"width_px": 1280, "height_px": 720},
         "line_wrapping_policy": "off",
@@ -9169,6 +9209,7 @@ fn dto_contracts_phase4_runtime_surfaces_are_protocol_mediated() {
 #[test]
 fn language_terminal_projection_roundtrips_language_surface() {
     let projection = LanguageToolingProjection {
+        typescript_toolchain: TypeScriptToolchainProjection::default(),
         workspace_id: Some(WorkspaceId(11)),
         buffer_id: Some(BufferId(22)),
         file_id: Some(FileId(33)),
@@ -9195,6 +9236,19 @@ fn language_terminal_projection_roundtrips_language_surface() {
             source_label: Some("lexical-index".to_string()),
             proposal_id: Some(ProposalId(700)),
             redaction_hints: vec![RedactionHint::MetadataOnly],
+            schema_version: 1,
+        }],
+        code_action_candidates: vec![LanguageCodeActionProjection {
+            response_id: "response-1".to_string(),
+            action_id: "code-action:response-1:0".to_string(),
+            title: "Add missing import".to_string(),
+            kind: Some("quickfix".to_string()),
+            is_preferred: true,
+            disabled_reason: None,
+            has_edit: true,
+            has_command: false,
+            buffer_id: Some(BufferId(22)),
+            snapshot_id: Some(SnapshotId(44)),
             schema_version: 1,
         }],
         breadcrumbs: vec![LanguageBreadcrumbProjection {
@@ -9396,6 +9450,26 @@ fn language_terminal_projection_default_surfaces_are_inert() {
     assert!(terminal.active_session_id.is_none());
     assert!(terminal.output_rows.is_empty());
     assert_eq!(terminal.redaction_hints, vec![RedactionHint::MetadataOnly]);
+}
+
+#[test]
+fn language_code_action_projection_deserializes_without_optional_fields() {
+    let parsed: LanguageCodeActionProjection = serde_json::from_str(
+        r#"{
+            "response_id": "response-1",
+            "action_id": "action-1",
+            "title": "Add missing import",
+            "is_preferred": false,
+            "has_edit": true,
+            "has_command": false,
+            "schema_version": 1
+        }"#,
+    )
+    .expect("optional code-action fields default when omitted");
+    assert_eq!(parsed.kind, None);
+    assert_eq!(parsed.disabled_reason, None);
+    assert_eq!(parsed.buffer_id, None);
+    assert_eq!(parsed.snapshot_id, None);
 }
 
 #[test]

@@ -88,6 +88,63 @@ Phase 3 LSP runtime work will use a supervised, cancellable, backpressured worke
 - This ADR does not require saves or editor input to wait for LSP state.
 - This ADR does not activate terminal, plugin, AI agent, collaboration, or remote runtime surfaces.
 
+## 2026-09-06 implementation status note
+
+The language lifecycle remains snapshot/version keyed: lazy document work must
+be cancelled or rejected when its source identity is stale, while restart,
+failure, and unavailable states preserve the editor buffer and do not make an
+editor transaction wait for synchronization acknowledgement. The deferred
+document-sync app coverage is recorded by `cargo test -p legion-app --lib`
+(334 passed, 0 failed), including
+`language::lsp_reads::document_sync_tests::repeated_offline_close_reopen_keeps_one_uri_ledger_bounded`,
+`language::lsp_reads::diagnostic_lifecycle_tests::diagnostic_batches_require_current_snapshot_and_reopened_buffer_identity`,
+and `language::app_lsp::transport_death_tests::transport_death_worker_reports_and_exits`.
+This note records the lifecycle contract and does not claim a packaged
+TypeScript or JavaScript workflow.
+
+## 2026-09-06 S2 implementation evidence
+
+The explicit TypeScript native slice has a focused 4-test result (16.28s) from
+`LEGION_TEST_NODE_RUNTIME=<approved-local-node> cargo test -p legion-app
+--test typescript_app_startup -- --ignored --nocapture`: lazy startup/read,
+restart preservation, reviewable rename/approve/apply, formatting through save,
+and rename conflict rejection without partial apply. The route admits at most
+32 write IDs and uses a shared bounded wait/queue so synchronization does not
+drop admitted intent. Results remain bound to authoritative buffer, snapshot,
+version, and workspace-fingerprint context; fresh fingerprint preflight is
+required before disk mutation. Command execution and LSP `applyEdit` app
+authority remain in progress. The focused 16-test write suite, 15-test action
+suite, and 3-test desktop suite predate the latest generalized-queue changes
+and are scoped implementation evidence, not broad-gate or native GUI
+acceptance. The latest component evidence is bounded by the current root runs:
+`s2-app-lib-root-r20.log` reports 418 passed and 0 failed in 0.55s after
+20.68s of compilation; `s2-lsp-composition-root-r2.log` remains 22 passed and
+0 failed. The real TypeScript missing-import slice passes in
+`s2-typescript-codeaction-root-r1.log`, and the native matrix
+`s2-typescript-native-root-r23.log` reports 5 passed and 0 failed in 18.13s
+after 36.23s of compilation. The earlier r22 4-of-5 result is historical; it
+was repaired with an actual workspace synchronization barrier, with the native
+fixture unchanged and no completion warmup. The deterministic once-issued UI
+rename ordering regression is included. Per-attempt cancellation, retry, the
+32-write cap, and resolved-mixed-action tests now pass; initial mixed-command
+queue/backpressure and CAS callback coverage are covered by the app unit suite.
+The Organize Imports command branch remains incomplete, and native GUI
+qualification is unverified.
+These results establish component contracts only and do not promote
+full-product readiness.
+
 ## Exit condition
 
 This ADR is satisfied by the Phase 3 implementation evidence in [`predictive-semantic-fabric.md`](../evidence/phase-3/predictive-semantic-fabric.md:1), which demonstrates metadata-only supervision contracts, cancellable operations, bounded and stale-safe DTO flows, timeout/degraded/unavailable result states, normalized DTO flow for diagnostics, completion, hover, definition, reference, rename, formatting, semantic tokens, and code actions, proposal-only mutation routing, and non-blocking editor/save behavior.
+
+## 2026-09-06 user-requested checkpoint
+
+The final checkpoint passed 424 app unit tests, 6 cross-file integration tests,
+and formatting. The opt-in real-server run passed 5/6 TypeScript and 1/4 Python
+scenarios. New failures are preserved: TypeScript organize-imports retained an
+unused import; Python annotated WorkspaceEdit translation is unsupported; the
+Python diagnostic test incorrectly matches redacted message text. These results
+supersede earlier checkpoint counts without promoting product readiness.
+See [the committed handoff](../../docs/superpowers/handoffs/2026-09-06-full-product-completion-handoff.md)
+and `plans/evidence/full-product-checkpoint-2026-09-06/` for exact resume steps
+and raw logs. Work stopped at the user's request; full completion is unproved.

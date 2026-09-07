@@ -11,6 +11,7 @@
 //!   cargo build -p legion-lsp --bin mock_lsp_server
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use legion_lsp::{LspServerProcessConfig, LspSupervisorConfig};
 use legion_protocol::{
@@ -38,6 +39,23 @@ pub fn mock_server_path() -> Option<PathBuf> {
     };
     let candidate = profile_dir.join(name);
     candidate.is_file().then_some(candidate)
+}
+
+/// Poll until `pred` is true, or six seconds elapse.
+///
+/// Live mock tests share a cap-one worker queue with the handshake `didOpen`.
+/// `issue_request` uses `try_send` and returns false while that slot is full,
+/// so a single attempt right after Live is a race. Callers should drain the
+/// session inside `pred` and retry the issue.
+#[allow(dead_code)]
+pub fn wait_until(mut pred: impl FnMut() -> bool) -> bool {
+    for _ in 0..600 {
+        if pred() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
 }
 
 fn fingerprint(value: &str) -> FileFingerprint {
@@ -70,7 +88,7 @@ fn posture(trust: WorkspaceTrustState, privacy_scope_allowed: bool) -> LspWorksp
         workspace_trust_state: trust,
         privacy_scope: SemanticPrivacyScope::Workspace,
         privacy_scope_allowed,
-        required_capability: CapabilityId("process.spawn".to_string()),
+        required_capability: CapabilityId("lsp.launch".to_string()),
         decision_id: Some(CapabilityDecisionId(99)),
         diagnostics: Vec::new(),
         schema_version: 1,

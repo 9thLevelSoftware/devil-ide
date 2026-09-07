@@ -38,6 +38,10 @@ pub mod release_manifest;
 pub mod risk;
 pub mod scope;
 pub mod tools;
+/// DTOs for app-routed shaped visual vertical navigation.
+pub mod visual_navigation;
+
+pub use visual_navigation::*;
 
 pub use capability::AssistedAiCapabilityMatrix;
 pub use delegate_loop::{
@@ -97,6 +101,16 @@ pub struct FileId(pub u128);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BufferVersion(pub u64);
+
+/// Which side of a soft-wrapped visual row owns a caret at a shared boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum CaretAffinity {
+    /// Prefer the preceding visual row (the compatibility default).
+    #[default]
+    Upstream,
+    /// Prefer the following visual row.
+    Downstream,
+}
 
 /// Canonical file content version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -545,6 +559,18 @@ pub struct ViewportLineMetric {
     pub byte_length: u64,
     /// Total UTF-16 code-unit length for the logical line.
     pub utf16_length: u64,
+    /// Absolute byte offset of the logical line start in the snapshot.
+    ///
+    /// `None` means the producer does not know the snapshot origin; consumers
+    /// must never treat an unknown origin as zero.
+    #[serde(default)]
+    pub line_start_byte_offset: Option<u64>,
+    /// Absolute UTF-16 offset of the logical line start in the snapshot.
+    ///
+    /// `None` means the producer does not know the snapshot origin; consumers
+    /// must never treat an unknown origin as zero.
+    #[serde(default)]
+    pub line_start_utf16_offset: Option<u64>,
     /// Width of the line ending in bytes.
     pub line_ending_width: u8,
     /// Whether the metric is exact rather than estimated.
@@ -652,6 +678,12 @@ pub struct ViewportProjection {
     /// Projected cursor coordinates in render order.
     #[serde(default)]
     pub cursors: Vec<TextCoordinate>,
+    /// Visual row affinity aligned one-for-one with [`Self::cursors`].
+    ///
+    /// Legacy payloads omit this field and therefore mean `Upstream` for each
+    /// projected cursor.
+    #[serde(default)]
+    pub cursor_affinities: Vec<CaretAffinity>,
     /// Scroll offsets.
     pub scroll: ViewportScroll,
     /// Viewport dimensions.
@@ -16335,6 +16367,39 @@ pub struct LanguageQuickFixProjection {
     pub schema_version: u16,
 }
 
+/// Metadata-only candidate returned by one live `textDocument/codeAction`
+/// response.  The action identifier is opaque and scoped to `response_id`;
+/// the payload remains app-owned and is never carried in the UI projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageCodeActionProjection {
+    /// Opaque response identity used to reject selections from older results.
+    pub response_id: String,
+    /// Opaque candidate token scoped to `response_id`.
+    pub action_id: String,
+    /// Bounded server-provided display title.
+    pub title: String,
+    /// Optional server-provided action kind.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Whether the server marked this candidate preferred.
+    pub is_preferred: bool,
+    /// Disabled reason, when the server supplied one.
+    #[serde(default)]
+    pub disabled_reason: Option<String>,
+    /// Whether the candidate carries a workspace edit.
+    pub has_edit: bool,
+    /// Whether the candidate carries a command payload.
+    pub has_command: bool,
+    /// Buffer identity used for the request, when the document is open.
+    #[serde(default)]
+    pub buffer_id: Option<BufferId>,
+    /// Snapshot identity used for the request, when known.
+    #[serde(default)]
+    pub snapshot_id: Option<SnapshotId>,
+    /// Candidate row schema version.
+    pub schema_version: u16,
+}
+
 /// Breadcrumb row for the active document path and enclosing symbol chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageBreadcrumbProjection {
@@ -16574,9 +16639,44 @@ pub enum CallHierarchyDirection {
     Outgoing,
 }
 
+/// Runtime configuration status for a language toolchain projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LanguageToolchainConfigurationStatus {
+    /// No local toolchain configuration has been selected.
+    #[default]
+    Unconfigured,
+    /// Metadata has been selected but has not completed validation.
+    Draft,
+    /// The app has validated the selected metadata for use in this session.
+    Configured,
+}
+
+/// Runtime-only TypeScript toolchain projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeScriptToolchainProjection {
+    /// Selected metadata-only settings, when present.
+    #[serde(default)]
+    pub settings: Option<TypeScriptToolchainSettings>,
+    /// Current app-owned validation state.
+    #[serde(default)]
+    pub status: LanguageToolchainConfigurationStatus,
+}
+
+impl Default for TypeScriptToolchainProjection {
+    fn default() -> Self {
+        Self {
+            settings: None,
+            status: LanguageToolchainConfigurationStatus::Unconfigured,
+        }
+    }
+}
+
 /// Projection-only language tooling panel state for the active editor buffer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageToolingProjection {
+    /// Runtime-only TypeScript toolchain configuration projection.
+    #[serde(default)]
+    pub typescript_toolchain: TypeScriptToolchainProjection,
     /// Workspace represented by the projection, when one is open.
     pub workspace_id: Option<WorkspaceId>,
     /// Active editor buffer represented by the projection, when one is open.
@@ -16591,6 +16691,9 @@ pub struct LanguageToolingProjection {
     pub problems: Vec<LanguageProblemProjection>,
     /// Quick-fix rows derived from diagnostic/problem rows.
     pub quick_fixes: Vec<LanguageQuickFixProjection>,
+    /// Bounded metadata-only live code-action candidates.
+    #[serde(default)]
+    pub code_action_candidates: Vec<LanguageCodeActionProjection>,
     /// Breadcrumb rows for the active cursor position.
     pub breadcrumbs: Vec<LanguageBreadcrumbProjection>,
     /// Sticky scope rows for the active cursor position.
@@ -16661,6 +16764,7 @@ impl LanguageToolingProjection {
     /// Construct an empty language tooling projection.
     pub fn empty() -> Self {
         Self {
+            typescript_toolchain: TypeScriptToolchainProjection::default(),
             workspace_id: None,
             buffer_id: None,
             file_id: None,
@@ -16668,6 +16772,7 @@ impl LanguageToolingProjection {
             status_message: "Language tooling idle".to_string(),
             problems: Vec::new(),
             quick_fixes: Vec::new(),
+            code_action_candidates: Vec::new(),
             breadcrumbs: Vec::new(),
             sticky_scopes: Vec::new(),
             inlay_hints: Vec::new(),
@@ -17838,6 +17943,11 @@ pub enum LspCodeActionPayload {
         workspace_edit: WorkspaceEditProposalPayload,
         /// Command descriptor.
         command: LspCommandDescriptor,
+    },
+    /// Deferred action data that must be sent through `codeAction/resolve`.
+    Resolve {
+        /// Opaque server-owned resolve data retained under the app payload budget.
+        data: serde_json::Value,
     },
     /// Disabled action with metadata-only reason.
     Disabled {
@@ -20672,6 +20782,39 @@ impl Default for WorkbenchSettingsRecord {
     }
 }
 
+/// Persisted metadata-only settings for locally configured language toolchains.
+///
+/// This describes operator-selected paths for later app-owned validation. It
+/// is not an authorization, grant, receipt, or artifact integrity record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageToolchainSettingsRecord {
+    /// DTO schema version.
+    pub schema_version: u16,
+    /// Optional TypeScript bundle settings.
+    #[serde(default)]
+    pub typescript: Option<TypeScriptToolchainSettings>,
+}
+
+impl Default for LanguageToolchainSettingsRecord {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            typescript: None,
+        }
+    }
+}
+
+/// Metadata-only paths for a TypeScript language-server/compiler bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeScriptToolchainSettings {
+    /// Local language-server archive path.
+    pub server_archive: CanonicalPath,
+    /// Local compiler archive path.
+    pub compiler_archive: CanonicalPath,
+    /// Explicit Node runtime path.
+    pub node_executable: CanonicalPath,
+}
+
 /// Product-readiness track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EnterpriseProductReadinessTrack {
@@ -22265,6 +22408,9 @@ pub struct WorkspaceSessionRecord {
     /// Persisted workbench UI settings.
     #[serde(default)]
     pub workbench_settings: WorkbenchSettingsRecord,
+    /// Metadata-only local language toolchain settings.
+    #[serde(default)]
+    pub language_toolchain_settings: LanguageToolchainSettingsRecord,
     /// Durable memory snapshot used to restore workspace memory across restarts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_snapshot_json: Option<String>,

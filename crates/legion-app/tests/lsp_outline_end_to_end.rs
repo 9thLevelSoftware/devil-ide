@@ -96,6 +96,7 @@ fn drive_until_live(app: &mut legion_app::AppComposition, mock_path: std::path::
 /// request was ever sent.
 fn drain_for_server_outline(
     app: &mut legion_app::AppComposition,
+    buffer_id: legion_protocol::BufferId,
 ) -> Vec<legion_protocol::LanguageOutlineSymbolProjection> {
     let mut outline = Vec::new();
     for _ in 0..600 {
@@ -104,6 +105,7 @@ fn drain_for_server_outline(
         if outline.iter().any(|row| row.label == SERVER_ONLY_SYMBOL) {
             break;
         }
+        let _ = app.issue_lsp_document_symbol_request(buffer_id);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     outline
@@ -124,12 +126,15 @@ fn a_document_symbol_request_now_reaches_the_server_and_comes_back() {
     drive_until_live(&mut app, mock_path);
 
     assert!(
-        app.issue_lsp_document_symbol_request(buffer_id),
+        lsp_mock::wait_until(|| {
+            app.drain_lsp_session();
+            app.issue_lsp_document_symbol_request(buffer_id)
+        }),
         "the capability gate refused the request; this is exactly where document \
          symbols died, silently, for every workspace"
     );
 
-    let outline = drain_for_server_outline(&mut app);
+    let outline = drain_for_server_outline(&mut app, buffer_id);
     assert!(
         !outline.is_empty(),
         "the request was sent and nothing came back into the projection"
@@ -233,7 +238,7 @@ fn the_outline_command_replaces_the_index_answer_with_the_servers() {
          if it does, this test has lost its ability to tell the two sources apart"
     );
 
-    let outline = drain_for_server_outline(&mut app);
+    let outline = drain_for_server_outline(&mut app, buffer_id);
     assert!(
         outline.iter().any(|row| row.label == SERVER_ONLY_SYMBOL),
         "the server's answer never replaced the index's; the command path is where \

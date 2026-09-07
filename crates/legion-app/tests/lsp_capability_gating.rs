@@ -69,7 +69,7 @@ fn initialize_records_every_capability_the_read_side_gates_on() {
             ..Default::default()
         },
         supervisor: lsp_mock::mock_supervisor_config(),
-        server_id: LanguageServerId(11),
+        server_id: LanguageServerId(7),
         language_id: LanguageId("rust".to_string()),
     };
 
@@ -166,7 +166,10 @@ fn a_references_request_now_reaches_the_server_and_comes_back() {
         utf16_offset: None,
     };
     assert!(
-        app.issue_lsp_references_request(buffer_id, position, true),
+        lsp_mock::wait_until(|| {
+            app.drain_lsp_session();
+            app.issue_lsp_references_request(buffer_id, position, true)
+        }),
         "the capability gate refused the request; before the parser fix this is \
          exactly where references died, silently, for every workspace"
     );
@@ -214,7 +217,7 @@ fn a_recorded_capability_reports_what_the_server_actually_said() {
             ..Default::default()
         },
         supervisor: lsp_mock::mock_supervisor_config_withholding(UNADVERTISED_CAPABILITY),
-        server_id: LanguageServerId(12),
+        server_id: LanguageServerId(7),
         language_id: LanguageId("rust".to_string()),
     };
 

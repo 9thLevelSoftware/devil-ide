@@ -123,7 +123,10 @@ fn an_inlay_hint_request_reaches_the_server_and_its_label_lands_in_the_projectio
         .expect("whole-document range for an open buffer");
 
     assert!(
-        app.issue_lsp_inlay_hint_request(fixture.buffer_id, range),
+        lsp_mock::wait_until(|| {
+            app.drain_lsp_session();
+            app.issue_lsp_inlay_hint_request(fixture.buffer_id, range)
+        }),
         "the capability gate refused the request. Before `initialize` recorded \
          inlayHintProvider this returned false for every server on every \
          workspace, and the gutter filled from the lexical index instead"
@@ -191,7 +194,10 @@ fn a_code_lens_request_reaches_the_server_and_projects_a_runnable_cargo_command(
     let app = &mut fixture.app;
 
     assert!(
-        app.issue_lsp_code_lens_request(fixture.buffer_id),
+        lsp_mock::wait_until(|| {
+            app.drain_lsp_session();
+            app.issue_lsp_code_lens_request(fixture.buffer_id)
+        }),
         "the capability gate refused the request. Before `initialize` recorded \
          codeLensProvider this returned false, so runnables never existed — \
          rust-analyzer publishes Run/Debug as code lenses and nothing else \

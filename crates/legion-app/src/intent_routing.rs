@@ -9,6 +9,7 @@
 //! file needs to know the module exists.
 
 use crate::*;
+use std::path::PathBuf;
 
 use crate::extension_management::ExtensionCatalogRequest;
 
@@ -66,6 +67,70 @@ impl CommandDispatcher {
                 TextEdit::insert(Self::editor_position(at), text),
                 correlation_id,
             ),
+            CommandDispatchIntent::ReplaceDirectedCarets { buffer_id, text } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::ReplaceDirectedCarets { buffer_id, text })
+            }
+            CommandDispatchIntent::DeleteDirectedCarets {
+                buffer_id,
+                backward,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::DeleteDirectedCarets {
+                    buffer_id,
+                    backward,
+                })
+            }
+            CommandDispatchIntent::SetDirectedSelection {
+                buffer_id,
+                anchor,
+                head,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::SetDirectedSelection {
+                    buffer_id,
+                    anchor,
+                    head,
+                })
+            }
+            CommandDispatchIntent::SetVisualCursor {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                cursor,
+                affinity,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::SetVisualCursor {
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    cursor,
+                    affinity,
+                })
+            }
+            CommandDispatchIntent::SetVisualDirectedSelection {
+                buffer_id,
+                expected_snapshot_id,
+                expected_buffer_version,
+                anchor,
+                head,
+                head_affinity,
+            } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::SetVisualDirectedSelection {
+                    buffer_id,
+                    expected_snapshot_id,
+                    expected_buffer_version,
+                    anchor,
+                    head,
+                    head_affinity,
+                })
+            }
+            CommandDispatchIntent::MoveVertically { buffer_id, request } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::MoveVertically { buffer_id, request })
+            }
             CommandDispatchIntent::Delete { buffer_id, range } => Self::edit_request(
                 active,
                 buffer_id,
@@ -118,6 +183,24 @@ impl CommandDispatcher {
             CommandDispatchIntent::SetSelection { buffer_id, range } => {
                 Ok(AppCommandRequest::SetSelection { buffer_id, range })
             }
+            CommandDispatchIntent::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            } => Ok(AppCommandRequest::MoveToBoundary {
+                buffer_id,
+                boundary,
+                extend,
+            }),
+            CommandDispatchIntent::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            } => Ok(AppCommandRequest::MoveHorizontally {
+                buffer_id,
+                left,
+                extend,
+            }),
             CommandDispatchIntent::SetViewportScroll { buffer_id, scroll } => {
                 Ok(AppCommandRequest::SetViewportScroll { buffer_id, scroll })
             }
@@ -521,6 +604,17 @@ impl CommandDispatcher {
                     action_id,
                 })
             }
+            CommandDispatchIntent::RequestCodeActions { buffer_id, range } => {
+                Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
+                Ok(AppCommandRequest::RequestCodeActions { buffer_id, range })
+            }
+            CommandDispatchIntent::SelectCodeAction {
+                response_id,
+                action_id,
+            } => Ok(AppCommandRequest::SelectCodeAction {
+                response_id,
+                action_id,
+            }),
             CommandDispatchIntent::ActivateLanguageCodeLens { buffer_id, lens_id } => {
                 Self::ensure_active_buffer(active.buffer_id, buffer_id)?;
                 Ok(AppCommandRequest::ActivateLanguageCodeLens { buffer_id, lens_id })
@@ -697,6 +791,18 @@ impl CommandDispatcher {
             }),
             CommandDispatchIntent::LspStartSession => Ok(AppCommandRequest::LspStartSession),
             CommandDispatchIntent::LspRestartSession => Ok(AppCommandRequest::LspRestartSession),
+            CommandDispatchIntent::ConfigureTypeScriptToolchain {
+                server_archive,
+                compiler_archive,
+                node_executable,
+            } => Ok(AppCommandRequest::ConfigureTypeScriptToolchain {
+                server_archive: PathBuf::from(server_archive),
+                compiler_archive: PathBuf::from(compiler_archive),
+                node_executable: PathBuf::from(node_executable),
+            }),
+            CommandDispatchIntent::ClearTypeScriptToolchain => {
+                Ok(AppCommandRequest::ClearTypeScriptToolchain)
+            }
             CommandDispatchIntent::PreviewProposal { .. }
             | CommandDispatchIntent::ApproveProposal { .. }
             | CommandDispatchIntent::RejectProposal { .. }

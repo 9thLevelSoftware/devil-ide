@@ -6,6 +6,9 @@ mod assistant_rail;
 mod brand_mark;
 /// Call-hierarchy rows for the language section: direction and degraded marking.
 mod call_hierarchy;
+/// Snapshot-backed status, language, trust, and assistant rows.
+mod status_rows;
+use status_rows::*;
 mod code_canvas_painter;
 mod components;
 /// Debug call-stack and variable inspector.
@@ -17,6 +20,11 @@ pub mod ghost_text;
 pub mod rail_icons;
 /// Source-control panel: status rows, remote verbs, and per-hunk staging.
 mod source_control;
+/// Bounded source-to-atlas layout for oversized logical lines.
+mod streamed_layout;
+#[cfg(test)]
+#[path = "view/streamed_multiline_projection_tests.rs"]
+mod streamed_multiline_projection_tests;
 /// The editor tab strip: tabs, close affordance, drag-to-reorder.
 mod tab_strip;
 /// Test explorer tree for the Tests surface.
@@ -53,7 +61,7 @@ pub mod fleet_board;
 pub mod fleet_card;
 /// Inline edit diff overlay view model and per-hunk accept/reject helpers (PKT-INLINE).
 pub mod inline_edit;
-/// Interactive text fields (terminal input, BYOK) outside the code-canvas gate.
+/// Interactive text fields (terminal input, BYOK, settings paths) outside the code-canvas gate.
 pub(crate) mod interactive_fields;
 /// Pre-invocation context manifest panel with per-item exclusion toggles.
 pub mod manifest_panel;
@@ -112,17 +120,20 @@ use components::{
 };
 
 use legion_protocol::{
-    AssistedAiProviderAvailabilityState, BufferId, CANONICAL_PRODUCT_MODES, CanonicalPath,
-    CanonicalProductMode, ContextManifestEgressStatus, ContextManifestInclusionState,
-    DelegatedTaskProposalHunkDisposition, DelegatedTaskRiskTolerance,
-    DelegatedTaskRuntimeActivationState, DelegatedTaskScope, DelegatedTaskScopeTargetKind,
-    DelegatedTaskToolPermissionDecision, FileId, LanguageInlayHintProjection,
-    LanguageLocationProjection, LanguageProblemProjection, LegionToolKind, LineWrappingPolicy,
-    PluginCommandDescriptor, PluginContribution, PluginContributionProjection,
+    AssistedAiProviderAvailabilityState, BufferId, ByteRange, CANONICAL_PRODUCT_MODES,
+    CanonicalPath, CanonicalProductMode, CaretAffinity, ContextManifestEgressStatus,
+    ContextManifestInclusionState, DelegatedTaskProposalHunkDisposition,
+    DelegatedTaskRiskTolerance, DelegatedTaskRuntimeActivationState, DelegatedTaskScope,
+    DelegatedTaskScopeTargetKind, DelegatedTaskToolPermissionDecision, FileId,
+    LanguageCodeActionProjection, LanguageInlayHintProjection, LanguageLocationProjection,
+    LanguageProblemProjection, LanguageToolchainConfigurationStatus, LegionToolKind,
+    LineWrappingPolicy, PluginCommandDescriptor, PluginContribution, PluginContributionProjection,
     PrivacyInspectorRedactionState, ProposalId, ProposalLifecycleState, ProposalRejectionReason,
     ProposalRiskLabel, ProtocolDiagnosticSeverity, ProtocolTextRange, TextCoordinate,
-    ViewportLineTruncationState, ViewportProjectionMode, ViewportScroll, ViewportSemanticTokenKind,
-    ViewportSemanticTokenOverlay,
+    TypeScriptToolchainProjection, Utf16Range, ViewportLineTruncationState, ViewportProjectionMode,
+    ViewportScroll, ViewportSemanticTokenKind, ViewportSemanticTokenOverlay,
+    VisualNavigationPosition, VisualNavigationRow, VisualNavigationSourceRow, VisualNavigationStop,
+    VisualNavigationX, WorkspaceId,
 };
 use legion_ui::{
     ActiveBufferProjection, DebugStepKindProjection, DockLayout, DockMode, DockSide,
@@ -135,6 +146,11 @@ use legion_ui::{
 use crate::{
     bridge::DesktopAction, health::DesktopOperationalHealthSnapshot,
     search::DesktopSearchViewModel, theme,
+};
+
+pub(crate) use streamed_layout::{
+    DesktopLineChunk, DesktopLineSource, DesktopSourceIdentity, StreamedLayoutCachePool,
+    StreamedNavigationRequest, StreamedNavigationRows, StreamedRequestedRow,
 };
 
 const COMMAND_PALETTE_VISIBLE_RESULT_ROWS: usize = 10;
@@ -479,6 +495,16 @@ pub struct DesktopCodeLineViewModel {
     pub highlights: Vec<DesktopCodeHighlightSpan>,
     /// Truncation state for the visible viewport slice backing this row.
     pub truncation_state: ViewportLineTruncationState,
+    /// Snapshot byte range represented by this visible slice.
+    pub byte_range: ByteRange,
+    /// Snapshot UTF-16 range represented by this visible slice.
+    pub utf16_range: Utf16Range,
+    /// Snapshot byte origin of the logical line, when exact metrics provide it.
+    pub line_start_byte_offset: Option<u64>,
+    /// Absolute snapshot byte end of the complete logical line, when known.
+    pub logical_end_byte: Option<u64>,
+    /// Snapshot UTF-16 origin of the logical line, when exact metrics provide it.
+    pub line_start_utf16_offset: Option<u64>,
 }
 
 /// Renderer-ready semantic highlight span for a single visible code line.
@@ -694,6 +720,15 @@ impl DesktopSettingsViewModel {
         }
     }
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct TypeScriptToolchainDraft {
+    server_archive: String,
+    compiler_archive: String,
+    node_executable: String,
+}
+
+const TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DesktopSetupChecklistItem {
@@ -1317,6 +1352,10 @@ pub struct ProjectionView {
     pending_mode_confirmation_origin: Option<egui::Id>,
     pending_mode_confirmation_needs_focus: bool,
     mode_confirmation_restore_focus: Option<egui::Id>,
+    streamed_layout_cache: StreamedLayoutCachePool,
+    typescript_toolchain_draft: TypeScriptToolchainDraft,
+    typescript_toolchain_projection: Option<TypeScriptToolchainProjection>,
+    typescript_toolchain_workspace: Option<WorkspaceId>,
 }
 
 /// Renderer-owned selection for the workspace activity rail.
@@ -1381,6 +1420,7 @@ enum SettingsSection {
     #[default]
     Appearance,
     Editor,
+    LanguageTools,
     AiProviders,
     Extensions,
     Notifications,
@@ -1389,9 +1429,10 @@ enum SettingsSection {
 }
 
 impl SettingsSection {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Editor,
+        Self::LanguageTools,
         Self::AiProviders,
         Self::Extensions,
         Self::Notifications,
@@ -1403,6 +1444,7 @@ impl SettingsSection {
         match self {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
+            Self::LanguageTools => "Language Tools",
             Self::AiProviders => "AI Providers",
             Self::Extensions => "Extensions",
             Self::Notifications => "Notifications",
@@ -1438,6 +1480,66 @@ impl Default for ProjectionView {
 }
 
 impl ProjectionView {
+    fn sync_typescript_toolchain_draft(
+        &mut self,
+        workspace_id: Option<WorkspaceId>,
+        projection: &TypeScriptToolchainProjection,
+    ) {
+        if self.typescript_toolchain_workspace == workspace_id
+            && self.typescript_toolchain_projection.as_ref() == Some(projection)
+        {
+            return;
+        }
+        self.typescript_toolchain_draft = projection
+            .settings
+            .as_ref()
+            .map(|settings| TypeScriptToolchainDraft {
+                server_archive: bounded_typescript_toolchain_path(
+                    settings.server_archive.0.clone(),
+                ),
+                compiler_archive: bounded_typescript_toolchain_path(
+                    settings.compiler_archive.0.clone(),
+                ),
+                node_executable: bounded_typescript_toolchain_path(
+                    settings.node_executable.0.clone(),
+                ),
+            })
+            .unwrap_or_default();
+        self.typescript_toolchain_projection = Some(projection.clone());
+        self.typescript_toolchain_workspace = workspace_id;
+    }
+
+    pub(crate) fn request_streamed_navigation(
+        &mut self,
+        identity: DesktopSourceIdentity,
+        row: StreamedRequestedRow,
+    ) {
+        self.streamed_layout_cache
+            .request_navigation(StreamedNavigationRequest { identity, row });
+    }
+
+    pub(crate) fn streamed_navigation_requests(&self) -> Vec<StreamedNavigationRequest> {
+        self.streamed_layout_cache.streamed_navigation_requests()
+    }
+
+    pub(crate) fn streamed_navigation_rows(
+        &self,
+        identity: DesktopSourceIdentity,
+    ) -> Option<StreamedNavigationRows> {
+        self.streamed_layout_cache.navigation_rows(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_streamed_navigation_error_for_test(
+        &mut self,
+        identity: DesktopSourceIdentity,
+        row: StreamedRequestedRow,
+        error: &str,
+    ) {
+        self.streamed_layout_cache
+            .inject_navigation_error_for_test(identity, row, error);
+    }
+
     /// Creates a projection view with no product-state ownership.
     pub fn new() -> Self {
         Self {
@@ -1462,6 +1564,10 @@ impl ProjectionView {
             pending_mode_confirmation_origin: None,
             pending_mode_confirmation_needs_focus: false,
             mode_confirmation_restore_focus: None,
+            streamed_layout_cache: StreamedLayoutCachePool::default(),
+            typescript_toolchain_draft: TypeScriptToolchainDraft::default(),
+            typescript_toolchain_projection: None,
+            typescript_toolchain_workspace: None,
         }
     }
 
@@ -1587,7 +1693,22 @@ impl ProjectionView {
         snapshot: &ShellProjectionSnapshot,
         state: &DesktopProjectionViewState,
     ) -> ProjectionViewOutput {
+        self.render_with_state_and_source(ui, snapshot, state, None)
+    }
+
+    /// Render with an optional app-owned bounded source for oversized lines.
+    pub fn render_with_state_and_source(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &ShellProjectionSnapshot,
+        state: &DesktopProjectionViewState,
+        source: Option<&dyn DesktopLineSource>,
+    ) -> ProjectionViewOutput {
         self.normalize_mode_confirmation(snapshot.product_mode);
+        self.sync_typescript_toolchain_draft(
+            snapshot.language_tooling_projection.workspace_id,
+            &snapshot.language_tooling_projection.typescript_toolchain,
+        );
         let mut selected_bottom_panel = state.selected_bottom_panel;
         // Filled in by the standard layout branch below. Compact layouts leave
         // it empty: their panel sizes are fixed, not user-arranged, and
@@ -1835,7 +1956,14 @@ impl ProjectionView {
                 // and a canvas that returned nothing would fail them for a
                 // reason unrelated to the canvas.
                 self.last_editor_rect = Some(match state.center_surface {
-                    CenterSurface::Editor => render_code_canvas(ui, snapshot, &model, &mut actions),
+                    CenterSurface::Editor => render_code_canvas(
+                        ui,
+                        snapshot,
+                        &model,
+                        &mut actions,
+                        source,
+                        &mut self.streamed_layout_cache,
+                    ),
                     CenterSurface::Canvas => canvas_workspace::render_canvas_workspace(
                         ui,
                         snapshot,
@@ -2012,6 +2140,7 @@ fn render_compact_drawer_overlay(
     let mut close_requested = false;
     let request_initial_focus = std::mem::take(&mut view.compact_drawer_needs_focus);
     let escape_requested = ctx.input(|input| input.key_pressed(egui::Key::Escape))
+        && !snapshot.palette_projection.open
         && !matches!(
             view.utility_surface,
             Some(UtilitySurface::Settings | UtilitySurface::Setup | UtilitySurface::About)
@@ -2749,9 +2878,11 @@ fn render_code_canvas(
     snapshot: &ShellProjectionSnapshot,
     model: &DesktopProjectionViewModel,
     actions: &mut Vec<DesktopAction>,
+    source: Option<&dyn DesktopLineSource>,
+    streamed_cache: &mut StreamedLayoutCachePool,
 ) -> egui::Rect {
     render_advanced_center_surface(ui, snapshot, model, actions);
-    render_editor_canvas(ui, snapshot, model, actions)
+    render_editor_canvas(ui, snapshot, model, actions, source, streamed_cache)
 }
 
 fn render_advanced_center_surface(
@@ -3543,6 +3674,8 @@ fn render_editor_canvas(
     snapshot: &ShellProjectionSnapshot,
     model: &DesktopProjectionViewModel,
     actions: &mut Vec<DesktopAction>,
+    source: Option<&dyn DesktopLineSource>,
+    streamed_cache: &mut StreamedLayoutCachePool,
 ) -> egui::Rect {
     render_tab_strip(ui, snapshot, actions);
     if ui.available_height() >= 250.0 {
@@ -3580,7 +3713,7 @@ fn render_editor_canvas(
                 .auto_shrink([false, false])
                 .show(&mut code_ui, |ui| {
                     let mut painter = EguiCodeCanvasPainter;
-                    painter.paint_lines(ui, snapshot, model, actions);
+                    painter.paint_lines(ui, snapshot, model, actions, source, streamed_cache);
                 });
 
             // Minimap: right column.
@@ -3773,6 +3906,8 @@ fn render_code_lines(
     snapshot: &ShellProjectionSnapshot,
     model: &DesktopProjectionViewModel,
     actions: &mut Vec<DesktopAction>,
+    source: Option<&dyn DesktopLineSource>,
+    streamed_cache: &mut StreamedLayoutCachePool,
 ) {
     if snapshot.active_buffer_projection.buffer_id.is_none() {
         ui.label(theme::muted("<no active buffer>"));
@@ -3867,6 +4002,49 @@ fn render_code_lines(
         // The active sticky scope is still projected and is still rendered
         // where it belongs; see `sticky_scopes` in the language-tooling panel.
 
+        let mut source_budget = streamed_layout::MAX_FRAME_SOURCE_BYTES;
+        let mut row_budget = streamed_layout::MAX_FRAME_ROWS;
+        let mut glyph_budget = streamed_layout::MAX_FRAME_GLYPHS;
+        if let Some(source) = source {
+            let active = model
+                .active_buffer_code_lines
+                .iter()
+                .filter(|line| !matches!(line.truncation_state, ViewportLineTruncationState::None))
+                .map(|line| source.identity(line.number.saturating_sub(1) as usize))
+                .collect::<Vec<_>>();
+            streamed_cache.begin_frame(&active);
+            if !streamed_cache.streamed_navigation_requests().is_empty() {
+                let (_, _, wrap_width) = active_code_line_wrap_config(
+                    model.settings.line_wrapping_policy,
+                    model.settings.wrap_column,
+                    viewport.map(|viewport| (viewport.line_wrapping_policy, viewport.wrap_column)),
+                    ui.available_width(),
+                );
+                streamed_cache.service_one_navigation(
+                    ui,
+                    source,
+                    streamed_layout::StreamedLayoutOptions {
+                        format: egui::text::TextFormat {
+                            font_id: egui::FontId::monospace(
+                                model.settings.editor_font_size_pt as f32,
+                            ),
+                            color: theme::tokens().text.secondary,
+                            ..Default::default()
+                        },
+                        pixels_per_point: ui.ctx().pixels_per_point(),
+                        wrap_width,
+                        break_anywhere: false,
+                        visible_rows: 0..streamed_layout::MAX_FRAME_ROWS,
+                        visible_bytes: 0..streamed_layout::MAX_FRAME_GLYPHS as u64,
+                    },
+                    streamed_layout::StreamedFrameBudget {
+                        source_bytes: &mut source_budget,
+                        rows: &mut row_budget,
+                        glyphs: &mut glyph_budget,
+                    },
+                );
+            }
+        }
         for line in &model.active_buffer_code_lines {
             ui.horizontal(|ui| {
                 let git_marker = git_hunk_marker_for_line(
@@ -3901,45 +4079,176 @@ fn render_code_lines(
                     .viewport
                     .as_ref()
                     .map(|viewport| viewport.snapshot_id);
-                let galley = cached_code_line_galley(
-                    ui,
-                    active_buffer_id,
-                    snapshot_id,
-                    line,
-                    code_line_wrap_width(model, ui.available_width()),
+                let (line_wrapping_policy, wrap_column, wrap_width) = active_code_line_wrap_config(
+                    model.settings.line_wrapping_policy,
+                    model.settings.wrap_column,
+                    viewport.map(|viewport| (viewport.line_wrapping_policy, viewport.wrap_column)),
+                    ui.available_width(),
                 );
+                if let Some(buffer_id) = active_buffer_id {
+                    record_visual_navigation_paint_geometry(
+                        ui,
+                        VisualNavigationPaintGeometry {
+                            buffer_id,
+                            wrap_width,
+                            line_wrapping_policy,
+                            wrap_column,
+                            paint_pass: ui.ctx().cumulative_pass_nr(),
+                            pixels_per_point: ui.ctx().pixels_per_point(),
+                            font_size_bucket: code_line_font_size_bucket(),
+                        },
+                    );
+                }
+                if let Some(source) = source
+                    && !matches!(line.truncation_state, ViewportLineTruncationState::None)
+                {
+                    let format = egui::text::TextFormat {
+                        font_id: egui::FontId::monospace(model.settings.editor_font_size_pt as f32),
+                        color: theme::tokens().text.secondary,
+                        ..Default::default()
+                    };
+                    if let Ok(result) = streamed_cache.paint_visible(
+                        ui,
+                        source,
+                        line.number.saturating_sub(1) as usize,
+                        streamed_layout::StreamedLayoutOptions {
+                            format,
+                            pixels_per_point: ui.ctx().pixels_per_point(),
+                            wrap_width,
+                            break_anywhere: false,
+                            visible_rows: 0..streamed_layout::MAX_FRAME_ROWS,
+                            visible_bytes: line.byte_range.start..line.byte_range.end,
+                        },
+                        streamed_layout::StreamedFrameBudget {
+                            source_bytes: &mut source_budget,
+                            rows: &mut row_budget,
+                            glyphs: &mut glyph_budget,
+                        },
+                    ) {
+                        let height = result
+                            .rows
+                            .iter()
+                            .map(|row| row.rect.height())
+                            .sum::<f32>()
+                            .max(18.0);
+                        let response = ui.allocate_response(
+                            egui::vec2(ui.available_width(), height),
+                            egui::Sense::click_and_drag(),
+                        );
+                        if let Some(pointer) = response.interact_pointer_pos()
+                            && let Some((absolute_byte, affinity)) = result
+                                .rows
+                                .iter()
+                                .filter(|row| {
+                                    let y = pointer.y - response.rect.min.y;
+                                    row.rect.y_range().contains(y)
+                                })
+                                .flat_map(|row| {
+                                    row.stops.iter().filter_map(move |(byte, x)| {
+                                        row.source_byte_range.contains(byte).then_some((
+                                            *byte,
+                                            *x,
+                                            (pointer.x - response.rect.min.x - *x).abs(),
+                                        ))
+                                    })
+                                })
+                                .min_by(|left, right| left.2.total_cmp(&right.2))
+                                .map(|(byte, x, _)| {
+                                    (
+                                        byte,
+                                        if pointer.x - response.rect.min.x >= x {
+                                            CaretAffinity::Downstream
+                                        } else {
+                                            CaretAffinity::Upstream
+                                        },
+                                    )
+                                })
+                            && let Some(buffer_id) = active_buffer_id
+                            && let Some(viewport) = viewport
+                        {
+                            let origin =
+                                line.line_start_byte_offset.unwrap_or(line.byte_range.start);
+                            let coordinate = TextCoordinate {
+                                line: line.number.saturating_sub(1),
+                                character: absolute_byte.saturating_sub(origin) as u32,
+                                byte_offset: Some(absolute_byte),
+                                utf16_offset: None,
+                            };
+                            if response.clicked() {
+                                actions.push(DesktopAction::SetVisualCursor {
+                                    buffer_id: Some(buffer_id),
+                                    expected_snapshot_id: viewport.snapshot_id,
+                                    expected_buffer_version: viewport.buffer_version,
+                                    cursor: coordinate,
+                                    affinity,
+                                });
+                            }
+                            if response.dragged() || response.drag_stopped() {
+                                actions.push(DesktopAction::SetVisualDirectedSelection {
+                                    buffer_id: Some(buffer_id),
+                                    expected_snapshot_id: viewport.snapshot_id,
+                                    expected_buffer_version: viewport.buffer_version,
+                                    anchor: current_cursor,
+                                    head: coordinate,
+                                    head_affinity: affinity,
+                                });
+                            }
+                        }
+                        for row in result.rows {
+                            let mut mesh = row.mesh;
+                            mesh.translate(response.rect.min.to_vec2());
+                            ui.painter().add(egui::Shape::mesh(mesh));
+                        }
+                        if result.needs_repaint {
+                            ui.ctx().request_repaint();
+                        }
+                        let _ = response;
+                        return;
+                    }
+                }
+                let galley =
+                    cached_code_line_galley(ui, active_buffer_id, snapshot_id, line, wrap_width);
                 let response =
-                    ui.add(egui::Label::new(galley).sense(egui::Sense::click_and_drag()));
+                    ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::click_and_drag()));
                 if let Some(position) = response.interact_pointer_pos()
                     && let Some(buffer_id) = active_buffer_id
                 {
-                    let coordinate = editor_coordinate_for_line_x(
+                    let Some((coordinate, affinity)) = editor_visual_coordinate_from_galley_pointer(
                         line,
-                        position.x,
-                        response.rect.left(),
-                        char_width,
-                    );
+                        galley.as_ref(),
+                        position,
+                        response.rect.min,
+                    ) else {
+                        return;
+                    };
                     let drag_anchor_id = code_drag_anchor_id(buffer_id);
                     if response.drag_started() {
                         let drag_delta = response
                             .total_drag_delta()
                             .unwrap_or_else(|| response.drag_delta());
-                        let anchor = drag_anchor_for_line_pointer(
-                            line,
-                            position.x,
-                            drag_delta,
-                            response.rect.left(),
-                            char_width,
-                        );
+                        let Some((anchor, _anchor_affinity)) =
+                            drag_anchor_for_line_pointer_with_galley_visual(
+                                line,
+                                galley.as_ref(),
+                                position.x,
+                                drag_delta,
+                                position.y,
+                                response.rect.min,
+                            )
+                        else {
+                            return;
+                        };
                         response
                             .ctx
                             .data_mut(|data| data.insert_temp(drag_anchor_id, anchor));
                     }
                     if response.triple_clicked() {
-                        actions.push(DesktopAction::SetSelection {
-                            buffer_id: Some(buffer_id),
-                            range: line_range_for_code_line(line),
-                        });
+                        if let Some(range) = line_range_for_code_line(line) {
+                            actions.push(DesktopAction::SetSelection {
+                                buffer_id: Some(buffer_id),
+                                range,
+                            });
+                        }
                     } else if response.double_clicked() {
                         if let Some(range) = word_range_for_coordinate(line, coordinate) {
                             actions.push(DesktopAction::SetSelection {
@@ -3951,23 +4260,30 @@ fn render_code_lines(
                         actions.push(DesktopAction::GoToDefinition {
                             position: coordinate,
                         });
-                    } else if response.clicked() {
-                        actions.push(DesktopAction::SetCursor {
+                    } else if response.clicked()
+                        && let Some(viewport) = viewport
+                    {
+                        actions.push(DesktopAction::SetVisualCursor {
                             buffer_id: Some(buffer_id),
+                            expected_snapshot_id: viewport.snapshot_id,
+                            expected_buffer_version: viewport.buffer_version,
                             cursor: coordinate,
+                            affinity,
                         });
                     }
-                    if response.drag_started() || response.dragged() {
+                    if (response.drag_started() || response.dragged())
+                        && let Some(viewport) = viewport
+                    {
                         let anchor = response
                             .ctx
                             .data_mut(|data| data.get_temp::<TextCoordinate>(drag_anchor_id));
-                        actions.push(DesktopAction::SetSelection {
+                        actions.push(DesktopAction::SetVisualDirectedSelection {
                             buffer_id: Some(buffer_id),
-                            range: normalized_text_range(drag_selection_range(
-                                anchor,
-                                current_cursor,
-                                coordinate,
-                            )),
+                            expected_snapshot_id: viewport.snapshot_id,
+                            expected_buffer_version: viewport.buffer_version,
+                            anchor: anchor.unwrap_or(current_cursor),
+                            head: coordinate,
+                            head_affinity: affinity,
                         });
                     }
                     if response.drag_stopped() {
@@ -3980,18 +4296,47 @@ fn render_code_lines(
                     paint_current_line_highlight(ui, line, &response, current_cursor);
                 }
                 if let Some(viewport) = viewport {
-                    paint_code_selections(ui, line, &response, &viewport.selections, char_width);
+                    paint_code_selections(
+                        ui,
+                        line,
+                        &response,
+                        &viewport.selections,
+                        galley.as_ref(),
+                    );
                 }
                 // Every cursor, not only the primary. The projection has
                 // carried the full set all along; painting one made a
                 // multi-cursor edit look like it came from nowhere.
                 match viewport {
                     Some(viewport) if viewport.cursors.len() > 1 => {
-                        for cursor in &viewport.cursors {
-                            paint_code_cursor(ui, line, &response, *cursor, char_width);
+                        for (index, cursor) in viewport.cursors.iter().enumerate() {
+                            let affinity = viewport
+                                .cursor_affinities
+                                .get(index)
+                                .copied()
+                                .unwrap_or(CaretAffinity::Upstream);
+                            paint_code_cursor(
+                                ui,
+                                line,
+                                &response,
+                                *cursor,
+                                affinity,
+                                index == 0,
+                                galley.as_ref(),
+                            );
                         }
                     }
-                    _ => paint_code_cursor(ui, line, &response, current_cursor, char_width),
+                    _ => paint_code_cursor(
+                        ui,
+                        line,
+                        &response,
+                        current_cursor,
+                        viewport
+                            .and_then(|projection| projection.cursor_affinities.first().copied())
+                            .unwrap_or(CaretAffinity::Upstream),
+                        true,
+                        galley.as_ref(),
+                    ),
                 }
                 paint_find_match_highlights(
                     ui,
@@ -4026,12 +4371,14 @@ fn render_code_lines(
                     && ui.input(|i| i.modifiers.ctrl)
                     && let Some(hover_pos) = response.hover_pos()
                 {
-                    let hover_coord = editor_coordinate_for_line_x(
+                    let Some(hover_coord) = editor_coordinate_from_galley_pointer(
                         line,
-                        hover_pos.x,
-                        response.rect.left(),
-                        char_width,
-                    );
+                        galley.as_ref(),
+                        hover_pos,
+                        response.rect.min,
+                    ) else {
+                        return;
+                    };
                     if let Some(range) = word_range_for_coordinate(line, hover_coord) {
                         let start_x =
                             response.rect.left() + range.start.character as f32 * char_width;
@@ -4048,12 +4395,14 @@ fn render_code_lines(
                     && !ui.input(|i| i.modifiers.ctrl)
                     && let Some(hover_pos) = response.hover_pos()
                 {
-                    let hover_coord = editor_coordinate_for_line_x(
+                    let Some(hover_coord) = editor_coordinate_from_galley_pointer(
                         line,
-                        hover_pos.x,
-                        response.rect.left(),
-                        char_width,
-                    );
+                        galley.as_ref(),
+                        hover_pos,
+                        response.rect.min,
+                    ) else {
+                        return;
+                    };
                     let hover_pos_id = egui::Id::new("lsp_last_hover_pos");
                     let last_pos: Option<(u32, u32)> =
                         ui.ctx().data_mut(|d| d.get_temp(hover_pos_id));
@@ -4072,7 +4421,10 @@ fn render_code_lines(
                         line,
                         &response,
                         current_cursor,
-                        char_width,
+                        viewport
+                            .and_then(|projection| projection.cursor_affinities.first().copied())
+                            .unwrap_or(CaretAffinity::Upstream),
+                        galley.as_ref(),
                         ime_composition,
                     );
                 }
@@ -4098,6 +4450,18 @@ fn render_code_lines(
         if definitions.len() > 1 {
             render_definition_picker(ui, definitions, actions);
         }
+        if !snapshot.language_tooling_projection.references.is_empty() {
+            render_reference_panel(
+                ui,
+                &snapshot.language_tooling_projection.references,
+                actions,
+            );
+        }
+        render_code_action_panel(
+            ui,
+            &snapshot.language_tooling_projection.code_action_candidates,
+            actions,
+        );
 
         return;
     }
@@ -4119,15 +4483,105 @@ fn code_char_width() -> f32 {
     theme::tokens().typography.code as f32 * 0.62
 }
 
-fn code_line_wrap_width(model: &DesktopProjectionViewModel, available_width: f32) -> f32 {
-    match model.settings.line_wrapping_policy {
+fn code_line_wrap_width_for_policy(
+    policy: LineWrappingPolicy,
+    wrap_column: Option<u32>,
+    available_width: f32,
+) -> f32 {
+    match policy {
         LineWrappingPolicy::Off => f32::INFINITY,
         LineWrappingPolicy::Viewport => available_width.max(1.0),
         LineWrappingPolicy::FixedColumn => {
-            let column = model.settings.wrap_column.unwrap_or(120).max(1);
+            let column = wrap_column.unwrap_or(120).max(1);
             column as f32 * code_char_width()
         }
     }
+}
+
+fn active_code_line_wrap_config(
+    settings_policy: LineWrappingPolicy,
+    settings_wrap_column: Option<u32>,
+    viewport: Option<(LineWrappingPolicy, Option<u32>)>,
+    available_width: f32,
+) -> (LineWrappingPolicy, Option<u32>, f32) {
+    let (policy, wrap_column) = viewport.unwrap_or((settings_policy, settings_wrap_column));
+    let width = code_line_wrap_width_for_policy(policy, wrap_column, available_width);
+    (policy, wrap_column, width)
+}
+
+/// Return the same wrap width used by the code canvas for visual navigation.
+pub fn visual_navigation_wrap_width(
+    viewport: &legion_protocol::ViewportProjection,
+    available_width: f32,
+    _line_numbers_visible: bool,
+    _item_spacing: f32,
+) -> f32 {
+    match viewport.line_wrapping_policy {
+        LineWrappingPolicy::Off => f32::INFINITY,
+        LineWrappingPolicy::Viewport => {
+            // `available_width` is the width remaining after the row gutters
+            // have been laid out. Do not reconstruct gutter dimensions here:
+            // those values are theme- and renderer-dependent.
+            available_width.max(1.0)
+        }
+        LineWrappingPolicy::FixedColumn => {
+            viewport.wrap_column.unwrap_or(120).max(1) as f32 * code_char_width()
+        }
+    }
+}
+
+/// The layout facts captured while the code row is actually being painted.
+///
+/// Input handlers must use these facts instead of reconstructing the canvas
+/// width from the outer panel (which has already consumed the gutters).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VisualNavigationPaintGeometry {
+    /// Buffer whose code row established this geometry.
+    pub buffer_id: legion_protocol::BufferId,
+    /// Measured galley wrap width after row gutters were laid out.
+    pub wrap_width: f32,
+    /// Wrapping policy used for the painted galley.
+    pub line_wrapping_policy: LineWrappingPolicy,
+    /// Fixed-column value used when applicable.
+    pub wrap_column: Option<u32>,
+    /// Egui cumulative pass in which the row was painted.
+    pub paint_pass: u64,
+    /// Device scale used for the painted layout.
+    pub pixels_per_point: f32,
+    /// Font-size bucket used by the galley cache.
+    pub font_size_bucket: u32,
+}
+
+/// Read paint geometry for a buffer when it belongs to the current egui pass
+/// and font scale. A missing or stale value means callers should request a
+/// fresh paint before shaping input geometry.
+pub fn visual_navigation_paint_geometry(
+    ui: &egui::Ui,
+    buffer_id: legion_protocol::BufferId,
+) -> Option<VisualNavigationPaintGeometry> {
+    let geometry = ui.ctx().data(|data| {
+        data.get_temp::<VisualNavigationPaintGeometry>(egui::Id::new((
+            "legion_desktop_visual_navigation_paint_geometry",
+            buffer_id.0,
+        )))
+    });
+    let geometry = geometry?;
+    (geometry.paint_pass == ui.ctx().cumulative_pass_nr()
+        && geometry.pixels_per_point.to_bits() == ui.ctx().pixels_per_point().to_bits()
+        && geometry.font_size_bucket == code_line_font_size_bucket())
+    .then_some(geometry)
+}
+
+fn record_visual_navigation_paint_geometry(ui: &egui::Ui, geometry: VisualNavigationPaintGeometry) {
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new((
+                "legion_desktop_visual_navigation_paint_geometry",
+                geometry.buffer_id.0,
+            )),
+            geometry,
+        );
+    });
 }
 
 const CODE_LINE_GALLEY_CACHE_LIMIT: usize = 512;
@@ -4225,12 +4679,524 @@ fn shape_code_line_galley(
     line: &DesktopCodeLineViewModel,
     wrap_width: f32,
 ) -> Arc<egui::Galley> {
+    let wrap_mode = if wrap_width.is_finite() {
+        Some(egui::TextWrapMode::Wrap)
+    } else {
+        Some(egui::TextWrapMode::Extend)
+    };
     egui::WidgetText::from(code_line_layout_job(line)).into_galley(
         ui,
-        None,
+        wrap_mode,
         wrap_width,
         egui::FontSelection::Default,
     )
+}
+
+/// Failure returned when a bounded renderer fragment cannot provide visual rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualNavigationGeometryError {
+    /// The wrap width is NaN, negative infinity, or a nonpositive finite value.
+    NonFiniteWrapWidth,
+    /// The fragment does not carry an absolute logical byte origin.
+    MissingLineOrigin,
+    /// A requested byte column is not a UTF-8 boundary in the fragment.
+    InvalidBoundary,
+    /// The requested position is outside this bounded fragment and needs a wider window.
+    NeedMoreWindow,
+    /// The caller's stop budget is too small for the selected rows.
+    StopBudgetExceeded,
+    /// The supplied fragment exceeds the renderer's bounded shaping budget.
+    FragmentTooLarge,
+    /// Focused visual navigation requires a complete logical line.
+    PartialFragment,
+    /// A target preferred X must be finite and nonnegative.
+    InvalidPreferredX,
+}
+
+/// Convert one bounded code-line galley into protocol visual-row facts.
+///
+/// `valid_byte_columns` is supplied as logical-line-relative columns by the editor/app window request. The renderer
+/// does not infer grapheme boundaries or materialize an entire logical line: it only
+/// emits stops for those validated logical byte columns that occur on selected rows.
+pub fn visual_navigation_rows_for_line(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    valid_byte_columns: &[u64],
+    stop_budget: usize,
+) -> Result<Vec<VisualNavigationRow>, VisualNavigationGeometryError> {
+    visual_navigation_rows_for_line_with_focus(
+        ui,
+        line,
+        wrap_width,
+        valid_byte_columns,
+        stop_budget,
+        None,
+    )
+}
+
+fn visual_navigation_rows_for_line_with_focus(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    valid_byte_columns: &[u64],
+    stop_budget: usize,
+    focus_byte_column: Option<u64>,
+) -> Result<Vec<VisualNavigationRow>, VisualNavigationGeometryError> {
+    if wrap_width.is_nan()
+        || wrap_width == f32::NEG_INFINITY
+        || (wrap_width.is_finite() && wrap_width <= 0.0)
+    {
+        return Err(VisualNavigationGeometryError::NonFiniteWrapWidth);
+    }
+    let origin = line
+        .line_start_byte_offset
+        .ok_or(VisualNavigationGeometryError::MissingLineOrigin)?;
+    let logical_base = line
+        .byte_range
+        .start
+        .checked_sub(origin)
+        .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+    const MAX_REQUESTED_STOPS: usize = 4_096;
+    if valid_byte_columns.len() > MAX_REQUESTED_STOPS {
+        return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+    }
+    const MAX_FRAGMENT_BYTES: usize = 96 * 1024;
+    if line.text.len() > MAX_FRAGMENT_BYTES {
+        return Err(VisualNavigationGeometryError::FragmentTooLarge);
+    }
+    let galley = shape_code_line_galley(ui, line, wrap_width);
+    let logical_line = line.number.saturating_sub(1);
+    let complete_fragment = matches!(line.truncation_state, ViewportLineTruncationState::None);
+    let mut requested = valid_byte_columns.to_vec();
+    requested.sort_unstable();
+    requested.dedup();
+    if focus_byte_column.is_none() && requested.len() > stop_budget {
+        return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+    }
+    let mut scalar_start = 0usize;
+    let mut rows = Vec::new();
+    let mut remaining_budget = stop_budget;
+    let mut emitted = vec![false; requested.len()];
+
+    for (row_index, row) in galley.rows.iter().enumerate() {
+        let scalar_end = scalar_start + row.char_count_excluding_newline();
+        let start_byte = absolute_byte_at_scalar(line, scalar_start)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let end_byte = absolute_byte_at_scalar(line, scalar_end)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let start_column = logical_base
+            .checked_add(start_byte)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let end_column = logical_base
+            .checked_add(end_byte)
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        if requested.last().is_some_and(|&last| start_column > last) {
+            break;
+        }
+        let mut stops = Vec::new();
+        let first = requested.partition_point(|&column| column < start_column);
+        let last = requested.partition_point(|&column| column <= end_column);
+        let row_requested = &requested[first..last];
+        // Keep one stop available for every later shaped row. This preserves
+        // the actual adjacent target row when a complete line has many
+        // boundaries, while the total emitted stops still obey the editor's
+        // 4096-stop validation bound.
+        let rows_remaining = galley.rows.len().saturating_sub(row_index + 1);
+        let row_budget = remaining_budget.saturating_sub(rows_remaining).max(1);
+        let selected = bounded_row_boundary_indices(row_requested, row_budget, focus_byte_column);
+        for offset in selected {
+            let byte_column = row_requested[offset];
+            let request_index = first + offset;
+            let local_byte = byte_column
+                .checked_sub(logical_base)
+                .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+            let Some(scalar) = scalar_for_local_byte(line, local_byte) else {
+                return Err(VisualNavigationGeometryError::InvalidBoundary);
+            };
+            if scalar < scalar_start || scalar > scalar_end {
+                continue;
+            }
+            if remaining_budget == 0 {
+                return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+            }
+            remaining_budget -= 1;
+            emitted[request_index] = true;
+            let affinity = if scalar == scalar_start && row_index > 0 {
+                legion_protocol::CaretAffinity::Downstream
+            } else {
+                legion_protocol::CaretAffinity::Upstream
+            };
+            let x = galley
+                .pos_from_cursor(egui::text::CCursor {
+                    index: scalar,
+                    prefer_next_row: affinity == legion_protocol::CaretAffinity::Downstream,
+                })
+                .min
+                .x;
+            stops.push(VisualNavigationStop {
+                position: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column,
+                },
+                x: VisualNavigationX { value: x },
+                affinity,
+            });
+        }
+        if !stops.is_empty() {
+            rows.push(VisualNavigationRow {
+                logical_line,
+                start: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column: start_column,
+                },
+                end: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column: end_column,
+                },
+                row_index: complete_fragment.then_some(row_index as u32),
+                row_count: complete_fragment.then_some(galley.rows.len() as u32),
+                stops,
+            });
+        }
+        scalar_start = scalar_end;
+    }
+    if rows.is_empty() || emitted.iter().any(|&seen| !seen) {
+        return Err(VisualNavigationGeometryError::NeedMoreWindow);
+    }
+    Ok(rows)
+}
+
+/// Select at most the renderer's stop budget while retaining the source or
+/// preferred-X neighborhood. Complete row spans remain exact even when a
+/// logical line has more than 4096 grapheme boundaries.
+fn bounded_row_boundary_indices(
+    boundaries: &[u64],
+    budget: usize,
+    focus: Option<u64>,
+) -> Vec<usize> {
+    if boundaries.len() <= budget {
+        return (0..boundaries.len()).collect();
+    }
+    if budget == 0 {
+        return Vec::new();
+    }
+    let pivot = focus
+        .map(|value| boundaries.partition_point(|&boundary| boundary < value))
+        .unwrap_or(boundaries.len() / 2)
+        .min(boundaries.len().saturating_sub(1));
+    let start = pivot
+        .saturating_sub(budget / 2)
+        .min(boundaries.len().saturating_sub(budget));
+    (start..start + budget).collect()
+}
+
+/// Build one source-row fact and its preferred rendered X from a bounded galley.
+pub fn visual_navigation_source_row_for_line(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    source_byte_column: u64,
+    source_affinity: legion_protocol::CaretAffinity,
+    valid_byte_columns: &[u64],
+    stop_budget: usize,
+) -> Result<VisualNavigationSourceRow, VisualNavigationGeometryError> {
+    let rows = visual_navigation_rows_for_line_with_focus(
+        ui,
+        line,
+        wrap_width,
+        valid_byte_columns,
+        stop_budget,
+        Some(source_byte_column),
+    )?;
+    for row in rows {
+        let source_x = row
+            .stops
+            .iter()
+            .find(|stop| {
+                stop.position.byte_column == source_byte_column && stop.affinity == source_affinity
+            })
+            .map(|stop| stop.x);
+        if let Some(source_x) = source_x {
+            return Ok(VisualNavigationSourceRow { row, source_x });
+        }
+    }
+    Err(VisualNavigationGeometryError::NeedMoreWindow)
+}
+
+/// Select exactly one shaped row without materializing every stop in a long
+/// complete line. The supplied boundaries remain the sole source of valid
+/// caret positions; the renderer never reconstructs grapheme boundaries.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VisualNavigationRowRequest {
+    /// Select the row containing this byte boundary and affinity.
+    Source {
+        /// Logical-line-relative UTF-8 byte column.
+        byte_column: u64,
+        /// Wrap-side affinity at the source boundary.
+        affinity: legion_protocol::CaretAffinity,
+    },
+    /// Select a shaped visual row and nearest supplied stop to this X.
+    Target {
+        /// Zero-based visual row index.
+        row_index: u32,
+        /// Preferred row-local rendered X.
+        preferred_x: f32,
+    },
+}
+
+/// Result of focused row shaping. `source_x` is populated for a source
+/// request and `target_stop` for a target request. The row contains at most
+/// three stops: the selected stop and any supplied true row endpoints.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualNavigationSelectedRow {
+    /// Exact shaped row span and bounded stops.
+    pub row: VisualNavigationRow,
+    /// Source stop X, when the request selected a source row.
+    pub source_x: Option<VisualNavigationX>,
+    /// Nearest target stop, when the request selected a target row.
+    pub target_stop: Option<VisualNavigationStop>,
+}
+
+/// Shape one source or target row from a complete logical-line fragment.
+///
+/// Unlike `visual_navigation_rows_for_line`, this focused API accepts more
+/// than 4096 supplied boundaries, validates the complete input up front, and
+/// emits only the requested row's source/nearest-X stop plus valid endpoints.
+pub fn visual_navigation_selected_row_for_line(
+    ui: &egui::Ui,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+    valid_byte_columns: &[u64],
+    request: VisualNavigationRowRequest,
+) -> Result<VisualNavigationSelectedRow, VisualNavigationGeometryError> {
+    if wrap_width.is_nan()
+        || wrap_width == f32::NEG_INFINITY
+        || (wrap_width.is_finite() && wrap_width <= 0.0)
+    {
+        return Err(VisualNavigationGeometryError::NonFiniteWrapWidth);
+    }
+    let origin = line
+        .line_start_byte_offset
+        .ok_or(VisualNavigationGeometryError::MissingLineOrigin)?;
+    let logical_base = line
+        .byte_range
+        .start
+        .checked_sub(origin)
+        .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+    const MAX_FRAGMENT_BYTES: usize = 96 * 1024;
+    if line.text.len() > MAX_FRAGMENT_BYTES {
+        return Err(VisualNavigationGeometryError::FragmentTooLarge);
+    }
+    if !matches!(line.truncation_state, ViewportLineTruncationState::None) {
+        return Err(VisualNavigationGeometryError::PartialFragment);
+    }
+    if valid_byte_columns.len() > MAX_FRAGMENT_BYTES + 1 {
+        return Err(VisualNavigationGeometryError::StopBudgetExceeded);
+    }
+    if let VisualNavigationRowRequest::Target { preferred_x, .. } = request
+        && (!preferred_x.is_finite() || preferred_x < 0.0)
+    {
+        return Err(VisualNavigationGeometryError::InvalidPreferredX);
+    }
+    let mut byte_to_scalar = HashMap::with_capacity(line.text.chars().count() + 1);
+    for (scalar, (byte, _)) in line.text.char_indices().enumerate() {
+        byte_to_scalar.insert(byte as u64, scalar);
+    }
+    byte_to_scalar.insert(line.text.len() as u64, line.text.chars().count());
+    let mut requested = valid_byte_columns.to_vec();
+    requested.sort_unstable();
+    requested.dedup();
+    // Validate every supplied boundary before choosing a row. This prevents
+    // a focused request from silently hiding a missing or invalid window edge.
+    for &column in &requested {
+        let local = column
+            .checked_sub(logical_base)
+            .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?;
+        if !byte_to_scalar.contains_key(&local) {
+            return Err(VisualNavigationGeometryError::NeedMoreWindow);
+        }
+    }
+    let galley = shape_code_line_galley(ui, line, wrap_width);
+    let logical_line = line.number.saturating_sub(1);
+    let complete_fragment = matches!(line.truncation_state, ViewportLineTruncationState::None);
+    let wanted_row = match request {
+        VisualNavigationRowRequest::Source { .. } => None,
+        VisualNavigationRowRequest::Target { row_index, .. } => Some(row_index),
+    };
+    let mut scalar_start = 0usize;
+    for (row_index, shaped_row) in galley.rows.iter().enumerate() {
+        let scalar_end = scalar_start + shaped_row.char_count_excluding_newline();
+        let start_column = logical_base
+            .checked_add(
+                absolute_byte_at_scalar(line, scalar_start)
+                    .ok_or(VisualNavigationGeometryError::InvalidBoundary)?,
+            )
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let end_column = logical_base
+            .checked_add(
+                absolute_byte_at_scalar(line, scalar_end)
+                    .ok_or(VisualNavigationGeometryError::InvalidBoundary)?,
+            )
+            .ok_or(VisualNavigationGeometryError::InvalidBoundary)?;
+        let source_match = match request {
+            VisualNavigationRowRequest::Source {
+                byte_column,
+                affinity,
+            } => {
+                requested.binary_search(&byte_column).is_ok()
+                    && byte_to_scalar
+                        .get(
+                            &byte_column
+                                .checked_sub(logical_base)
+                                .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?,
+                        )
+                        .is_some_and(|&scalar| {
+                            scalar >= scalar_start
+                                && scalar <= scalar_end
+                                && (affinity == legion_protocol::CaretAffinity::Downstream
+                                    || row_index == 0
+                                    || scalar != scalar_start)
+                        })
+            }
+            VisualNavigationRowRequest::Target { .. } => false,
+        };
+        if matches!(request, VisualNavigationRowRequest::Source { .. }) && !source_match {
+            scalar_start = scalar_end;
+            continue;
+        }
+        if wanted_row.is_some_and(|wanted| wanted != row_index as u32) {
+            scalar_start = scalar_end;
+            continue;
+        }
+        let first = requested.partition_point(|&column| column < start_column);
+        let last = requested.partition_point(|&column| column <= end_column);
+        let mut candidates = Vec::with_capacity(last.saturating_sub(first));
+        for &byte_column in &requested[first..last] {
+            let scalar = *byte_to_scalar
+                .get(
+                    &byte_column
+                        .checked_sub(logical_base)
+                        .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?,
+                )
+                .ok_or(VisualNavigationGeometryError::NeedMoreWindow)?;
+            if scalar < scalar_start || scalar > scalar_end {
+                continue;
+            }
+            let affinity = if scalar == scalar_start && row_index > 0 {
+                legion_protocol::CaretAffinity::Downstream
+            } else {
+                legion_protocol::CaretAffinity::Upstream
+            };
+            let x = galley
+                .pos_from_cursor(egui::text::CCursor {
+                    index: scalar,
+                    prefer_next_row: affinity == legion_protocol::CaretAffinity::Downstream,
+                })
+                .min
+                .x;
+            candidates.push(VisualNavigationStop {
+                position: VisualNavigationPosition {
+                    line: logical_line,
+                    byte_column,
+                },
+                x: VisualNavigationX { value: x },
+                affinity,
+            });
+        }
+        let selected = match request {
+            VisualNavigationRowRequest::Source {
+                byte_column,
+                affinity,
+            } => candidates
+                .iter()
+                .find(|stop| stop.position.byte_column == byte_column && stop.affinity == affinity)
+                .cloned(),
+            VisualNavigationRowRequest::Target { preferred_x, .. } if preferred_x.is_finite() => {
+                candidates.iter().cloned().min_by(|left, right| {
+                    let ld = (left.x.value - preferred_x).abs();
+                    let rd = (right.x.value - preferred_x).abs();
+                    ld.partial_cmp(&rd)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| left.position.byte_column.cmp(&right.position.byte_column))
+                })
+            }
+            VisualNavigationRowRequest::Target { .. } => None,
+        };
+        let Some(selected) = selected else {
+            scalar_start = scalar_end;
+            continue;
+        };
+        let mut stops = Vec::with_capacity(3);
+        for stop in candidates.iter().filter(|stop| {
+            stop.position.byte_column == start_column || stop.position.byte_column == end_column
+        }) {
+            if !stops
+                .iter()
+                .any(|existing: &VisualNavigationStop| existing.position == stop.position)
+            {
+                stops.push(stop.clone());
+            }
+        }
+        if !stops.iter().any(|stop| stop.position == selected.position) {
+            stops.push(selected.clone());
+        }
+        stops.sort_by(|left, right| {
+            left.position
+                .byte_column
+                .cmp(&right.position.byte_column)
+                .then_with(|| {
+                    affinity_sort_key(left.affinity).cmp(&affinity_sort_key(right.affinity))
+                })
+        });
+        stops.truncate(3);
+        let row = VisualNavigationRow {
+            logical_line,
+            row_index: complete_fragment.then_some(row_index as u32),
+            row_count: complete_fragment.then_some(galley.rows.len() as u32),
+            start: VisualNavigationPosition {
+                line: logical_line,
+                byte_column: start_column,
+            },
+            end: VisualNavigationPosition {
+                line: logical_line,
+                byte_column: end_column,
+            },
+            stops,
+        };
+        return Ok(VisualNavigationSelectedRow {
+            row,
+            source_x: matches!(request, VisualNavigationRowRequest::Source { .. })
+                .then_some(selected.x),
+            target_stop: matches!(request, VisualNavigationRowRequest::Target { .. })
+                .then_some(selected),
+        });
+    }
+    Err(VisualNavigationGeometryError::NeedMoreWindow)
+}
+
+fn affinity_sort_key(affinity: legion_protocol::CaretAffinity) -> u8 {
+    match affinity {
+        legion_protocol::CaretAffinity::Upstream => 0,
+        legion_protocol::CaretAffinity::Downstream => 1,
+    }
+}
+
+fn absolute_byte_at_scalar(line: &DesktopCodeLineViewModel, scalar: usize) -> Option<u64> {
+    let local = if scalar == line.text.chars().count() {
+        line.text.len()
+    } else {
+        line.text.char_indices().nth(scalar)?.0
+    };
+    Some(local as u64)
+}
+
+fn scalar_for_local_byte(line: &DesktopCodeLineViewModel, local_byte: u64) -> Option<usize> {
+    let local = usize::try_from(local_byte).ok()?;
+    if local > line.text.len() || !line.text.is_char_boundary(local) {
+        return None;
+    }
+    Some(line.text[..local].chars().count())
 }
 
 fn code_line_galley_cache_key(
@@ -4298,40 +5264,93 @@ fn paint_code_selections(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     selections: &[ProtocolTextRange],
-    char_width: f32,
+    galley: &egui::Galley,
 ) {
-    let line_index = line.number.saturating_sub(1);
-    let line_len = line.text.chars().count() as u32;
     for selection in selections {
-        if line_index < selection.start.line || line_index > selection.end.line {
+        let Some((start_col, end_col, include_empty_line)) =
+            editor_selection_columns_for_line(line, *selection)
+        else {
             continue;
-        }
-        let start_col = if line_index == selection.start.line {
-            selection.start.character.min(line_len)
-        } else {
-            0
         };
-        let end_col = if line_index == selection.end.line {
-            selection.end.character.min(line_len)
-        } else {
-            line_len
-        };
-        if start_col >= end_col {
-            continue;
+        for selection_rect in editor_selection_rects_for_galley(
+            line,
+            galley,
+            response.rect.min,
+            start_col,
+            end_col,
+            include_empty_line,
+        ) {
+            ui.painter()
+                .rect_filled(selection_rect, 0.0, theme::tokens().code_canvas.selection);
         }
-        let selection_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                response.rect.left() + start_col as f32 * char_width,
-                response.rect.top(),
-            ),
-            egui::pos2(
-                response.rect.left() + end_col as f32 * char_width,
-                response.rect.bottom(),
-            ),
-        );
-        ui.painter()
-            .rect_filled(selection_rect, 0.0, theme::tokens().code_canvas.selection);
     }
+}
+
+/// Return the visible scalar interval of a logical selection for one rendered line.
+pub fn editor_selection_columns_for_line(
+    line: &DesktopCodeLineViewModel,
+    selection: ProtocolTextRange,
+) -> Option<(usize, usize, bool)> {
+    let selection = normalized_text_range(selection);
+    let line_index = line.number.saturating_sub(1);
+    if line_index < selection.start.line || line_index > selection.end.line {
+        return None;
+    }
+    let line_len = line.text.chars().count();
+    let start_col = if line_index == selection.start.line {
+        clipped_scalar_for_coordinate(line, selection.start)?
+    } else {
+        0
+    };
+    let end_col = if line_index == selection.end.line {
+        clipped_scalar_for_coordinate(line, selection.end)?
+    } else {
+        line_len
+    };
+    let include_empty_line = line.text.is_empty()
+        && selection.start != selection.end
+        && line_index >= selection.start.line
+        && line_index < selection.end.line;
+    if start_col > end_col || (start_col == end_col && !include_empty_line) {
+        return None;
+    }
+    Some((start_col, end_col, include_empty_line))
+}
+
+fn normalized_text_range(range: ProtocolTextRange) -> ProtocolTextRange {
+    if (range.end.line, range.end.character) < (range.start.line, range.start.character) {
+        ProtocolTextRange {
+            start: range.end,
+            end: range.start,
+        }
+    } else {
+        range
+    }
+}
+
+fn clipped_scalar_for_coordinate(
+    line: &DesktopCodeLineViewModel,
+    coordinate: TextCoordinate,
+) -> Option<usize> {
+    let absolute_byte = if let Some(byte) = coordinate.byte_offset {
+        byte
+    } else if let Some(origin) = line.line_start_byte_offset {
+        origin.checked_add(u64::from(coordinate.character))?
+    } else if matches!(
+        line.truncation_state,
+        ViewportLineTruncationState::Leading | ViewportLineTruncationState::Both
+    ) {
+        return None;
+    } else {
+        line.byte_range
+            .start
+            .checked_add(u64::from(coordinate.character))?
+    };
+    let clipped_byte = absolute_byte.clamp(line.byte_range.start, line.byte_range.end);
+    Some(byte_column_to_scalar_index(
+        &line.text,
+        (clipped_byte - line.byte_range.start) as u32,
+    ))
 }
 
 fn paint_code_cursor(
@@ -4339,28 +5358,36 @@ fn paint_code_cursor(
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     cursor: TextCoordinate,
-    char_width: f32,
+    affinity: CaretAffinity,
+    primary: bool,
+    galley: &egui::Galley,
 ) {
     if cursor.line != line.number.saturating_sub(1) {
         return;
     }
     ui.ctx().request_repaint_after(Duration::from_millis(530));
-    let col = cursor.character.min(line.text.chars().count() as u32);
-    let x = response.rect.left() + col as f32 * char_width;
-    let cursor_rect = egui::Rect::from_min_max(
-        egui::pos2(x, response.rect.top()),
-        egui::pos2(x + 1.0, response.rect.bottom()),
+    let Some(scalar_index) = local_scalar_for_coordinate(line, cursor) else {
+        return;
+    };
+    let cursor_rect = editor_cursor_rect_for_galley_with_affinity(
+        line,
+        galley,
+        response.rect.min,
+        scalar_index,
+        affinity,
     );
     let to_global = ui
         .ctx()
         .layer_transform_to_global(ui.layer_id())
         .unwrap_or_default();
-    ui.output_mut(|output| {
-        output.ime = Some(egui::output::IMEOutput {
-            rect: to_global * response.rect,
-            cursor_rect: to_global * cursor_rect,
+    if primary {
+        ui.output_mut(|output| {
+            output.ime = Some(egui::output::IMEOutput {
+                rect: to_global * response.rect,
+                cursor_rect: to_global * cursor_rect,
+            });
         });
-    });
+    }
     let blink_on = ui
         .ctx()
         .input(|input| ((input.time * 2.0) as i64).rem_euclid(2) == 0);
@@ -4368,10 +5395,7 @@ fn paint_code_cursor(
         return;
     }
     ui.painter().line_segment(
-        [
-            egui::pos2(x, response.rect.top()),
-            egui::pos2(x, response.rect.bottom()),
-        ],
+        [cursor_rect.left_top(), cursor_rect.left_bottom()],
         egui::Stroke::new(1.0_f32, theme::tokens().code_canvas.cursor),
     );
 }
@@ -4384,6 +5408,271 @@ fn byte_column_to_display_column(line: &str, byte_column: u32) -> u32 {
     line.get(..byte_column)
         .map(|prefix| prefix.chars().count() as u32)
         .unwrap_or_else(|| line.chars().count() as u32)
+}
+
+fn byte_column_to_scalar_index(line: &str, byte_column: u32) -> usize {
+    let mut boundary = (byte_column as usize).min(line.len());
+    while boundary > 0 && !line.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    line[..boundary].chars().count()
+}
+
+fn scalar_index_to_byte_column(line: &str, scalar_index: usize) -> u32 {
+    line.char_indices()
+        .nth(scalar_index)
+        .map(|(offset, _)| offset)
+        .unwrap_or(line.len()) as u32
+}
+
+/// Shape an editor line with the same layout job used by the live code canvas.
+///
+/// This small seam is used by headless geometry tests; it does not own editor
+/// state or change the renderer's text authority.
+pub fn editor_galley_for_geometry(
+    ctx: &egui::Context,
+    line: &DesktopCodeLineViewModel,
+    wrap_width: f32,
+) -> Arc<egui::Galley> {
+    let mut galley = None;
+    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        galley = Some(ui.ctx().fonts_mut(|fonts| {
+            let mut job = code_line_layout_job(line);
+            job.wrap.max_width = wrap_width;
+            fonts.layout_job(job)
+        }));
+    });
+    galley.expect("geometry galley should be shaped during an egui frame")
+}
+
+/// Map a pointer in a rendered line label to the protocol's UTF-8 byte column.
+pub fn editor_coordinate_from_galley_pointer(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer: egui::Pos2,
+    origin: egui::Pos2,
+) -> Option<TextCoordinate> {
+    editor_visual_coordinate_from_galley_pointer(line, galley, pointer, origin)
+        .map(|(coordinate, _)| coordinate)
+}
+
+/// Map a pointer in a rendered line label to its protocol coordinate and wrap-side affinity.
+pub fn editor_visual_coordinate_from_galley_pointer(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer: egui::Pos2,
+    origin: egui::Pos2,
+) -> Option<(TextCoordinate, CaretAffinity)> {
+    let cursor = galley.cursor_from_pos(pointer - origin);
+    let scalar_index = cursor.index.min(line.text.chars().count());
+    text_coordinate_for_line_scalar(line, scalar_index).map(|coordinate| {
+        (
+            coordinate,
+            if cursor.prefer_next_row {
+                CaretAffinity::Downstream
+            } else {
+                CaretAffinity::Upstream
+            },
+        )
+    })
+}
+
+/// Map a drag anchor through the rendered galley, including wrapped-row Y.
+pub fn drag_anchor_for_line_pointer_with_galley(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer_x: f32,
+    total_drag_delta: egui::Vec2,
+    pointer_y: f32,
+    origin: egui::Pos2,
+) -> Option<TextCoordinate> {
+    editor_coordinate_from_galley_pointer(
+        line,
+        galley,
+        egui::pos2(
+            pointer_x - total_drag_delta.x,
+            pointer_y - total_drag_delta.y,
+        ),
+        origin,
+    )
+}
+
+/// Map a drag anchor through the rendered galley, retaining wrap-side affinity.
+pub fn drag_anchor_for_line_pointer_with_galley_visual(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    pointer_x: f32,
+    total_drag_delta: egui::Vec2,
+    pointer_y: f32,
+    origin: egui::Pos2,
+) -> Option<(TextCoordinate, CaretAffinity)> {
+    editor_visual_coordinate_from_galley_pointer(
+        line,
+        galley,
+        egui::pos2(
+            pointer_x - total_drag_delta.x,
+            pointer_y - total_drag_delta.y,
+        ),
+        origin,
+    )
+}
+
+fn text_coordinate_for_line_scalar(
+    line: &DesktopCodeLineViewModel,
+    scalar_index: usize,
+) -> Option<TextCoordinate> {
+    let scalar_index = scalar_index.min(line.text.chars().count());
+    let local_byte = scalar_index_to_byte_column(&line.text, scalar_index) as u64;
+    let local_utf16 = line.text[..local_byte as usize].encode_utf16().count() as u64;
+    let logical_base = line
+        .line_start_byte_offset
+        .map(|origin| line.byte_range.start.checked_sub(origin))
+        .unwrap_or_else(|| {
+            matches!(
+                line.truncation_state,
+                ViewportLineTruncationState::None | ViewportLineTruncationState::Trailing
+            )
+            .then_some(0)
+        })?;
+    let byte_offset = line.byte_range.start.checked_add(local_byte)?;
+    let character = logical_base.checked_add(local_byte)?;
+    let utf16_offset = line
+        .line_start_utf16_offset
+        .and_then(|origin| origin.checked_add(u64::from(line.utf16_range.start.character)))
+        .and_then(|base| base.checked_add(local_utf16));
+    let character = u32::try_from(character).ok()?;
+    let mut coordinate = text_coordinate(line.number.saturating_sub(1), character);
+    coordinate.byte_offset = Some(byte_offset);
+    coordinate.utf16_offset = utf16_offset;
+    Some(coordinate)
+}
+
+fn local_scalar_for_coordinate(
+    line: &DesktopCodeLineViewModel,
+    coordinate: TextCoordinate,
+) -> Option<usize> {
+    let local_byte = if let Some(absolute) = coordinate.byte_offset {
+        if absolute < line.byte_range.start || absolute > line.byte_range.end {
+            return None;
+        }
+        absolute - line.byte_range.start
+    } else {
+        let logical_base = line
+            .line_start_byte_offset
+            .map(|origin| line.byte_range.start.checked_sub(origin))
+            .unwrap_or_else(|| {
+                matches!(
+                    line.truncation_state,
+                    ViewportLineTruncationState::None | ViewportLineTruncationState::Trailing
+                )
+                .then_some(0)
+            })?;
+        u64::from(coordinate.character).checked_sub(logical_base)?
+    };
+    if local_byte > line.text.len() as u64 {
+        return None;
+    }
+    Some(byte_column_to_scalar_index(&line.text, local_byte as u32))
+}
+
+/// Return a short caret rectangle at a scalar cursor position in a rendered line.
+pub fn editor_cursor_rect_for_galley(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    scalar_index: usize,
+) -> egui::Rect {
+    editor_cursor_rect_for_galley_with_affinity(
+        line,
+        galley,
+        origin,
+        scalar_index,
+        CaretAffinity::Upstream,
+    )
+}
+
+/// Return a caret rectangle using the projected wrap-side affinity.
+pub fn editor_cursor_rect_for_galley_with_affinity(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    scalar_index: usize,
+    affinity: CaretAffinity,
+) -> egui::Rect {
+    let scalar_index = scalar_index.min(line.text.chars().count());
+    let position = if galley.rows.is_empty()
+        || galley
+            .pos_from_cursor(egui::text::CCursor {
+                index: scalar_index,
+                prefer_next_row: affinity == CaretAffinity::Downstream,
+            })
+            .height()
+            <= 0.0
+    {
+        egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(0.0, code_line_fallback_height()),
+        )
+    } else {
+        galley.pos_from_cursor(egui::text::CCursor {
+            index: scalar_index,
+            prefer_next_row: affinity == CaretAffinity::Downstream,
+        })
+    };
+    egui::Rect::from_min_max(
+        origin + position.min.to_vec2(),
+        origin + egui::vec2(position.min.x + 1.0, position.max.y),
+    )
+}
+
+/// Split a selection into one rectangle per rendered galley row.
+pub fn editor_selection_rects_for_galley(
+    line: &DesktopCodeLineViewModel,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    start_scalar: usize,
+    end_scalar: usize,
+    include_empty_line: bool,
+) -> Vec<egui::Rect> {
+    let line_len = line.text.chars().count();
+    let start_scalar = start_scalar.min(line_len);
+    let end_scalar = end_scalar.min(line_len);
+    if start_scalar == end_scalar && !(include_empty_line && line_len == 0) {
+        return Vec::new();
+    }
+    if start_scalar > end_scalar {
+        return Vec::new();
+    }
+    if galley.rows.is_empty() || galley.rows.iter().all(|row| row.rect().height() <= 0.0) {
+        return vec![egui::Rect::from_min_size(
+            origin,
+            egui::vec2(1.0, code_line_fallback_height()),
+        )];
+    }
+    let mut row_start = 0usize;
+    let mut rectangles = Vec::new();
+    for placed_row in &galley.rows {
+        let row_end = row_start + placed_row.glyphs.len();
+        let selection_start = start_scalar.max(row_start);
+        let selection_end = end_scalar.min(row_end);
+        if selection_start < selection_end {
+            let start_column = selection_start - row_start;
+            let end_column = selection_end - row_start;
+            let left = placed_row.pos.x + placed_row.x_offset(start_column);
+            let right = (placed_row.pos.x + placed_row.x_offset(end_column)).max(left + 1.0);
+            let row_rect = placed_row.rect();
+            rectangles.push(egui::Rect::from_min_max(
+                origin + egui::vec2(left, row_rect.top()),
+                origin + egui::vec2(right, row_rect.bottom()),
+            ));
+        }
+        row_start = row_end + if placed_row.ends_with_newline { 1 } else { 0 };
+    }
+    rectangles
+}
+
+fn code_line_fallback_height() -> f32 {
+    (theme::tokens().typography.code as f32 * 1.2).max(1.0)
 }
 
 fn paint_find_match_highlights(
@@ -4627,12 +5916,135 @@ fn render_definition_picker(
         });
 }
 
+/// Show bounded, keyboard-focusable reference locations from the authoritative
+/// language projection. Activation emits the normal path-opening action.
+fn render_reference_panel(
+    ui: &mut egui::Ui,
+    references: &[LanguageLocationProjection],
+    actions: &mut Vec<DesktopAction>,
+) {
+    let tokens = theme::tokens();
+    egui::Area::new("legion_desktop_reference_panel".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -100.0))
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(560.0);
+            egui::Frame::new()
+                .fill(tokens.bg.panel)
+                .stroke(egui::Stroke::new(1.0_f32, tokens.border.default))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.label(theme::body_strong("References"));
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .id_salt("reference_panel_scroll")
+                        .show(ui, |ui| {
+                            for reference in references.iter().take(64) {
+                                let path = reference
+                                    .path
+                                    .as_ref()
+                                    .map(|path| path.0.as_str())
+                                    .unwrap_or("<unavailable path>");
+                                let (line, character) = reference
+                                    .range
+                                    .as_ref()
+                                    .map(|range| (range.start.line, range.start.character))
+                                    .unwrap_or((0, 0));
+                                let label = format!(
+                                    "{}  {}:{}:{}",
+                                    reference.label,
+                                    path,
+                                    line + 1,
+                                    character + 1
+                                );
+                                if ui
+                                    .add(egui::Button::new(theme::body(&label)).wrap())
+                                    .clicked()
+                                    && reference.path.is_some()
+                                    && reference.range.is_some()
+                                {
+                                    actions.push(DesktopAction::NavigateToReference {
+                                        path: path.to_owned(),
+                                        line,
+                                        character,
+                                    });
+                                }
+                            }
+                        });
+                });
+        });
+}
+
+fn render_code_action_panel(
+    ui: &mut egui::Ui,
+    candidates: &[LanguageCodeActionProjection],
+    actions: &mut Vec<DesktopAction>,
+) {
+    let tokens = theme::tokens();
+    egui::Area::new("legion_desktop_code_action_panel".into())
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(560.0);
+            egui::Frame::new()
+                .fill(tokens.bg.panel)
+                .stroke(egui::Stroke::new(1.0_f32, tokens.border.default))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(theme::body_strong("Code actions"));
+                        if ui.button("Request").clicked() {
+                            actions.push(DesktopAction::RequestCodeActions);
+                        }
+                    });
+                    if candidates.is_empty() {
+                        ui.label(theme::muted("No code actions available"));
+                        return;
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .id_salt("code_action_panel_scroll")
+                        .show(ui, |ui| {
+                            for candidate in candidates.iter().take(64) {
+                                let suffix = candidate
+                                    .kind
+                                    .as_deref()
+                                    .map(|kind| format!(" ({kind})"))
+                                    .unwrap_or_default();
+                                let disabled = candidate.disabled_reason.is_some();
+                                let text = if let Some(reason) = &candidate.disabled_reason {
+                                    format!("{}{} — disabled: {}", candidate.title, suffix, reason)
+                                } else {
+                                    format!("{}{}", candidate.title, suffix)
+                                };
+                                if ui
+                                    .add_enabled(
+                                        !disabled,
+                                        egui::Button::new(theme::body(&text)).wrap(),
+                                    )
+                                    .clicked()
+                                {
+                                    actions.push(DesktopAction::SelectCodeAction {
+                                        response_id: candidate.response_id.clone(),
+                                        action_id: candidate.action_id.clone(),
+                                    });
+                                }
+                            }
+                        });
+                });
+        });
+}
+
 fn paint_ime_composition(
     ui: &egui::Ui,
     line: &DesktopCodeLineViewModel,
     response: &egui::Response,
     cursor: TextCoordinate,
-    char_width: f32,
+    affinity: CaretAffinity,
+    source_galley: &egui::Galley,
     ime_composition: &ImeCompositionProjection,
 ) {
     if cursor.line != line.number.saturating_sub(1) || !ime_composition.active {
@@ -4643,13 +6055,21 @@ fn paint_ime_composition(
         return;
     }
 
-    let col = cursor.character.min(line.text.chars().count() as u32);
-    let x = response.rect.left() + col as f32 * char_width;
+    let Some(scalar_index) = local_scalar_for_coordinate(line, cursor) else {
+        return;
+    };
+    let cursor_rect = editor_cursor_rect_for_galley_with_affinity(
+        line,
+        source_galley,
+        response.rect.min,
+        scalar_index,
+        affinity,
+    );
     let font_id = egui::FontId::monospace(theme::tokens().typography.code as f32);
     let galley =
         ui.painter()
             .layout_no_wrap(preedit.to_string(), font_id, theme::tokens().accent.orange);
-    let top_left = egui::pos2(x, response.rect.top());
+    let top_left = cursor_rect.left_top();
     let ime_rect = egui::Rect::from_min_size(top_left, galley.size());
     ui.painter().rect_filled(
         ime_rect.expand2(egui::vec2(2.0, 1.0)),
@@ -5309,6 +6729,34 @@ fn render_setup_panel(
     .inner
 }
 
+fn bound_typescript_toolchain_path(value: &mut String) {
+    if value.chars().count() > TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS {
+        *value = value
+            .chars()
+            .take(TYPESCRIPT_TOOLCHAIN_PATH_MAX_CHARS)
+            .collect();
+    }
+}
+
+fn bounded_typescript_toolchain_path(mut value: String) -> String {
+    bound_typescript_toolchain_path(&mut value);
+    value
+}
+
+fn active_file_supports_typescript(snapshot: &ShellProjectionSnapshot) -> bool {
+    snapshot
+        .active_buffer_projection
+        .file_path
+        .as_ref()
+        .and_then(|path| path.0.rsplit_once('.').map(|(_, extension)| extension))
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs"
+            )
+        })
+}
+
 fn render_settings_panel(
     ui: &mut egui::Ui,
     snapshot: &ShellProjectionSnapshot,
@@ -5410,10 +6858,9 @@ fn render_settings_panel(
             });
         }
         if view.settings_section == SettingsSection::Editor {
-            // Line wrapping had a projected setting, an intent, and app
-            // handling that `code_line_wrap_width` genuinely reads — and no
-            // control, so the only value reachable in the product was the
-            // default.
+            // Line wrapping has a projected setting, an intent, and app
+            // handling, but no control, so the only value reachable in the
+            // product was the default.
             ui.horizontal_wrapped(|ui| {
                 ui.label(theme::label("Line wrapping"));
                 for (policy, label) in [
@@ -5457,6 +6904,96 @@ fn render_settings_panel(
                     }
                 }
             });
+        }
+        if view.settings_section == SettingsSection::LanguageTools {
+            let toolchain = &snapshot
+                .language_tooling_projection
+                .typescript_toolchain;
+            let status = match toolchain.status {
+                LanguageToolchainConfigurationStatus::Unconfigured => "Unconfigured",
+                LanguageToolchainConfigurationStatus::Draft => "Draft",
+                LanguageToolchainConfigurationStatus::Configured => "Configured",
+            };
+            ui.horizontal(|ui| {
+                ui.label(theme::label("TypeScript / JavaScript"));
+                ui.label(theme::muted(format!("Status: {status}")));
+            });
+            ui.label(theme::muted(
+                "Choose metadata paths; app authority validates them when starting the server.",
+            ));
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Language server archive"));
+                let response = ui.add(interactive_fields::settings_path_text_edit(
+                    &mut view.typescript_toolchain_draft.server_archive,
+                    "server archive path",
+                ));
+                if response.changed() {
+                    bound_typescript_toolchain_path(
+                        &mut view.typescript_toolchain_draft.server_archive,
+                    );
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Compiler archive"));
+                let response = ui.add(interactive_fields::settings_path_text_edit(
+                    &mut view.typescript_toolchain_draft.compiler_archive,
+                    "compiler archive path",
+                ));
+                if response.changed() {
+                    bound_typescript_toolchain_path(
+                        &mut view.typescript_toolchain_draft.compiler_archive,
+                    );
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("Node executable"));
+                let response = ui.add(interactive_fields::settings_path_text_edit(
+                    &mut view.typescript_toolchain_draft.node_executable,
+                    "node executable path",
+                ));
+                if response.changed() {
+                    bound_typescript_toolchain_path(
+                        &mut view.typescript_toolchain_draft.node_executable,
+                    );
+                }
+            });
+            let ready = !view.typescript_toolchain_draft.server_archive.is_empty()
+                && !view.typescript_toolchain_draft.compiler_archive.is_empty()
+                && !view.typescript_toolchain_draft.node_executable.is_empty();
+            ui.horizontal(|ui| {
+                if primary_button_enabled(
+                    ui,
+                    "Configure toolchain",
+                    theme::tokens().accent.blue,
+                    ready,
+                )
+                .clicked()
+                    && ready
+                {
+                    actions.push(DesktopAction::ConfigureTypeScriptToolchain {
+                        server_archive: view.typescript_toolchain_draft.server_archive.clone(),
+                        compiler_archive: view.typescript_toolchain_draft.compiler_archive.clone(),
+                        node_executable: view.typescript_toolchain_draft.node_executable.clone(),
+                    });
+                }
+                if soft_button(ui, "Clear toolchain").clicked() {
+                    actions.push(DesktopAction::ClearTypeScriptToolchain);
+                }
+            });
+            if active_file_supports_typescript(snapshot) {
+                ui.horizontal(|ui| {
+                    if soft_button(ui, "Start language server").clicked() {
+                        actions.push(DesktopAction::StartLspSession);
+                    }
+                    if soft_button(ui, "Restart language server").clicked() {
+                        actions.push(DesktopAction::RestartLspSession);
+                    }
+                });
+            } else {
+                ui.label(theme::muted(
+                    "Start and restart are available when a TypeScript or JavaScript file is active.",
+                ));
+            }
         }
         if view.settings_section == SettingsSection::AiProviders {
             if snapshot.assisted_ai_projection.providers.is_empty() {
@@ -6688,6 +8225,13 @@ fn render_terminal_stream(
                 ));
             }
             ui.add_space(theme::tokens().spacing.sm as f32);
+            if terminal.active_session_id.is_none() && soft_button(ui, "Open terminal").clicked() {
+                // Launch the shell only. The command label is audit/status metadata;
+                // no task command is injected into the newly opened PTY.
+                actions.push(DesktopAction::TerminalLaunch {
+                    command_label: "interactive shell".to_string(),
+                });
+            }
             // Tier 1 A8: interactive input line — sends TerminalInput on Enter.
             if terminal.active_session_id.is_some() {
                 interactive_fields::render_terminal_input_line(
@@ -7666,7 +9210,8 @@ pub fn word_range_for_coordinate(
     if chars.is_empty() {
         return None;
     }
-    let mut index = (coordinate.character as usize).min(chars.len().saturating_sub(1));
+    let mut index =
+        local_scalar_for_coordinate(line, coordinate)?.min(chars.len().saturating_sub(1));
     if !is_word_char(chars[index]) && index > 0 && is_word_char(chars[index - 1]) {
         index -= 1;
     }
@@ -7684,20 +9229,17 @@ pub fn word_range_for_coordinate(
     }
 
     Some(ProtocolTextRange {
-        start: text_coordinate(line.number.saturating_sub(1), start as u32),
-        end: text_coordinate(line.number.saturating_sub(1), end as u32),
+        start: text_coordinate_for_line_scalar(line, start)?,
+        end: text_coordinate_for_line_scalar(line, end)?,
     })
 }
 
 /// Return the full visible-line selection range for a code-canvas row.
-pub fn line_range_for_code_line(line: &DesktopCodeLineViewModel) -> ProtocolTextRange {
-    ProtocolTextRange {
-        start: text_coordinate(line.number.saturating_sub(1), 0),
-        end: text_coordinate(
-            line.number.saturating_sub(1),
-            line.text.chars().count() as u32,
-        ),
-    }
+pub fn line_range_for_code_line(line: &DesktopCodeLineViewModel) -> Option<ProtocolTextRange> {
+    Some(ProtocolTextRange {
+        start: text_coordinate_for_line_scalar(line, 0)?,
+        end: text_coordinate_for_line_scalar(line, line.text.chars().count())?,
+    })
 }
 
 fn code_line_truncation_marker(truncation_state: ViewportLineTruncationState) -> &'static str {
@@ -7732,20 +9274,6 @@ pub fn drag_selection_range(
     }
 }
 
-/// Normalize a protocol text range so `start <= end`. A backwards drag (or any
-/// emit site that picks an anchor after the cursor) would otherwise produce an
-/// inverted range that downstream `set_selections` stores verbatim.
-fn normalized_text_range(range: ProtocolTextRange) -> ProtocolTextRange {
-    if (range.end.line, range.end.character) < (range.start.line, range.start.character) {
-        ProtocolTextRange {
-            start: range.end,
-            end: range.start,
-        }
-    } else {
-        range
-    }
-}
-
 fn editor_coordinate_for_line_x(
     line: &DesktopCodeLineViewModel,
     pointer_x: f32,
@@ -7757,10 +9285,14 @@ fn editor_coordinate_for_line_x(
     } else {
         ((pointer_x - origin_x) / char_width).floor() as u32
     };
-    text_coordinate(
-        line.number.saturating_sub(1),
-        raw_col.min(line.text.chars().count() as u32),
-    )
+    let scalar_index = raw_col.min(line.text.chars().count() as u32) as usize;
+    let byte_column = line
+        .text
+        .char_indices()
+        .nth(scalar_index)
+        .map(|(offset, _)| offset)
+        .unwrap_or(line.text.len());
+    text_coordinate(line.number.saturating_sub(1), byte_column as u32)
 }
 
 fn code_drag_anchor_id(buffer_id: legion_protocol::BufferId) -> egui::Id {
@@ -9079,7 +10611,8 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
         return viewport
             .line_slices
             .iter()
-            .map(|line| DesktopCodeLineViewModel {
+            .enumerate()
+            .map(|(index, line)| DesktopCodeLineViewModel {
                 number: line.line_number + 1,
                 text: line.visible_text.clone(),
                 highlights: semantic_highlights_for_line(
@@ -9088,6 +10621,21 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
                     &viewport.semantic_token_overlays,
                 ),
                 truncation_state: line.truncation_state,
+                byte_range: line.byte_range,
+                utf16_range: line.utf16_range,
+                line_start_byte_offset: viewport
+                    .line_metrics
+                    .get(index)
+                    .and_then(|metric| metric.line_start_byte_offset),
+                logical_end_byte: viewport.line_metrics.get(index).and_then(|metric| {
+                    metric
+                        .line_start_byte_offset
+                        .and_then(|start| start.checked_add(metric.byte_length))
+                }),
+                line_start_utf16_offset: viewport
+                    .line_metrics
+                    .get(index)
+                    .and_then(|metric| metric.line_start_utf16_offset),
             })
             .collect();
     }
@@ -9095,19 +10643,73 @@ fn active_buffer_code_lines(snapshot: &ShellProjectionSnapshot) -> Vec<DesktopCo
     if !active.degraded
         && let Some(text) = active.small_buffer_text()
     {
-        return text
-            .lines()
-            .enumerate()
-            .map(|(index, line)| DesktopCodeLineViewModel {
-                number: index as u32 + 1,
-                text: line.to_string(),
-                highlights: Vec::new(),
-                truncation_state: ViewportLineTruncationState::None,
-            })
-            .collect();
+        return small_buffer_code_lines(text);
     }
 
     Vec::new()
+}
+
+fn small_buffer_code_lines(text: &str) -> Vec<DesktopCodeLineViewModel> {
+    let mut rows = Vec::new();
+    let mut byte_start = 0u64;
+    let mut utf16_start = 0u64;
+    for (index, segment) in text.split_inclusive('\n').enumerate() {
+        let content = segment.strip_suffix('\n').unwrap_or(segment);
+        let content = content.strip_suffix('\r').unwrap_or(content);
+        let byte_len = content.len() as u64;
+        let utf16_len = content.encode_utf16().count() as u32;
+        rows.push(DesktopCodeLineViewModel {
+            number: index as u32 + 1,
+            text: content.to_string(),
+            highlights: Vec::new(),
+            truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(byte_start, byte_start + byte_len),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: index as u32,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: index as u32,
+                    character: utf16_len,
+                },
+            },
+            line_start_byte_offset: Some(byte_start),
+            logical_end_byte: Some(byte_start + byte_len),
+            line_start_utf16_offset: Some(utf16_start),
+        });
+        byte_start += segment.len() as u64;
+        utf16_start += u64::from(utf16_len)
+            + if segment.ends_with("\r\n") {
+                2_u64
+            } else {
+                1_u64
+            };
+    }
+    if rows.is_empty() || text.ends_with('\n') {
+        let index = rows.len() as u32;
+        rows.push(DesktopCodeLineViewModel {
+            number: index + 1,
+            text: String::new(),
+            highlights: Vec::new(),
+            truncation_state: ViewportLineTruncationState::None,
+            byte_range: ByteRange::new(byte_start, byte_start),
+            utf16_range: Utf16Range {
+                start: legion_protocol::Utf16Position {
+                    line: index,
+                    character: 0,
+                },
+                end: legion_protocol::Utf16Position {
+                    line: index,
+                    character: 0,
+                },
+            },
+            line_start_byte_offset: Some(byte_start),
+            logical_end_byte: Some(byte_start),
+            line_start_utf16_offset: Some(utf16_start),
+        });
+    }
+    rows
 }
 
 fn semantic_highlights_for_line(
@@ -9355,2222 +10957,6 @@ fn proposal_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
     rows
 }
 
-fn trust_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let mut rows = Vec::new();
-    let manifest = &snapshot.context_manifest_projection.manifest;
-    if !manifest.items.is_empty() || !manifest.permissions.is_empty() {
-        rows.push(format!(
-            "context manifest {}: {} items, {} permissions, egress {:?}",
-            manifest.manifest_id,
-            manifest.items.len(),
-            manifest.permissions.len(),
-            manifest.egress
-        ));
-    }
-    rows.extend(manifest.items.iter().take(10).map(|item| {
-        format!(
-            "context item {}: {:?} {:?} risk={:?} privacy={:?} egress={:?} file={:?} buffer={:?} path={} counts={} ranges={} labels={}",
-            item.item_id,
-            item.kind,
-            item.inclusion,
-            item.risk_label,
-            item.privacy_label,
-            item.egress,
-            item.file_id.map(|file| file.0),
-            item.buffer_id.map(|buffer| buffer.0),
-            item.path
-                .as_ref()
-                .map(|path| path.0.as_str())
-                .unwrap_or("<redacted>"),
-            item.counts.len(),
-            item.ranges.len(),
-            bounded_join(&item.labels)
-        )
-    }));
-    rows.extend(manifest.permissions.iter().take(10).map(|permission| {
-        format!(
-            "context permission {:?}: capability={} granted={} scope={:?} egress={:?} risk={:?}",
-            permission.kind,
-            permission.capability.0,
-            permission.granted,
-            permission.privacy_scope,
-            permission.egress,
-            permission.risk_label
-        )
-    }));
-
-    let privacy = &snapshot.privacy_inspector_projection;
-    if !privacy.records.is_empty() || privacy.refusal.is_some() {
-        rows.push(format!(
-            "privacy: {} records, {} denied, {} redacted, {} external, {} high-risk",
-            privacy.records.len(),
-            privacy.denied_record_count,
-            privacy.redacted_record_count,
-            privacy.external_egress_record_count,
-            privacy.high_risk_record_count
-        ));
-    }
-    const PRIVACY_RECORD_LIMIT: usize = 10;
-    // Surface the most sensitive records first (denied / fully redacted /
-    // external egress / high-risk) so they are not hidden by the row cap, and
-    // report any omitted records explicitly.
-    let mut ordered_records: Vec<&_> = privacy.records.iter().collect();
-    ordered_records.sort_by_key(|record| {
-        let prioritized = record.inclusion == ContextManifestInclusionState::Denied
-            || record.redaction_state == PrivacyInspectorRedactionState::FullyRedacted
-            || matches!(
-                record.egress,
-                ContextManifestEgressStatus::RemoteApprovalRequired
-                    | ContextManifestEgressStatus::RemoteDenied
-                    | ContextManifestEgressStatus::ExternalEgressMetadata
-            )
-            || matches!(
-                record.risk_label,
-                ProposalRiskLabel::High | ProposalRiskLabel::Unknown
-            );
-        // `false` (prioritized) sorts before `true`; sort_by_key is stable so
-        // original ordering is preserved within each group.
-        !prioritized
-    });
-    rows.extend(ordered_records.iter().take(PRIVACY_RECORD_LIMIT).map(|record| {
-        format!(
-            "privacy record {}: {:?} {:?} risk={:?} privacy={:?} egress={:?} permission={} reasons={}",
-            record.exposure_id,
-            record.source_kind,
-            record.redaction_state,
-            record.risk_label,
-            record.privacy_label,
-            record.egress,
-            record
-                .permission_label
-                .as_ref()
-                .map(|capability| capability.0.as_str())
-                .unwrap_or("<none>"),
-            bounded_join(&record.reasons)
-        )
-    }));
-    if privacy.records.len() > PRIVACY_RECORD_LIMIT {
-        rows.push(format!(
-            "privacy records omitted from preview: {}",
-            privacy.records.len() - PRIVACY_RECORD_LIMIT
-        ));
-    }
-    if let Some(refusal) = &privacy.refusal {
-        rows.push(format!(
-            "privacy refusal {}: {} scope={:?} capability={} risk={:?} reasons={}",
-            refusal.reason_code,
-            refusal.label,
-            refusal.privacy_scope,
-            refusal
-                .capability
-                .as_ref()
-                .map(|capability| capability.0.as_str())
-                .unwrap_or("<none>"),
-            refusal.risk_label,
-            bounded_join(&refusal.reasons)
-        ));
-    }
-
-    let budget = &snapshot.permission_budget_projection;
-    if !budget.budgets.is_empty() || !budget.evaluations.is_empty() {
-        rows.push(format!(
-            "permission budget: {} budgets, {} evaluations, {} denied, {} depleted, {} refused",
-            budget.budgets.len(),
-            budget.evaluations.len(),
-            budget.denied_budget_count,
-            budget.depleted_budget_count,
-            budget.refused_evaluation_count
-        ));
-    }
-    rows.extend(budget.budgets.iter().take(10).map(|contract| {
-        format!(
-            "permission budget {}: {:?} state={:?} scope={:?} consent={:?} used={}/{} risk={:?} reasons={}",
-            contract.budget_id,
-            contract.action_class,
-            contract.state,
-            contract.privacy_scope,
-            contract.consent_requirement_label,
-            contract.usage.used,
-            contract
-                .usage
-                .ceiling
-                .map(|ceiling| ceiling.to_string())
-                .unwrap_or_else(|| "uncapped".to_string()),
-            contract.risk_label,
-            bounded_join(&contract.reasons)
-        )
-    }));
-    rows.extend(budget.evaluations.iter().take(10).map(|evaluation| {
-        format!(
-            "permission evaluation {}: budget={} disposition={:?} allowed={} action={:?} estimated={} reasons={}",
-            evaluation.evaluation_id,
-            evaluation.budget_id,
-            evaluation.disposition,
-            evaluation.allowed,
-            evaluation.action.action_class,
-            evaluation.action.estimated_units,
-            bounded_join(&evaluation.reasons)
-        )
-    }));
-    rows.extend(
-        budget
-            .evaluations
-            .iter()
-            .filter_map(|evaluation| {
-                evaluation
-                    .refusal
-                    .as_ref()
-                    .map(|refusal| (evaluation, refusal))
-            })
-            .take(6)
-            .map(|(evaluation, refusal)| {
-                format!(
-                    "permission refusal {}: {} reason={} risk={:?}",
-                    evaluation.evaluation_id,
-                    refusal.label,
-                    refusal.reason_code,
-                    refusal.risk_label
-                )
-            }),
-    );
-
-    let checklist = &snapshot.approval_checklist_projection;
-    if !checklist.gates.is_empty() || !checklist.blockers.is_empty() {
-        rows.push(format!(
-            "approval checklist: proposal {} lifecycle={:?} gates={} blockers={} ready={} denials={}",
-            checklist.proposal_id.0,
-            checklist.lifecycle_state,
-            checklist.gates.len(),
-            checklist.blockers.len(),
-            checklist.ready_for_approval,
-            checklist.explicit_denial_reasons.len()
-        ));
-    }
-    rows.extend(checklist.gates.iter().take(12).map(|gate| {
-        format!(
-            "approval gate {:?}: {:?} risk={:?} privacy={:?} labels={} reasons={}",
-            gate.gate,
-            gate.status,
-            gate.risk_label,
-            gate.privacy_label,
-            bounded_join(&gate.labels),
-            gate.reasons.len()
-        )
-    }));
-    rows.extend(checklist.blockers.iter().take(10).map(|blocker| {
-        format!(
-            "approval blocker {:?}: {} {} risk={:?} privacy={:?}",
-            blocker.gate,
-            blocker.reason_code,
-            blocker.label,
-            blocker.risk_label,
-            blocker.privacy_label
-        )
-    }));
-    if !checklist.explicit_denial_reasons.is_empty() {
-        rows.push(format!(
-            "approval explicit denials: {}",
-            bounded_join(&checklist.explicit_denial_reasons)
-        ));
-    }
-
-    let rollback = &snapshot.checkpoint_rollback_projection;
-    if !rollback.targets.is_empty()
-        || !rollback.rollback.limitations.is_empty()
-        || !rollback.checkpoint.limitations.is_empty()
-    {
-        rows.push(format!(
-            "checkpoint rollback: {} targets, rollback {:?}",
-            rollback.targets.len(),
-            rollback.rollback.availability
-        ));
-    }
-    if !rollback.targets.is_empty() {
-        rows.push(format!(
-            "checkpoint: id={} available={} targets={} audit={:?} limitations={}",
-            rollback.checkpoint.checkpoint_id,
-            rollback.checkpoint.available,
-            rollback.checkpoint.target_count,
-            rollback.checkpoint.audit_status,
-            rollback.checkpoint.limitations.len()
-        ));
-        rows.push(format!(
-            "rollback: availability={:?} steps={} reversible={} irreversible={} audit={:?} limitations={}",
-            rollback.rollback.availability,
-            rollback.rollback.rollback_step_count,
-            rollback.rollback.reversible_target_count,
-            rollback.rollback.irreversible_target_count,
-            rollback.rollback.audit_status,
-            rollback.rollback.limitations.len()
-        ));
-    }
-    rows.extend(rollback.targets.iter().take(10).map(|target| {
-        format!(
-            "rollback target {}: {:?} file={:?} buffer={:?} labels={}",
-            target.target_id,
-            target.kind,
-            target.file_id.map(|file| file.0),
-            target.buffer_id.map(|buffer| buffer.0),
-            bounded_join(&target.labels)
-        )
-    }));
-    rows.extend(
-        rollback
-            .checkpoint
-            .limitations
-            .iter()
-            .take(6)
-            .map(|limitation| {
-                format!(
-                    "checkpoint limitation {}: {} risk={:?}",
-                    limitation.reason_code, limitation.label, limitation.risk_label
-                )
-            }),
-    );
-    rows.extend(
-        rollback
-            .rollback
-            .limitations
-            .iter()
-            .take(6)
-            .map(|limitation| {
-                format!(
-                    "rollback limitation {}: {} risk={:?}",
-                    limitation.reason_code, limitation.label, limitation.risk_label
-                )
-            }),
-    );
-
-    rows
-}
-
-fn assistant_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let mut rows = Vec::new();
-    rows.extend(legion_workflow_rows(snapshot));
-    let inline = &snapshot.assist_inline_prediction_projection;
-    if inline.has_activity() {
-        rows.push(format!(
-            "inline predictions: active={} rows={} in_flight={} stale={} generated_at={}",
-            inline.active_prediction.is_some(),
-            inline.rows.len(),
-            inline.request_in_flight,
-            inline.stale_prediction_count,
-            inline.generated_at.0
-        ));
-    }
-    if let Some(prediction) = &inline.active_prediction {
-        rows.push(inline_prediction_row(prediction));
-    }
-    rows.extend(
-        inline
-            .rows
-            .iter()
-            .filter(|row| {
-                inline
-                    .active_prediction
-                    .as_ref()
-                    .is_none_or(|active| active.prediction_id != row.prediction_id)
-            })
-            .take(8)
-            .map(inline_prediction_row),
-    );
-    let assisted = &snapshot.assisted_ai_projection;
-    let budget_evaluation_count: u32 = assisted
-        .requests
-        .iter()
-        .map(|request| request.permission_budget_evaluation_count)
-        .sum();
-    let refused_budget_evaluation_count: u32 = assisted
-        .requests
-        .iter()
-        .map(|request| request.refused_permission_budget_evaluation_count)
-        .sum();
-    if assisted.provider_count > 0
-        || assisted.request_count > 0
-        || assisted.refusal_count > 0
-        || budget_evaluation_count > 0
-        || refused_budget_evaluation_count > 0
-    {
-        rows.push(format!(
-            "assisted ai: {} providers, {} requests, {} refusals, {} previews, {} budget evals ({} refused)",
-            assisted.provider_count,
-            assisted.request_count,
-            assisted.refusal_count,
-            assisted.preview_ready_count,
-            budget_evaluation_count,
-            refused_budget_evaluation_count
-        ));
-    }
-    rows.extend(assisted.providers.iter().take(8).map(|provider| {
-        format!(
-            "assisted provider {}: {} class={:?} availability={:?} ops={} cost={} risk_budget={} privacy={} risk={:?}",
-            provider.provider_id,
-            provider.provider_label,
-            provider.provider_class,
-            provider.availability,
-            provider.supported_operation_count,
-            provider.cost_budget_label,
-            provider.risk_budget_label,
-            provider.privacy_retention_label,
-            provider.risk_label
-        )
-    }));
-    rows.extend(
-        assisted
-            .providers
-            .iter()
-            .filter_map(|provider| provider.refusal.as_ref().map(|refusal| (provider, refusal)))
-            .take(6)
-            .map(|(provider, refusal)| {
-                format!(
-                    "assisted provider refusal {}: {} {} risk={:?}",
-                    provider.provider_id, refusal.reason_code, refusal.label, refusal.risk_label
-                )
-            }),
-    );
-    rows.extend(assisted.routes.iter().take(8).map(|route| {
-        format!(
-            "assisted route {}: provider={} op={:?} disposition={:?} invocation={:?} refused_evals={} risk={:?} privacy={:?} reasons={}",
-            route.request_id,
-            route.provider_id,
-            route.operation_class,
-            route.disposition,
-            route.provider_invocation,
-            route.refused_permission_budget_evaluation_count,
-            route.risk_label,
-            route.privacy_label,
-            bounded_join(&route.reasons)
-        )
-    }));
-    rows.extend(
-        assisted
-            .routes
-            .iter()
-            .filter_map(|route| route.refusal.as_ref().map(|refusal| (route, refusal)))
-            .take(6)
-            .map(|(route, refusal)| {
-                format!(
-                    "assisted route refusal {}: {} {} risk={:?}",
-                    route.request_id, refusal.reason_code, refusal.label, refusal.risk_label
-                )
-            }),
-    );
-    rows.extend(assisted.requests.iter().take(8).map(|request| {
-        format!(
-            "assisted request {}: op={:?} payload={:?} targets={} omitted={} capability={} cost={} budget_evals={}/{} route={:?} refs={}/{}/{} approval={} checkpoint={} labels={}",
-            request.request_id,
-            request.operation_class,
-            request.proposal_payload_kind,
-            request.proposal_target_count,
-            request.omitted_target_count,
-            request.required_capability.0,
-            request.provider.cost_budget_label,
-            request.permission_budget_evaluation_count,
-            request.refused_permission_budget_evaluation_count,
-            request.route_decision.disposition,
-            request.context_manifest.reference_id,
-            request.privacy_inspector.reference_id,
-            request.permission_budget_projection.reference_id,
-            request.approval_checklist.reference_id,
-            request
-                .checkpoint_rollback
-                .as_ref()
-                .map(|reference| reference.reference_id.as_str())
-                .unwrap_or("<none>"),
-            bounded_join(&request.labels)
-        )
-    }));
-    rows.extend(assisted.proposal_previews.iter().take(8).map(|preview| {
-        let request = assisted
-            .requests
-            .iter()
-            .find(|request| request.request_id == preview.request_id);
-        let request_cost = request
-            .map(|request| request.provider.cost_budget_label.as_str())
-            .unwrap_or("<unknown>");
-        let request_budget_evals = request
-            .map(|request| request.permission_budget_evaluation_count)
-            .unwrap_or(0);
-        let request_budget_refusals = request
-            .map(|request| request.refused_permission_budget_evaluation_count)
-            .unwrap_or(0);
-        format!(
-            "assisted preview {}: proposal={} readiness={:?} preview_ready={} approval_ready={} apply_ready={} ledger={} diff={:?} targets={} cost={} budget_evals={}/{} risk={:?} privacy={:?}",
-            preview.preview_id,
-            preview.proposal_id.0,
-            preview.readiness,
-            preview.ready_for_preview,
-            preview.ready_for_approval,
-            preview.ready_for_apply,
-            preview.ledger_row_present,
-            preview.diff_summary.kind,
-            preview.target_coverage.targets.len(),
-            request_cost,
-            request_budget_evals,
-            request_budget_refusals,
-            preview.risk_label,
-            preview.privacy_label
-        )
-    }));
-    rows.extend(assisted.refusals.iter().take(8).map(|refusal| {
-        format!(
-            "assisted refusal {}: {} provider={} op={:?} capability={} risk={:?} reasons={}",
-            refusal.reason_code,
-            refusal.label,
-            refusal.provider_id.as_deref().unwrap_or("<none>"),
-            refusal.operation_class,
-            refusal
-                .capability
-                .as_ref()
-                .map(|capability| capability.0.as_str())
-                .unwrap_or("<none>"),
-            refusal.risk_label,
-            bounded_join(&refusal.reasons)
-        )
-    }));
-    let context_manifest = &snapshot.context_manifest_projection;
-    if !context_manifest.manifest.items.is_empty() || context_manifest.selected_item_id.is_some() {
-        rows.push(format!(
-            "context manifest {}: {} items, selected={}",
-            context_manifest.manifest.manifest_id,
-            context_manifest.manifest.items.len(),
-            context_manifest
-                .selected_item_id
-                .as_deref()
-                .unwrap_or("<none>")
-        ));
-    }
-
-    let delegated = &snapshot.delegated_task_projection;
-    if delegated.plan_count == 0
-        && delegated.plan_rows.is_empty()
-        && delegated.step_summaries.is_empty()
-        && delegated.blockers.is_empty()
-        && delegated.refusals.is_empty()
-        && delegated.required_approvals.is_empty()
-        && delegated.proposal_preview_links.is_empty()
-        && delegated.audit_readiness.is_empty()
-        && delegated.chat_messages.is_empty()
-        && delegated.context_citations.is_empty()
-        && delegated.proposal_reviews.is_empty()
-        && delegated.tool_permission_requests.is_empty()
-    {
-        return rows;
-    }
-    rows.push(format!(
-        "delegated task command center: projection={} plans={} blocked={} refused={} chat={} citations={} reviews={} permissions={} runtime={:?} autonomous_apply=unsupported redaction={}",
-        delegated.projection_id,
-        delegated.plan_count,
-        delegated.blocked_plan_count,
-        delegated.refused_plan_count,
-        delegated.chat_message_count,
-        delegated.context_citation_count,
-        delegated.proposal_review_count,
-        delegated.tool_permission_request_count,
-        delegated.runtime_activation,
-        redaction_label(&delegated.redaction_hints)
-    ));
-    rows.extend(delegated.chat_messages.iter().take(12).map(|message| {
-        format!(
-            "delegate chat {}: role={:?} citations={} permissions={} label={}",
-            message.message_id,
-            message.role,
-            message.citation_ids.len(),
-            message.tool_permission_request_ids.len(),
-            trim_middle(&message.content_label, 96)
-        )
-    }));
-    rows.extend(delegated.context_citations.iter().take(12).map(|citation| {
-        format!(
-            "delegate citation {}: path={} bytes={:?} lines={:?} score={} hash={}",
-            citation.citation_id,
-            citation
-                .path
-                .as_ref()
-                .map(|path| path.0.as_str())
-                .unwrap_or("<none>"),
-            citation.byte_range,
-            citation.line_range,
-            citation.score_basis_points,
-            citation
-                .chunk_hash
-                .as_ref()
-                .map(|hash| hash.value.as_str())
-                .unwrap_or("<none>")
-        )
-    }));
-    rows.extend(delegated.proposal_reviews.iter().take(8).map(|review| {
-        format!(
-            "delegate proposal review {}: proposal={} hunks={} accepted={} rejected={} pending={} ready={} filtered={}",
-            review.review_id,
-            review.proposal_id.0,
-            review.hunks.len(),
-            review.accepted_hunk_count,
-            review.rejected_hunk_count,
-            review.pending_hunk_count,
-            review.ready_for_apply,
-            review.filtered_apply_required
-        )
-    }));
-    rows.extend(
-        delegated
-            .proposal_reviews
-            .iter()
-            .take(8)
-            .flat_map(|review| {
-                review.hunks.iter().take(8).map(move |hunk| {
-                    format!(
-                        "delegate proposal hunk {}: proposal={} target={} disposition={:?} payload={:?} changed={} +{} -{} risk={:?} privacy={:?}",
-                        trim_middle(&hunk.hunk_id, 48),
-                        review.proposal_id.0,
-                        hunk.target_id.as_deref().unwrap_or("<none>"),
-                        hunk.disposition,
-                        hunk.payload_kind,
-                        hunk.changed_line_count,
-                        hunk.inserted_line_count,
-                        hunk.deleted_line_count,
-                        hunk.risk_label,
-                        hunk.privacy_label
-                    )
-                })
-            }),
-    );
-    rows.extend(delegated.tool_permission_requests.iter().take(12).map(|request| {
-        format!(
-            "delegate tool permission {}: profile={:?} action={:?} decision={:?} disposition={:?} approval_required={} approval_recorded={} runtime_allowed={} deny_overrides={}",
-            request.request_id,
-            request.profile,
-            request.action_class,
-            request.decision,
-            request.disposition,
-            request.human_approval_required,
-            request.human_approval_recorded,
-            request.runtime_allowed,
-            request.deny_overrides
-        )
-    }));
-    rows.extend(delegated.plan_only_disclaimers.iter().map(|disclaimer| {
-        format!("delegated task disclaimer: {disclaimer} autonomous apply unsupported")
-    }));
-    rows.extend(delegated.plan_rows.iter().map(|plan| {
-        format!(
-            "delegated task plan {}: state={:?} readiness={:?} steps={} targets={} blockers={} refusals={} proposal_previews={} risk={:?} privacy={:?} runtime={:?} labels={}",
-            plan.plan_id.0,
-            plan.plan_state,
-            plan.readiness,
-            plan.step_count,
-            plan.affected_target_count,
-            plan.blocker_count,
-            plan.refusal_count,
-            plan.proposal_preview_link_count,
-            plan.risk_label,
-            plan.privacy_label,
-            plan.runtime_activation,
-            bounded_join(&plan.labels)
-        )
-    }));
-    rows.extend(delegated.step_summaries.iter().map(|step| {
-        format!(
-            "delegated task step {} plan={} order={} op={:?} state={:?} deps={} targets={} proposal={:?} blockers={} risk={:?} privacy={:?}",
-            step.step_id.0,
-            step.plan_id.0,
-            step.order,
-            step.operation_class,
-            step.state,
-            step.dependency_count,
-            step.target_count,
-            step.proposal_id.map(|proposal| proposal.0),
-            step.blocker_count,
-            step.risk_label,
-            step.privacy_label
-        )
-    }));
-    rows.extend(delegated.required_approvals.iter().map(|gate| {
-        format!(
-            "delegated task trust gate {:?}: required={} satisfied={} risk={:?} privacy={:?} reasons={}",
-            gate.kind,
-            gate.required,
-            gate.satisfied,
-            gate.risk_label,
-            gate.privacy_label,
-            bounded_join(&gate.reasons)
-        )
-    }));
-    rows.extend(delegated.blockers.iter().map(|blocker| {
-        format!(
-            "delegated task blocker {}: gate={:?} proposal={:?} label={} reasons={}",
-            blocker.reason_code,
-            blocker.gate,
-            blocker.proposal_id.map(|proposal| proposal.0),
-            blocker.label,
-            bounded_join(&blocker.reasons)
-        )
-    }));
-    rows.extend(delegated.refusals.iter().map(|refusal| {
-        format!(
-            "delegated task refusal {}: gate={:?} proposal={:?} label={} reasons={}",
-            refusal.reason_code,
-            refusal.gate,
-            refusal.proposal_id.map(|proposal| proposal.0),
-            refusal.label,
-            bounded_join(&refusal.reasons)
-        )
-    }));
-    rows.extend(delegated.proposal_preview_links.iter().map(|link| {
-        format!(
-            "delegated task proposal preview {}: proposal={} payload={:?} lifecycle={:?} targets={} hunks={} source_redacted={} proposal-mediated",
-            link.link_id,
-            link.proposal_id.0,
-            link.payload_kind,
-            link.lifecycle_state,
-            link.target_count,
-            link.hunk_count,
-            link.full_source_redacted
-        )
-    }));
-    rows.extend(delegated.audit_readiness.iter().map(|readiness| {
-        format!(
-            "delegated task audit readiness {}: readiness={:?} runtime={:?} core_ids={} blockers={} refusals={} proposal_previews={} labels={}",
-            readiness.readiness_id,
-            readiness.readiness,
-            readiness.runtime_activation,
-            readiness.correlation_causality_valid,
-            readiness.blocker_count,
-            readiness.refusal_count,
-            readiness.proposal_preview_link_count,
-            bounded_join(&readiness.labels)
-        )
-    }));
-    rows
-}
-
-fn inline_prediction_row(prediction: &legion_ui::AssistInlinePredictionRowProjection) -> String {
-    format!(
-        "inline prediction {}: provider={} status={:?} status_label={} latency={} stale={} fingerprint={} snapshot={:?} buffer_version={:?} range={} ghost={} replacement={} diagnostics={}",
-        prediction.prediction_id,
-        prediction.provider_label,
-        prediction.status,
-        prediction.status_label,
-        prediction_latency_label(prediction),
-        prediction.stale,
-        prediction_fingerprint_label(prediction),
-        prediction.snapshot_id.map(|snapshot| snapshot.0),
-        prediction.buffer_version.map(|version| version.0),
-        prediction.apply_range_label,
-        prediction.ghost_text_label,
-        prediction_replacement_label(prediction),
-        prediction.diagnostics.len()
-    )
-}
-
-fn prediction_latency_label(prediction: &legion_ui::AssistInlinePredictionRowProjection) -> String {
-    prediction
-        .latency_ms
-        .map(|latency| format!("{latency}ms"))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn prediction_fingerprint_label(
-    prediction: &legion_ui::AssistInlinePredictionRowProjection,
-) -> String {
-    prediction
-        .file_fingerprint
-        .as_ref()
-        .map(|fingerprint| format!("{}:{}", fingerprint.algorithm, fingerprint.value))
-        .unwrap_or_else(|| "<none>".to_string())
-}
-
-fn prediction_replacement_label(
-    prediction: &legion_ui::AssistInlinePredictionRowProjection,
-) -> &str {
-    prediction
-        .replacement_preview_label
-        .as_deref()
-        .unwrap_or("<none>")
-}
-
-fn legion_workflow_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let workflows = &snapshot.legion_workflow_projection;
-    if workflows.rows.is_empty()
-        && workflows.mcp_registries.is_empty()
-        && workflows.decision_feed.is_empty()
-        && workflows.risk_monitors.is_empty()
-        && workflows.kill_switches.is_empty()
-        && workflows.tool_permission_requests.is_empty()
-        && snapshot.legion_workflow_comm_rows.is_empty()
-        && snapshot.legion_workflow_budget_rows.is_empty()
-    {
-        return Vec::new();
-    }
-    let mut rows = vec![format!(
-        "legion workflow command center: projection={} sessions={} mcp={} decisions={} risk_monitors={} kill_switches={} permissions={} omitted={} unattended merge unsupported until approval redaction={}",
-        workflows.projection_id,
-        workflows.total_session_count,
-        workflows.mcp_registry_count,
-        workflows.decision_feed_count,
-        workflows.risk_monitor_count,
-        workflows.kill_switch_count,
-        workflows.tool_permission_request_count,
-        workflows.omitted_row_count,
-        redaction_label(&workflows.redaction_hints)
-    )];
-    rows.extend(workflows.rows.iter().map(|row| {
-        format!(
-            "workflow {}: state={:?} workers={} provider_routes={} dependencies={} conflicts={} verification={}/{} signoff={}/{} proposals={} directive_artifact={} spec_artifact={} task_graph_artifact={} merge={:?} labels={}",
-            row.session_id.0,
-            row.lifecycle_state,
-            row.worker_count,
-            row.provider_route_required_count,
-            row.dependency_count,
-            row.unresolved_conflict_count,
-            row.passed_verification_count,
-            row.verification_gate_count,
-            row.signed_off_count,
-            row.sign_off_count,
-            row.linked_proposals.len(),
-            row.directive_artifact_id.as_deref().unwrap_or("<none>"),
-            row.spec_artifact_id.as_deref().unwrap_or("<none>"),
-            row.task_graph_artifact_id.as_deref().unwrap_or("<none>"),
-            row.merge_readiness.state,
-            row.display_safe_labels.join("|")
-        )
-    }));
-    rows.extend(workflows.rows.iter().flat_map(|row| {
-        row.linked_proposals.iter().map(move |proposal_id| {
-            format!(
-                "legion workflow proposal link session={} proposal={} proposal-mediated",
-                row.session_id.0, proposal_id.0
-            )
-        })
-    }));
-    rows.extend(workflows.rows.iter().flat_map(|row| {
-        row.merge_readiness.labels.iter().map(move |label| {
-            format!(
-                "legion workflow merge readiness {}: state={:?} label={} approval-gated",
-                row.session_id.0, row.merge_readiness.state, label
-            )
-        })
-    }));
-    rows.extend(workflows.mcp_registries.iter().map(|registry| {
-        format!(
-            "legion workflow mcp registry {}: server={} transport={:?} tools={} resources={} prompts={} version={} changed={:?}",
-            registry.registry_id,
-            registry.server.server_id.0,
-            registry.server.transport_kind,
-            registry.tools.len(),
-            registry.resources.len(),
-            registry.prompts.len(),
-            registry.list_version,
-            registry.last_notification_kind
-        )
-    }));
-    rows.extend(workflows.decision_feed.iter().map(|entry| {
-        format!(
-            "legion workflow decision {}: session={} kind={:?} risk={:?} primitive={:?} permission={:?} summary={}",
-            entry.decision_id.0,
-            entry.session_id.0,
-            entry.kind,
-            entry.risk_label,
-            entry.mcp_primitive_kind,
-            entry.tool_permission_request_id,
-            entry.summary_label
-        )
-    }));
-    rows.extend(
-        snapshot
-            .legion_workflow_comm_rows
-            .iter()
-            .map(|row| format!("legion workflow comm row: {row}")),
-    );
-    rows.extend(snapshot.legion_workflow_budget_rows.iter().map(|row| {
-        format!(
-            "legion workflow budget session={} worker={} {} {} {} {} status={}",
-            row.session_id.0,
-            row.worker_id,
-            row.model_turns_label,
-            row.tool_calls_label,
-            row.retry_label,
-            row.output_bytes_label,
-            row.status_label
-        )
-    }));
-    rows.extend(workflows.risk_monitors.iter().map(|monitor| {
-        format!(
-            "legion workflow risk monitor {}: session={} state={:?} score={}/{} high_risk={} denied={} stale_mcp={} halt={:?}",
-            monitor.monitor_id.0,
-            monitor.session_id.0,
-            monitor.state,
-            monitor.risk_score,
-            monitor.halt_threshold,
-            monitor.high_risk_action_count,
-            monitor.denied_tool_count,
-            monitor.stale_mcp_registry_detected,
-            monitor.halt_reason
-        )
-    }));
-    rows.extend(workflows.kill_switches.iter().map(|switch| {
-        format!(
-            "legion workflow kill switch {}: session={} state={:?} reason={}",
-            switch.kill_switch_id.0,
-            switch.session_id.0,
-            switch.state,
-            switch.reason_label.as_deref().unwrap_or("<armed>")
-        )
-    }));
-    rows.extend(workflows.tool_permission_requests.iter().map(|request| {
-        format!(
-            "legion workflow tool permission {}: profile={:?} action={:?} decision={:?} disposition={:?} runtime={} deny={}",
-            request.request_id,
-            request.profile,
-            request.action_class,
-            request.decision,
-            request.disposition,
-            request.runtime_allowed,
-            request.deny_overrides
-        )
-    }));
-    rows
-}
-
-fn redaction_label(redaction_hints: &[legion_protocol::RedactionHint]) -> String {
-    if redaction_hints.is_empty() {
-        "none".to_string()
-    } else {
-        redaction_hints
-            .iter()
-            .take(4)
-            .map(|hint| format!("{hint:?}"))
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
-
-fn bounded_join(values: &[String]) -> String {
-    if values.is_empty() {
-        "<none>".to_string()
-    } else {
-        values
-            .iter()
-            .take(4)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
-
-fn onboarding_rows(
-    snapshot: &ShellProjectionSnapshot,
-    state: &DesktopProjectionViewState,
-) -> Vec<String> {
-    if !state.first_run_onboarding_visible {
-        return Vec::new();
-    }
-
-    let settings = DesktopSettingsViewModel::from_projection(&snapshot.settings_projection);
-    DesktopSetupChecklistViewModel::from_snapshot(snapshot, &settings)
-        .items
-        .into_iter()
-        .map(|item| format!("{} — {}", item.title, item.detail))
-        .collect()
-}
-
-fn manual_control_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let level = projected_product_mode(snapshot);
-    let language = &snapshot.language_tooling_projection;
-    let terminal = &snapshot.terminal_panel_projection;
-    let search = DesktopSearchViewModel::from_projection(&snapshot.search_projection);
-    let active = &snapshot.active_buffer_projection;
-    let mut rows = Vec::new();
-
-    if level != DesktopProductMode::Manual {
-        rows.push(format!(
-            "manual control center: inactive because active product mode is {}",
-            level.label()
-        ));
-        return rows;
-    }
-
-    rows.push(
-        "manual control center: AI Disabled; Local Tools Only; No Model Calls; No Agent Context"
-            .to_string(),
-    );
-    rows.push(format!(
-        "manual toolchain: language={:?} problems={} quick_fixes={} breadcrumbs={} sticky_scopes={} inlay_hints={} code_lenses={} completions={} terminal={:?} search={} structural_search={:?}/{} verification_runs={}",
-        language.status,
-        language.problems.len(),
-        language.quick_fixes.len(),
-        language.breadcrumbs.len(),
-        language.sticky_scopes.len(),
-        language.inlay_hints.len(),
-        language.code_lenses.len(),
-        language.completions.len(),
-        terminal.status.kind,
-        search.header,
-        snapshot.structural_search_projection.status.kind,
-        snapshot.structural_search_projection.matches.len(),
-        snapshot.verification_run_projection.rows.len()
-    ));
-    rows.push(format!(
-        "manual commands: save_all proposal-mediated; search/read/navigation intents only; no direct apply; statuses={}",
-        snapshot.status_messages.len()
-    ));
-    rows.push(format!(
-        "manual editor: dirty={} degraded={} active_buffer={:?} no autonomous writes",
-        active.dirty,
-        active.degraded,
-        active.buffer_id.map(|buffer| buffer.0)
-    ));
-    rows.push(
-        "manual trust boundary: no provider dispatch, no agent context, no terminal authority, no direct apply"
-            .to_string(),
-    );
-    rows
-}
-
-fn language_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let language = &snapshot.language_tooling_projection;
-    let mut rows = Vec::new();
-    if language.buffer_id.is_some()
-        || !language.operations.is_empty()
-        || !language.problems.is_empty()
-        || !language.outline.is_empty()
-        || !language.inlay_hints.is_empty()
-        || !language.code_lenses.is_empty()
-    {
-        rows.push(format!(
-            "language: {:?} problems={} quick_fixes={} breadcrumbs={} sticky_scopes={} inlay_hints={} code_lenses={} completions={} definitions={} references={} outline={} stale={} cancelled={}",
-            language.status,
-            language.problems.len(),
-            language.quick_fixes.len(),
-            language.breadcrumbs.len(),
-            language.sticky_scopes.len(),
-            language.inlay_hints.len(),
-            language.code_lenses.len(),
-            language.completions.len(),
-            language.definitions.len(),
-            language.references.len(),
-            language.outline.len(),
-            language.stale_result_count,
-            language.cancellation_count
-        ));
-    }
-    // Ahead of the ambient rows (problems, completions, references) because the
-    // panel shows only the first dozen: call hierarchy is the answer to a
-    // question the reader just asked, and an answer pushed off the end of the
-    // list has not been rendered at all.
-    rows.extend(call_hierarchy_rows(language));
-    if let Some(hover) = &language.hover {
-        rows.push(format!("hover {} {}", hover.hover_id, hover.label));
-        rows.push(format!("hover docs {} {}", hover.label, hover.summary));
-    }
-    rows.extend(language.problems.iter().take(12).map(|problem| {
-        let location = problem
-            .path
-            .as_ref()
-            .map(|path| {
-                if let Some(range) = &problem.range {
-                    format!("{}:{}..{}", path.0, range.start.line, range.end.line)
-                } else {
-                    path.0.clone()
-                }
-            })
-            .unwrap_or_else(|| "<unknown-path>".to_string());
-        format!(
-            "problem {} severity={:?} code={} source={} {}",
-            location,
-            problem.severity,
-            problem.code_label.as_deref().unwrap_or("<none>"),
-            problem.source_label.as_deref().unwrap_or("<none>"),
-            problem.message
-        )
-    }));
-    rows.extend(language.quick_fixes.iter().take(10).map(|quick_fix| {
-        format!(
-            "quick fix {} {} severity={:?} proposal={:?}",
-            quick_fix.action_id,
-            quick_fix.title,
-            quick_fix.severity,
-            quick_fix.proposal_id.map(|proposal| proposal.0)
-        )
-    }));
-    rows.extend(language.breadcrumbs.iter().take(8).map(|breadcrumb| {
-        format!(
-            "breadcrumb {} {} kind={} depth={} source={}",
-            breadcrumb.breadcrumb_id,
-            breadcrumb.label,
-            breadcrumb.kind_label,
-            breadcrumb.depth,
-            breadcrumb.source_label
-        )
-    }));
-    rows.extend(language.sticky_scopes.iter().take(8).map(|scope| {
-        format!(
-            "sticky scope {} {} active={} kind={} depth={} source={}",
-            scope.scope_id,
-            scope.label,
-            scope.active,
-            scope.kind_label,
-            scope.depth,
-            scope.source_label
-        )
-    }));
-    rows.extend(language.inlay_hints.iter().take(8).map(|hint| {
-        format!(
-            "inlay hint {} {} kind={} source={}",
-            hint.hint_id, hint.label, hint.kind_label, hint.source_label
-        )
-    }));
-    rows.extend(language.code_lenses.iter().take(8).map(|lens| {
-        format!(
-            "code lens {} {} command={} kind={} data={:?} source={}",
-            lens.lens_id,
-            lens.title,
-            lens.command_label,
-            lens.kind_label,
-            lens.data_label,
-            lens.source_label
-        )
-    }));
-    rows.extend(language.completions.iter().take(20).map(|completion| {
-        format!(
-            "completion {} {} kind={} score={} detail={} degraded={}",
-            completion.completion_id,
-            completion.label,
-            completion.kind_label,
-            completion.score_basis_points,
-            completion.detail_label.as_deref().unwrap_or("<none>"),
-            completion.degraded
-        )
-    }));
-    rows.extend(language.definitions.iter().take(12).map(|definition| {
-        let location = definition
-            .path
-            .as_ref()
-            .map(|path| {
-                if let Some(range) = &definition.range {
-                    format!("{}:{}", path.0, range.start.line)
-                } else {
-                    path.0.clone()
-                }
-            })
-            .unwrap_or_else(|| "<unknown-path>".to_string());
-        format!(
-            "definition {} {} {} degraded={}",
-            definition.location_id, location, definition.label, definition.degraded
-        )
-    }));
-    rows.extend(language.references.iter().take(12).map(|reference| {
-        let location = reference
-            .path
-            .as_ref()
-            .map(|path| {
-                if let Some(range) = &reference.range {
-                    format!("{}:{}", path.0, range.start.line)
-                } else {
-                    path.0.clone()
-                }
-            })
-            .unwrap_or_else(|| "<unknown-path>".to_string());
-        format!(
-            "reference {} {} {} degraded={}",
-            reference.location_id, location, reference.label, reference.degraded
-        )
-    }));
-    rows.extend(language.operations.iter().map(|operation| {
-        format!(
-            "language op {} {:?} {:?} proposal={:?}",
-            operation.operation_id,
-            operation.kind,
-            operation.status,
-            operation.proposal_id.map(|proposal| proposal.0)
-        )
-    }));
-    rows
-}
-
-fn symbol_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    snapshot
-        .language_tooling_projection
-        .outline
-        .iter()
-        .map(|symbol| {
-            let mut row = format!(
-                "{}{} · {}",
-                "  ".repeat(usize::from(symbol.depth)),
-                symbol.label,
-                symbol.kind_label
-            );
-            if let Some(range) = &symbol.range {
-                row.push_str(&format!(" · line {}", range.start.line.saturating_add(1)));
-            }
-            if symbol.children_omitted {
-                row.push_str(" · more nested symbols");
-            }
-            row
-        })
-        .collect()
-}
-
-/// Projection-only LSP health rows derived from the snapshot (D2 wired).
-///
-/// Reads `LspServerHealthRecord` entries from
-/// `snapshot.language_tooling_projection.lsp_health_records` — populated by
-/// `AppComposition::shell_projection_snapshot()` via the background
-/// `LspSessionHandle`.  Returns an empty vec when no health data is available.
-/// No authority is claimed here; all rendering is projection-only read-only.
-fn lsp_health_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    use legion_ui::project_lsp_health;
-    snapshot
-        .language_tooling_projection
-        .lsp_health_records
-        .iter()
-        .map(|record| {
-            let proj = project_lsp_health(record, false);
-            format!(
-                "lsp server={} provenance={} version={} status={} restarts={}",
-                proj.server_label,
-                proj.provenance_label,
-                proj.version_label,
-                proj.status_label,
-                proj.restart_count,
-            )
-        })
-        .collect()
-}
-
-fn structural_search_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let structural = &snapshot.structural_search_projection;
-    let mut rows = Vec::new();
-
-    if structural.query_id.is_some()
-        || !structural.matches.is_empty()
-        || !structural.diagnostics.is_empty()
-        || structural.proposal_id.is_some()
-    {
-        rows.push(format!(
-            "structural search: {:?} matches={} proposal={:?}",
-            structural.status.kind,
-            structural.matches.len(),
-            structural.proposal_id.map(|proposal| proposal.0)
-        ));
-        rows.push(format!(
-            "structural query: scope={:?} pattern={} rewrite={} limit={} omitted_matches={} omitted_files={} schema={}",
-            structural.scope,
-            structural.pattern_label,
-            structural
-                .rewrite_label
-                .as_deref()
-                .unwrap_or("<preview-only>"),
-            structural.result_limit,
-            structural.omitted_match_count,
-            structural.omitted_file_count,
-            structural.schema_version
-        ));
-    }
-
-    for structural_match in structural.matches.iter().take(20) {
-        rows.push(format!(
-            "structural match {}:{} {} -> {}",
-            structural_match.file_path.0,
-            structural_match.range.start.line,
-            structural_match.snippet,
-            structural_match
-                .replacement_preview
-                .as_deref()
-                .unwrap_or("<no rewrite>")
-        ));
-        for capture in structural_match.captures.iter().take(8) {
-            rows.push(format!("capture {}={}", capture.name, capture.value));
-        }
-    }
-
-    rows.extend(
-        structural
-            .diagnostics
-            .iter()
-            .take(8)
-            .map(|diagnostic| format!("structural diagnostic {diagnostic}")),
-    );
-    rows
-}
-
-/// Projection-driven debug toolbar (B11): launch / step / continue / poll / stop.
-///
-/// Emits the same [`DesktopAction`]s keyboard and tests already use — no app
-/// ownership in the renderer.
-fn render_debug_controls(
-    ui: &mut egui::Ui,
-    snapshot: &ShellProjectionSnapshot,
-    actions: &mut Vec<DesktopAction>,
-) {
-    let debug = &snapshot.debug_projection;
-    ui.horizontal_wrapped(|ui| {
-        if let Some(session_id) = debug.active_session_id.clone() {
-            if ui.small_button("Continue").clicked() {
-                actions.push(DesktopAction::DebugStep {
-                    session_id: session_id.clone(),
-                    kind: DebugStepKindProjection::Continue,
-                });
-            }
-            if ui.small_button("Step Over").clicked() {
-                actions.push(DesktopAction::DebugStep {
-                    session_id: session_id.clone(),
-                    kind: DebugStepKindProjection::Over,
-                });
-            }
-            if ui.small_button("Step Into").clicked() {
-                actions.push(DesktopAction::DebugStep {
-                    session_id: session_id.clone(),
-                    kind: DebugStepKindProjection::Into,
-                });
-            }
-            if ui.small_button("Step Out").clicked() {
-                actions.push(DesktopAction::DebugStep {
-                    session_id: session_id.clone(),
-                    kind: DebugStepKindProjection::Out,
-                });
-            }
-            if ui.small_button("Poll").clicked() {
-                actions.push(DesktopAction::PollDebugSession);
-            }
-            if ui.small_button("Stop").clicked() {
-                actions.push(DesktopAction::StopDebugSession);
-            }
-        } else if let Some(configuration_id) = debug
-            .configurations
-            .first()
-            .map(|config| config.configuration_id.clone())
-        {
-            if ui.small_button("Launch").clicked() {
-                actions.push(DesktopAction::LaunchDebugSession { configuration_id });
-            }
-            if ui.small_button("Refresh configs").clicked() {
-                actions.push(DesktopAction::RefreshDebugConfigurations);
-            }
-        } else if ui.small_button("Refresh configs").clicked() {
-            actions.push(DesktopAction::RefreshDebugConfigurations);
-        }
-    });
-}
-
-fn debug_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let debug = &snapshot.debug_projection;
-    let mut rows = Vec::new();
-    if debug.active_session_id.is_some()
-        || !debug.configurations.is_empty()
-        || !debug.breakpoints.is_empty()
-        || !debug.stack_frames.is_empty()
-        || !debug.variables.is_empty()
-        || !debug.watches.is_empty()
-        || !debug.console.is_empty()
-        || !debug.inline_values.is_empty()
-        || !debug.diagnostics.is_empty()
-    {
-        // Dual-mode honesty: live adapter vs simulated fixture (WS-A-D B3).
-        //
-        // Three states, not two. `live_adapter` is a property of the running
-        // session, so with no session it answers a question nobody asked and
-        // the old two-way branch turned its `false` into a claim about the
-        // build. See `cut_lines::DEBUG_NO_SESSION_BANNER`.
-        rows.push(format!(
-            "debug: {}",
-            if debug.active_session_id.is_none() {
-                crate::cut_lines::DEBUG_NO_SESSION_BANNER
-            } else if debug.live_adapter {
-                crate::cut_lines::DEBUG_LIVE_BANNER
-            } else {
-                crate::cut_lines::DEBUG_SIMULATED_BANNER
-            }
-        ));
-        if crate::debug_auto_poll::debug_needs_auto_poll(debug) {
-            rows.push(
-                "debug: auto-poll active (live continue; frame loop drains stop)".to_string(),
-            );
-        }
-        rows.push(format!(
-            "debug: status={:?} session={:?} state={:?} configs={} breakpoints={} frames={} variables={} watches={} console={} inline={} note={}",
-            debug.status.kind,
-            debug.active_session_id.as_ref().map(|session| session.0.as_str()),
-            debug.session_state,
-            debug.configurations.len(),
-            debug.breakpoints.len(),
-            debug.stack_frames.len(),
-            debug.variables.len(),
-            debug.watches.len(),
-            debug.console.len(),
-            debug.inline_values.len(),
-            debug.status.message
-        ));
-    }
-    rows.extend(debug.configurations.iter().take(8).map(|configuration| {
-        format!(
-            "debug config {} adapter={} program={} package={} target={} deterministic={}",
-            configuration.configuration_id.0,
-            configuration.adapter_type,
-            configuration.program_label,
-            configuration.cargo_package.as_deref().unwrap_or("<none>"),
-            configuration.cargo_target.as_deref().unwrap_or("<none>"),
-            configuration.deterministic
-        )
-    }));
-    rows.extend(debug.breakpoints.iter().take(12).map(|breakpoint| {
-        format!(
-            "debug breakpoint {} {}:{} enabled={} verified={} condition={} hit={} log={}",
-            breakpoint.breakpoint_id.0,
-            breakpoint.path.0,
-            breakpoint.line,
-            breakpoint.enabled,
-            breakpoint.verified,
-            breakpoint.condition.as_deref().unwrap_or("<none>"),
-            breakpoint.hit_condition.as_deref().unwrap_or("<none>"),
-            breakpoint.log_message.as_deref().unwrap_or("<none>")
-        )
-    }));
-    rows.extend(debug.stack_frames.iter().take(8).map(|frame| {
-        let path = frame
-            .path
-            .as_ref()
-            .map(|path| path.0.as_str())
-            .unwrap_or("<unknown>");
-        let line = frame
-            .line
-            .map(|line| line.to_string())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        format!(
-            "debug frame {}:{} {} {}:{}",
-            frame.session_id.0, frame.frame_id, frame.name, path, line
-        )
-    }));
-    rows.extend(debug.variables.iter().take(12).map(|variable| {
-        format!(
-            "debug variable {} {}={} type={} children={}",
-            variable.session_id.0,
-            variable.name,
-            variable.value_label,
-            variable.type_label.as_deref().unwrap_or("<none>"),
-            variable.has_children
-        )
-    }));
-    rows.extend(debug.watches.iter().take(8).map(|watch| {
-        format!(
-            "debug watch {} {} {}={} type={}",
-            watch.session_id.0,
-            watch.watch_id.0,
-            watch.expression_label,
-            watch.value_label,
-            watch.type_label.as_deref().unwrap_or("<none>")
-        )
-    }));
-    rows.extend(debug.console.iter().take(12).map(|entry| {
-        format!(
-            "debug console {} {}: {}",
-            entry.session_id.0, entry.category_label, entry.message_label
-        )
-    }));
-    rows.extend(debug.inline_values.iter().take(8).map(|inline_value| {
-        format!(
-            "debug inline {} {}:{} {}={}",
-            inline_value.session_id.0,
-            inline_value.path.0,
-            inline_value.line,
-            inline_value.expression_label,
-            inline_value.value_label
-        )
-    }));
-    rows.extend(
-        debug
-            .diagnostics
-            .iter()
-            .take(8)
-            .map(|diagnostic| format!("debug diagnostic {diagnostic}")),
-    );
-    rows
-}
-
-fn test_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let verification = &snapshot.verification_run_projection;
-    let explorer = &snapshot.test_explorer_projection;
-    let runnable_lenses = snapshot
-        .language_tooling_projection
-        .code_lenses
-        .iter()
-        .filter(|lens| lens.kind_label.contains("runnable"))
-        .collect::<Vec<_>>();
-    let mut rows = Vec::new();
-    if explorer.status_label != "idle"
-        || !explorer.items.is_empty()
-        || !explorer.diagnostics.is_empty()
-        || explorer.last_run_item_id.is_some()
-    {
-        let last_run = match (
-            explorer.last_run_item_id.as_deref(),
-            explorer.last_run_status.as_deref(),
-        ) {
-            (Some(id), Some(status)) => format!(
-                "{id}:{status}:exit={}:{}ms",
-                explorer
-                    .last_run_exit_code
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "n/a".to_string()),
-                explorer
-                    .last_run_duration_ms
-                    .map(|ms| ms.to_string())
-                    .unwrap_or_else(|| "n/a".to_string())
-            ),
-            _ => "none".to_string(),
-        };
-        let groups = legion_ui::group_test_explorer_items_by_parent(&explorer.items);
-        rows.push(format!(
-            "test explorer: status={} controller={} items={} groups={} last_run={} diagnostics={}",
-            explorer.status_label,
-            explorer.controller_label,
-            explorer.items.len(),
-            groups.len(),
-            last_run,
-            if explorer.diagnostics.is_empty() {
-                "none".to_string()
-            } else {
-                explorer.diagnostics.join(",")
-            }
-        ));
-        rows.extend(legion_ui::format_test_explorer_tree_rows(
-            &explorer.items,
-            legion_ui::MAX_TEST_EXPLORER_TREE_DISPLAY_ROWS,
-        ));
-    }
-    if !verification.rows.is_empty() || !runnable_lenses.is_empty() {
-        rows.push(format!(
-            "test explorer: verification_runs={} runnable_lenses={} omitted={} projection={}",
-            verification.rows.len(),
-            runnable_lenses.len(),
-            verification.omitted_row_count,
-            verification.projection_id
-        ));
-    }
-    rows.extend(verification.rows.iter().take(12).map(|row| {
-        let targets = if row.target_labels.is_empty() {
-            "<none>".to_string()
-        } else {
-            row.target_labels.join(",")
-        };
-        let exit_code = row
-            .exit_code
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "pending".to_string());
-        format!(
-            "run {}: label={} state={:?} class={} targets={} exit={} evidence={} body_redacted={}",
-            row.run_id,
-            row.label,
-            row.state,
-            row.command_class_label,
-            targets,
-            exit_code,
-            row.evidence_artifact_id.as_deref().unwrap_or("<none>"),
-            row.command_body_redacted
-        )
-    }));
-    rows.extend(runnable_lenses.into_iter().take(12).map(|lens| {
-        let range_label = lens.range.as_ref().map_or_else(
-            || "<none>".to_string(),
-            |range| {
-                format!(
-                    "{}:{}..{}:{}",
-                    range.start.line, range.start.character, range.end.line, range.end.character
-                )
-            },
-        );
-        format!(
-            "runnable lens {}: title={} command={} source={} range={} data={}",
-            lens.lens_id,
-            lens.title,
-            lens.command_label,
-            lens.source_label,
-            range_label,
-            lens.data_label.as_deref().unwrap_or("<none>")
-        )
-    }));
-    rows
-}
-
-fn terminal_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let terminal = &snapshot.terminal_panel_projection;
-    let mut rows = Vec::new();
-    if terminal.active_session_id.is_some()
-        || terminal.last_denial.is_some()
-        || terminal.last_error.is_some()
-        || !terminal.output_rows.is_empty()
-    {
-        rows.push(format!(
-            "terminal: {:?} session={:?} rows={} omitted={} matches={}",
-            terminal.status.kind,
-            terminal.active_session_id.map(|session| session.0),
-            terminal.output_rows.len(),
-            terminal.scrollback.omitted_row_count,
-            terminal.search.match_count
-        ));
-    }
-    if let Some(policy) = &terminal.policy {
-        rows.push(format!(
-            "terminal policy: capability={} trust={:?} granted={} reason={}",
-            policy.capability_id.0, policy.workspace_trust_state, policy.granted, policy.reason
-        ));
-    }
-    if let Some(denial) = &terminal.last_denial {
-        rows.push(format!("terminal denial: {denial}"));
-    }
-    rows.extend(terminal.output_rows.iter().take(5).map(|row| {
-        format!(
-            "terminal output {}: {}",
-            row.sequence.0, row.redacted_payload
-        )
-    }));
-    rows
-}
-
-fn operational_health_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    DesktopOperationalHealthSnapshot::from_projection(snapshot).rows()
-}
-
-fn plugin_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let mut rows = Vec::new();
-    for projection in &snapshot.plugin_contribution_projections {
-        let commands = plugin_command_descriptors(projection);
-        let other_contribution_count = projection
-            .contributions
-            .len()
-            .saturating_sub(commands.len());
-        rows.push(format!(
-            "plugin management plugin {}: status={} contributions={} commands={} other={} sandbox=metadata-only {} audit=app-owned",
-            projection.plugin_id.0,
-            projection.status_label,
-            projection.contributions.len(),
-            commands.len(),
-            other_contribution_count,
-            crate::cut_lines::PLUGIN_EXECUTION_UNAVAILABLE
-        ));
-        if commands.is_empty() {
-            rows.push(format!(
-                "plugin management plugin {}: no projected commands",
-                projection.plugin_id.0
-            ));
-        }
-        rows.extend(commands.into_iter().map(|command| {
-            format!(
-                "plugin management plugin {} command {}: {} capability={} audit=dispatch-intent-only",
-                projection.plugin_id.0,
-                command.command_id,
-                command.title,
-                command.required_capability.0
-            )
-        }));
-        // Surface the app-owned permission review rows shown before install
-        // approval so the capability disclosure is visible in the plugin panel.
-        rows.extend(projection.permission_review_rows.iter().map(|review| {
-            format!(
-                "plugin management plugin {} {}",
-                projection.plugin_id.0, review
-            )
-        }));
-    }
-    rows
-}
-
-fn plugin_command_descriptors(
-    projection: &PluginContributionProjection,
-) -> Vec<&PluginCommandDescriptor> {
-    projection
-        .contributions
-        .iter()
-        .filter_map(|contribution| match contribution {
-            PluginContribution::Command(command) => Some(command),
-            _ => None,
-        })
-        .collect()
-}
-
-fn collaboration_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let mut rows = Vec::new();
-    let projection = &snapshot.collaboration_gui_projection;
-    if !projection.runtime_enabled
-        && !projection.presence_enabled
-        && projection.session_rows.is_empty()
-        && projection.shared_proposal_rows.is_empty()
-        && snapshot.collaboration_presence_projections.is_empty()
-    {
-        return rows;
-    }
-    rows.push(format!(
-        "collaboration: status={} runtime_enabled={} presence_enabled={} sessions={} reconnecting={} conflicts={} offline={} shared_proposals={} redaction=metadata-only",
-        projection.status_label,
-        projection.runtime_enabled,
-        projection.presence_enabled,
-        projection.session_rows.len(),
-        projection.reconnecting_session_count,
-        projection.conflict_session_count,
-        projection.offline_session_count,
-        projection.shared_proposal_rows.len()
-    ));
-    rows.extend(projection.session_rows.iter().map(|session| {
-        format!(
-            "collaboration session {}: state={:?} participants={} presence={} reconnecting={} conflicts={} operations={} acknowledgements={} gaps={} offline={} status={}",
-            session.session_id.0,
-            session.state,
-            session.participant_count,
-            session.presence_count,
-            session.reconnecting_participant_count,
-            session.conflict_count,
-            session.operation_count,
-            session.acknowledgement_count,
-            session.causal_gap_count,
-            session.offline,
-            session.status_label
-        )
-    }));
-    rows.extend(projection.shared_proposal_rows.iter().map(|review| {
-        format!(
-            "shared proposal session {} proposal {}: required={} authorized={} approvals={} denials={} pending={} operations={} stale={} status={} proposal-mediated",
-            review.session_id.0,
-            review.proposal_id.0,
-            review.required_approver_count,
-            review.authorized_approver_count,
-            review.approval_count,
-            review.denial_count,
-            review.pending_count,
-            review.applied_operation_count,
-            review.stale,
-            review.status_label
-        )
-    }));
-    rows.extend(
-        snapshot
-            .collaboration_presence_projections
-            .iter()
-            .map(|presence| {
-                format!(
-                    "collaboration presence {} participant {} reconnecting={} activity={}",
-                    presence.session_id.0,
-                    presence.participant_id.0,
-                    presence.reconnecting,
-                    presence.activity_label.as_deref().unwrap_or("<none>")
-                )
-            }),
-    );
-    rows
-}
-
-fn remote_rows(snapshot: &ShellProjectionSnapshot) -> Vec<String> {
-    let mut rows = Vec::new();
-    let projection = &snapshot.remote_gui_projection;
-    if !projection.runtime_enabled
-        && projection.session_rows.is_empty()
-        && projection.proposal_review_rows.is_empty()
-    {
-        return rows;
-    }
-    rows.push(format!(
-        "remote workspace: status={} runtime_enabled={} sessions={} connected={} reconnecting={} offline={} proposal_reviews={} redaction=metadata-only",
-        projection.status_label,
-        projection.runtime_enabled,
-        projection.session_rows.len(),
-        projection.connected_session_count,
-        projection.reconnecting_session_count,
-        projection.offline_session_count,
-        projection.proposal_review_rows.len()
-    ));
-    rows.extend(projection.session_rows.iter().map(|session| {
-        format!(
-            "remote workspace session {} authority={} agent={} state={:?} filesystem={} terminal={} lsp={} reconnect_supported={} reconnecting={} offline={} proposal_reviews={} status={}",
-            session.session_id.0,
-            session.authority_label,
-            session.agent_version,
-            session.state,
-            session.filesystem_descriptor_status,
-            session.terminal_descriptor_status,
-            session.lsp_descriptor_status,
-            session.reconnect_supported,
-            session.reconnecting,
-            session.offline,
-            session.proposal_review_count,
-            session.status_label
-        )
-    }));
-    rows.extend(projection.proposal_review_rows.iter().map(|review| {
-        format!(
-            "remote proposal session {} proposal {} authority={} payload={:?} lifecycle={:?} status={} proposal-mediated={}",
-            review.session_id.0,
-            review.proposal_id.0,
-            review.remote_authority_label,
-            review.payload_kind,
-            review.lifecycle_state,
-            review.status_label,
-            review.proposal_mediated
-        )
-    }));
-    rows
-}
-
 #[cfg(test)]
-mod tests {
-    use super::source_control::git_relative_path;
-    use super::tab_strip::adjusted_tab_drop_target;
-    use super::*;
-    use legion_protocol::{
-        CapabilityId, DelegatedTaskToolPermissionDecision, DelegatedTaskToolPermissionProfile,
-        DelegatedTaskToolPermissionRequestInput, PermissionBudgetActionClass, RedactionHint,
-        TerminalOutputRowProjection, TextCoordinate, delegated_task_tool_permission_request,
-    };
-    use legion_ui::{GitBlameLineProjection, GitHunkProjection, GitHunkStageProjection, Shell};
-
-    #[test]
-    fn provider_permission_uses_plain_ai_copy() {
-        assert_eq!(
-            workflow_permission_action_label(PermissionBudgetActionClass::InvokeProvider),
-            "Uses an AI provider"
-        );
-    }
-
-    #[test]
-    fn tab_drop_target_accounts_for_source_removal() {
-        // Before B: no-op for A; after B: [B, A, C].
-        assert_eq!(adjusted_tab_drop_target(0, 1), 0);
-        assert_eq!(adjusted_tab_drop_target(0, 2), 1);
-        // Before C: no-op for B; after C: [A, C, B].
-        assert_eq!(adjusted_tab_drop_target(1, 2), 1);
-        assert_eq!(adjusted_tab_drop_target(1, 3), 2);
-        assert_eq!(adjusted_tab_drop_target(2, 0), 0);
-        assert_eq!(adjusted_tab_drop_target(1, 1), 1);
-    }
-
-    #[test]
-    fn tab_drop_target_can_insert_after_the_last_tab() {
-        // A right-half drop on C in [A, B, C] is the pre-removal slot 3;
-        // after removing B, the app inserts it at index 2.
-        assert_eq!(adjusted_tab_drop_target(1, 3), 2);
-    }
-
-    #[test]
-    fn find_match_byte_columns_convert_to_display_columns() {
-        assert_eq!(byte_column_to_display_column("éfoo", 0), 0);
-        assert_eq!(byte_column_to_display_column("éfoo", 2), 1);
-        assert_eq!(byte_column_to_display_column("éfoo", 5), 4);
-    }
-
-    #[test]
-    fn find_bar_keybinding_routes_to_search_palette_action() {
-        let snapshot = Shell::empty("Keybinding test").projection_snapshot();
-        assert!(matches!(
-            action_label_to_desktop_action("ToggleFindBar", &snapshot),
-            Some(DesktopAction::OpenPalette {
-                mode: PaletteMode::Search,
-                query,
-                scope: SearchScopeProjection::ActiveFile,
-            }) if query == "/"
-        ));
-    }
-
-    #[test]
-    fn format_and_organize_imports_keybindings_dispatch_proposals() {
-        let snapshot = Shell::empty("Format keybinding test").projection_snapshot();
-        assert_eq!(
-            action_label_to_desktop_action("FormatDocument", &snapshot),
-            Some(DesktopAction::RequestFormattingProposal)
-        );
-        assert_eq!(
-            action_label_to_desktop_action("OrganizeImports", &snapshot),
-            Some(DesktopAction::RequestOrganizeImportsProposal)
-        );
-    }
-
-    #[test]
-    fn problem_keybindings_route_to_navigation_actions() {
-        let snapshot = Shell::empty("Problem keybinding test").projection_snapshot();
-        assert_eq!(
-            action_label_to_desktop_action("ProblemNext", &snapshot),
-            Some(DesktopAction::ProblemNext)
-        );
-        assert_eq!(
-            action_label_to_desktop_action("ProblemPrev", &snapshot),
-            Some(DesktopAction::ProblemPrev)
-        );
-        assert_eq!(key_label_to_egui("F8"), Some(egui::Key::F8));
-
-        let bindings = legion_ui::ui::default_keymap();
-        assert!(bindings.iter().any(|binding| {
-            binding.combo.key == "F8"
-                && !binding.combo.shift
-                && binding.action_label == "ProblemNext"
-        }));
-        assert!(bindings.iter().any(|binding| {
-            binding.combo.key == "F8"
-                && binding.combo.shift
-                && binding.action_label == "ProblemPrev"
-        }));
-    }
-
-    #[test]
-    fn automate_permission_session_is_parsed_from_request_labels() {
-        let request =
-            delegated_task_tool_permission_request(DelegatedTaskToolPermissionRequestInput {
-                request_id: "automate:permission:beta".to_string(),
-                profile: DelegatedTaskToolPermissionProfile::Write,
-                action_class: PermissionBudgetActionClass::InvokeLocalTool,
-                capability: Some(CapabilityId("mcp.tool.call".to_string())),
-                target_id: Some("mcp-tool:mcp:test|write_file".to_string()),
-                decision: DelegatedTaskToolPermissionDecision::Confirm,
-                labels: vec![
-                    "automate.permission.mcp_tool_call".to_string(),
-                    "legion.session:session:legion:beta".to_string(),
-                ],
-                schema_version: 1,
-            });
-
-        let session_id = parse_automate_permission_session(&request)
-            .expect("request should carry its owning workflow session");
-
-        assert_eq!(session_id.0, "session:legion:beta");
-    }
-
-    #[test]
-    fn code_line_fingerprint_is_stable_for_identical_input() {
-        let line = DesktopCodeLineViewModel {
-            number: 1,
-            text: "fn main() {}".to_string(),
-            highlights: Vec::new(),
-            truncation_state: ViewportLineTruncationState::None,
-        };
-
-        assert_eq!(
-            code_line_content_fingerprint(&line),
-            code_line_content_fingerprint(&line)
-        );
-    }
-
-    #[test]
-    fn shell_geometry_compact_top_bar_keeps_modes_and_command_palette_without_bar_overflow() {
-        let desktop = ShellGeometry::for_available_size(1440.0, 900.0);
-        let compact = ShellGeometry::for_available_size(960.0, 720.0);
-
-        let desktop_top_bar = top_bar_composition(desktop);
-        assert_eq!(desktop_top_bar.density, TopBarDensity::Desktop);
-        assert!(desktop_top_bar.shows_workspace_context);
-        assert!(desktop_top_bar.shows_mode_switch);
-        assert!(desktop_top_bar.shows_command_palette);
-
-        let compact_top_bar = top_bar_composition(compact);
-        assert_eq!(compact_top_bar.density, TopBarDensity::Compact);
-        assert!(compact_top_bar.shows_mode_switch);
-        assert!(compact_top_bar.shows_command_palette);
-        assert!(!compact_top_bar.shows_workspace_context);
-        assert_eq!(compact.top_bar_content_height(), 30.0);
-        assert_eq!(compact.status_bar_content_height(), 22.0);
-    }
-
-    #[test]
-    fn code_line_fingerprint_changes_with_highlight_kind() {
-        let mut keyword = DesktopCodeLineViewModel {
-            number: 1,
-            text: "fn main() {}".to_string(),
-            highlights: vec![DesktopCodeHighlightSpan {
-                start_col: 0,
-                end_col: 2,
-                kind: ViewportSemanticTokenKind::Keyword,
-            }],
-            truncation_state: ViewportLineTruncationState::None,
-        };
-        let keyword_hash = code_line_content_fingerprint(&keyword);
-        keyword.highlights[0].kind = ViewportSemanticTokenKind::Function;
-
-        assert_ne!(keyword_hash, code_line_content_fingerprint(&keyword));
-    }
-
-    #[test]
-    fn code_line_width_bucket_quantizes_to_four_pixels() {
-        assert_eq!(code_line_width_bucket(100.0), 25);
-        assert_eq!(code_line_width_bucket(103.9), 25);
-        assert_eq!(code_line_width_bucket(104.0), 26);
-        assert_eq!(code_line_width_bucket(-1.0), 0);
-    }
-
-    #[test]
-    fn code_line_galley_cache_discards_entries_from_prior_render_pass() {
-        let mut cache = RenderPassCache::<u8, u8>::default();
-        cache.prepare_for_pass(41);
-        cache.insert_bounded(1, 7, CODE_LINE_GALLEY_CACHE_LIMIT);
-        assert_eq!(cache.get(&1), Some(&7));
-
-        cache.prepare_for_pass(42);
-
-        assert_eq!(cache.get(&1), None);
-        assert_eq!(cache.entries.len(), 0);
-    }
-
-    #[test]
-    fn code_line_galley_cache_never_exceeds_its_entry_limit() {
-        let mut cache = RenderPassCache::<usize, usize>::default();
-        cache.prepare_for_pass(1);
-        for key in 0..=CODE_LINE_GALLEY_CACHE_LIMIT {
-            cache.insert_bounded(key, key, CODE_LINE_GALLEY_CACHE_LIMIT);
-        }
-
-        assert!(cache.entries.len() <= CODE_LINE_GALLEY_CACHE_LIMIT);
-    }
-
-    #[test]
-    fn code_line_galley_cache_key_changes_on_content_width_buffer_or_snapshot() {
-        let line = DesktopCodeLineViewModel {
-            number: 7,
-            text: "let value = 1;".to_string(),
-            highlights: Vec::new(),
-            truncation_state: ViewportLineTruncationState::None,
-        };
-        let snapshot_id = Some(legion_protocol::SnapshotId(11));
-        let base = code_line_galley_cache_key(
-            Some(legion_protocol::BufferId(1)),
-            snapshot_id,
-            &line,
-            100.0,
-        );
-        let same = code_line_galley_cache_key(
-            Some(legion_protocol::BufferId(1)),
-            snapshot_id,
-            &line,
-            103.0,
-        );
-        let different_width = code_line_galley_cache_key(
-            Some(legion_protocol::BufferId(1)),
-            snapshot_id,
-            &line,
-            104.0,
-        );
-        let different_buffer = code_line_galley_cache_key(
-            Some(legion_protocol::BufferId(2)),
-            snapshot_id,
-            &line,
-            100.0,
-        );
-        let different_snapshot = code_line_galley_cache_key(
-            Some(legion_protocol::BufferId(1)),
-            Some(legion_protocol::SnapshotId(12)),
-            &line,
-            100.0,
-        );
-        let mut changed_line = line.clone();
-        changed_line.text.push_str(" // changed");
-        let different_content = code_line_galley_cache_key(
-            Some(legion_protocol::BufferId(1)),
-            snapshot_id,
-            &changed_line,
-            100.0,
-        );
-
-        assert_eq!(base, same);
-        assert_ne!(base, different_width);
-        assert_ne!(base, different_buffer);
-        assert_ne!(base, different_snapshot);
-        assert_ne!(base, different_content);
-    }
-
-    #[test]
-    fn code_line_cache_id_is_shared_across_buffers() {
-        assert_eq!(
-            code_line_galley_cache_id(legion_protocol::BufferId(1)),
-            code_line_galley_cache_id(legion_protocol::BufferId(2))
-        );
-    }
-
-    #[test]
-    fn code_line_galley_cache_has_one_total_bound_across_buffers() {
-        let mut cache = RenderPassCache::<CodeLineGalleyCacheKey, u8>::default();
-        cache.prepare_for_pass(1);
-        for buffer in 0..(CODE_LINE_GALLEY_CACHE_LIMIT * 2) {
-            cache.insert_bounded(
-                CodeLineGalleyCacheKey {
-                    buffer_id: buffer as u128,
-                    snapshot_id: 1,
-                    content_fingerprint: buffer as u64,
-                    font_size_bucket: 12,
-                    width_bucket: 800,
-                },
-                0,
-                CODE_LINE_GALLEY_CACHE_LIMIT,
-            );
-        }
-
-        assert!(cache.entries.len() <= CODE_LINE_GALLEY_CACHE_LIMIT);
-    }
-
-    #[test]
-    fn code_line_truncation_marker_reflects_slice_state() {
-        assert_eq!(
-            code_line_truncation_marker(ViewportLineTruncationState::None),
-            " "
-        );
-        assert_eq!(
-            code_line_truncation_marker(ViewportLineTruncationState::Leading),
-            "↤"
-        );
-        assert_eq!(
-            code_line_truncation_marker(ViewportLineTruncationState::Trailing),
-            "↦"
-        );
-        assert_eq!(
-            code_line_truncation_marker(ViewportLineTruncationState::Both),
-            "↔"
-        );
-    }
-
-    #[test]
-    fn git_code_canvas_projects_gutter_markers_inline_blame_and_hunk_navigation() {
-        let relative_path = Some("src/lib.rs");
-        let hunks = vec![GitHunkProjection {
-            hunk_id: "git-hunk:1".to_string(),
-            path: "src/lib.rs".to_string(),
-            stage: GitHunkStageProjection::Unstaged,
-            header: "@@ -1,3 +1,4 @@".to_string(),
-            old_start: 1,
-            old_lines: 3,
-            new_start: 2,
-            new_lines: 2,
-            added_lines: 1,
-            deleted_lines: 1,
-            submodule_dirty_only: false,
-            context: Some("main".to_string()),
-        }];
-        let blame_lines = vec![GitBlameLineProjection {
-            path: "src/lib.rs".to_string(),
-            line_number: 2,
-            commit_short: "abc1234".to_string(),
-            author: "Ada Lovelace".to_string(),
-            summary: "refine gutter diff".to_string(),
-            line_preview: "let value = 1;".to_string(),
-        }];
-
-        assert_eq!(
-            git_relative_path(Some("/repo"), Some("/repo/src/lib.rs")),
-            Some("src/lib.rs".to_string())
-        );
-        assert_eq!(git_hunk_marker_for_line(relative_path, &hunks, 1), None);
-        assert_eq!(
-            git_hunk_marker_for_line(relative_path, &hunks, 2),
-            Some("~")
-        );
-        assert_eq!(
-            git_inline_blame_label(relative_path, &blame_lines, 2),
-            Some("abc1234 Ada Lovelace refine gutter diff".to_string())
-        );
-        assert_eq!(
-            git_previous_hunk_cursor(relative_path, &hunks, 3),
-            Some(TextCoordinate {
-                line: 1,
-                character: 0,
-                byte_offset: None,
-                utf16_offset: None,
-            })
-        );
-        assert_eq!(
-            git_next_hunk_cursor(relative_path, &hunks, 1),
-            Some(TextCoordinate {
-                line: 1,
-                character: 0,
-                byte_offset: None,
-                utf16_offset: None,
-            })
-        );
-    }
-
-    #[test]
-    fn stage_focused_git_hunk_routes_only_an_unstaged_focus() {
-        let mut snapshot = Shell::empty("focused hunk").projection_snapshot();
-        snapshot.git_projection.focused_hunk_id = Some("git-hunk:focused".to_string());
-        snapshot.git_projection.hunks = vec![GitHunkProjection {
-            hunk_id: "git-hunk:focused".to_string(),
-            path: "src/lib.rs".to_string(),
-            stage: GitHunkStageProjection::Unstaged,
-            header: "@@ -1 +1 @@".to_string(),
-            old_start: 1,
-            old_lines: 1,
-            new_start: 1,
-            new_lines: 1,
-            added_lines: 1,
-            deleted_lines: 1,
-            submodule_dirty_only: false,
-            context: None,
-        }];
-
-        assert_eq!(
-            action_label_to_desktop_action("StageFocusedGitHunk", &snapshot),
-            Some(DesktopAction::StageGitHunk {
-                hunk_id: "git-hunk:focused".to_string(),
-            })
-        );
-
-        snapshot.git_projection.hunks[0].stage = GitHunkStageProjection::Staged;
-        assert_eq!(
-            action_label_to_desktop_action("StageFocusedGitHunk", &snapshot),
-            None
-        );
-    }
-
-    #[test]
-    fn terminal_text_segments_split_urls_and_trailing_text() {
-        let segments =
-            terminal_text_segments("open https://example.com/docs?ref=legion, then keep going");
-        assert_eq!(
-            segments,
-            vec![
-                TerminalTextSegment::Text("open ".to_string()),
-                TerminalTextSegment::Url("https://example.com/docs?ref=legion".to_string()),
-                TerminalTextSegment::Text(", then keep going".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn terminal_output_row_badges_reflect_projection_flags() {
-        let row = TerminalOutputRowProjection {
-            session_id: legion_protocol::TerminalSessionId(9),
-            sequence: legion_protocol::EventSequence(3),
-            redacted_payload: "warning: truncated".to_string(),
-            byte_count: 42,
-            is_stderr: true,
-            truncated: true,
-            redaction: RedactionHint::MetadataOnly,
-            schema_version: 1,
-        };
-
-        assert_eq!(
-            terminal_output_row_badges(&row),
-            vec![
-                "stderr".to_string(),
-                "truncated".to_string(),
-                "redacted=metadata-only".to_string(),
-                "42 bytes".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn terminal_output_row_badges_reflect_shell_command_markers() {
-        let row = TerminalOutputRowProjection {
-            session_id: legion_protocol::TerminalSessionId(11),
-            sequence: legion_protocol::EventSequence(7),
-            redacted_payload:
-                "command block finished • exit=0 • duration=15ms • cwd=/tmp/workspace".to_string(),
-            byte_count: 0,
-            is_stderr: false,
-            truncated: false,
-            redaction: RedactionHint::MetadataOnly,
-            schema_version: 1,
-        };
-
-        assert_eq!(
-            terminal_output_row_badges(&row),
-            vec![
-                "command-finished".to_string(),
-                "exit=0".to_string(),
-                "duration=15ms".to_string(),
-                "cwd=/tmp/workspace".to_string(),
-            ]
-        );
-    }
-}
+#[path = "view/projection_view_tests.rs"]
+mod tests;

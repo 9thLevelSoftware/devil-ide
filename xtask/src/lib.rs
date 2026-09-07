@@ -1,4 +1,7 @@
 pub mod claim_audit;
+pub mod completion;
+pub mod completion_command;
+pub mod completion_evidence;
 pub mod dap_adapter_probe;
 pub mod deferred_surfaces;
 pub mod docs_hygiene;

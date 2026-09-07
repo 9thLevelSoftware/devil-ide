@@ -7668,6 +7668,8 @@ mod tests {
             },
             dock_layouts: Vec::new(),
             workbench_settings: legion_protocol::WorkbenchSettingsRecord::default(),
+            language_toolchain_settings: legion_protocol::LanguageToolchainSettingsRecord::default(
+            ),
             memory_snapshot_json: None,
             dirty_indicators: Vec::new(),
             saved_at: legion_protocol::TimestampMillis(12),

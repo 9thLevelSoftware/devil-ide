@@ -10,14 +10,11 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command,
     sync::{
-        Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(windows)]
-use std::sync::Arc;
 
 /// Windows ConPTY parity metadata contracts.
 pub mod windows;
@@ -178,6 +175,31 @@ pub enum PlatformError {
     Cancelled {
         /// Operation attempted.
         operation: String,
+    },
+
+    /// A bounded process stream exceeded its caller-supplied limit.
+    #[error("process `{stream}` output exceeded {limit} bytes")]
+    ProcessOutputLimit {
+        /// Stream that exceeded its bound.
+        stream: &'static str,
+        /// Maximum retained bytes.
+        limit: usize,
+    },
+
+    /// A bounded process stream could not be read reliably.
+    #[error("failed to read bounded process `{stream}` output")]
+    ProcessOutputReadFailure {
+        /// Stream that failed.
+        stream: &'static str,
+    },
+
+    /// The bounded process could not be confirmed terminated during cleanup.
+    #[error("failed to clean up bounded process `{command}`: {reason}")]
+    ProcessCleanupFailure {
+        /// Command whose process tree could not be cleaned up.
+        command: String,
+        /// Cleanup failure details.
+        reason: String,
     },
 
     /// Generic I/O error fallback.
@@ -575,6 +597,20 @@ fn unsupported_operation(
 pub trait ProcessService {
     /// Executes a command and returns the output.
     fn execute(&self, request: &ProcessRequest) -> Result<ProcessResult, PlatformError>;
+
+    /// Executes a command with mandatory timeout, live cancellation, and
+    /// bounded stdout/stderr retention. Implementations that cannot provide
+    /// these guarantees must fail closed instead of falling back to execute.
+    fn execute_bounded(
+        &self,
+        request: &BoundedProcessRequest,
+    ) -> Result<ProcessResult, PlatformError> {
+        Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(&request.process.command),
+            reason: "bounded process execution is unsupported".to_string(),
+        })
+    }
 }
 
 /// PTY abstraction.
@@ -682,6 +718,40 @@ pub struct ProcessRequest {
     pub timeout: Option<Duration>,
     /// Cancellation flag.
     pub cancelled: bool,
+}
+
+/// Limits and cancellation authority for bounded process execution.
+#[derive(Debug, Clone)]
+pub struct BoundedProcessRequest {
+    /// Legacy process fields used to construct the child.
+    pub process: ProcessRequest,
+    /// Maximum stdout bytes retained before the child is terminated.
+    pub max_stdout_bytes: usize,
+    /// Maximum stderr bytes retained before the child is terminated.
+    pub max_stderr_bytes: usize,
+    /// Mandatory finite execution timeout.
+    pub timeout: Duration,
+    /// Live cancellation flag checked while the child runs.
+    pub cancellation: Arc<AtomicBool>,
+}
+
+impl BoundedProcessRequest {
+    /// Creates a bounded request with explicit stream limits and timeout.
+    pub fn new(
+        process: ProcessRequest,
+        max_stdout_bytes: usize,
+        max_stderr_bytes: usize,
+        timeout: Duration,
+        cancellation: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            process,
+            max_stdout_bytes,
+            max_stderr_bytes,
+            timeout,
+            cancellation,
+        }
+    }
 }
 
 impl ProcessRequest {
@@ -1153,6 +1223,879 @@ impl ProcessService for NativeProcessService {
             elapsed,
         })
     }
+
+    fn execute_bounded(
+        &self,
+        request: &BoundedProcessRequest,
+    ) -> Result<ProcessResult, PlatformError> {
+        execute_bounded_native(request)
+    }
+}
+
+struct BoundedReaderResult {
+    bytes: Vec<u8>,
+    exceeded: bool,
+    failed: bool,
+}
+
+#[cfg(unix)]
+fn unix_bounded_reader<R: io::Read + std::os::fd::AsRawFd>(
+    mut reader: R,
+    limit: usize,
+    overflow: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    deadline: Instant,
+) -> BoundedReaderResult {
+    let fd = reader.as_raw_fd();
+    let flags = unsafe { nix::libc::fcntl(fd, nix::libc::F_GETFL) };
+    if flags < 0
+        || unsafe { nix::libc::fcntl(fd, nix::libc::F_SETFL, flags | nix::libc::O_NONBLOCK) } < 0
+    {
+        return BoundedReaderResult {
+            bytes: Vec::new(),
+            exceeded: false,
+            failed: true,
+        };
+    }
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    let mut chunk = [0u8; 8192];
+    loop {
+        if Instant::now() >= deadline {
+            // Deadline is the process timeout, not a stream IO failure. The
+            // parent loop owns Timeout classification after the child is reaped.
+            return BoundedReaderResult {
+                bytes,
+                exceeded: false,
+                failed: false,
+            };
+        }
+        match reader.read(&mut chunk) {
+            Ok(0) => {
+                return BoundedReaderResult {
+                    bytes,
+                    exceeded: false,
+                    failed: false,
+                };
+            }
+            Ok(read) => {
+                if bytes.len().saturating_add(read) > limit {
+                    overflow.store(true, Ordering::Release);
+                    return BoundedReaderResult {
+                        bytes,
+                        exceeded: true,
+                        failed: false,
+                    };
+                }
+                bytes.extend_from_slice(&chunk[..read]);
+            }
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                if stop.load(Ordering::Acquire) {
+                    return BoundedReaderResult {
+                        bytes,
+                        exceeded: false,
+                        failed: false,
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(_) => {
+                return BoundedReaderResult {
+                    bytes,
+                    exceeded: false,
+                    failed: true,
+                };
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn windows_bounded_reader(
+    reader: impl std::os::windows::io::AsRawHandle,
+    limit: usize,
+    overflow: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    deadline: Instant,
+) -> BoundedReaderResult {
+    use ::windows::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_NO_DATA, GetLastError, HANDLE};
+    use ::windows::Win32::Storage::FileSystem::ReadFile;
+    use ::windows::Win32::System::Pipes::PeekNamedPipe;
+
+    let handle = HANDLE(reader.as_raw_handle() as _);
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    let mut chunk = [0u8; 8192];
+    loop {
+        if Instant::now() >= deadline {
+            // Deadline is the process timeout, not a stream IO failure. The
+            // parent loop owns Timeout classification after the child is reaped.
+            return BoundedReaderResult {
+                bytes,
+                exceeded: false,
+                failed: false,
+            };
+        }
+        if stop.load(Ordering::Acquire) {
+            return BoundedReaderResult {
+                bytes,
+                exceeded: false,
+                failed: false,
+            };
+        }
+        let mut available = 0u32;
+        let peek = unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut available), None) };
+        if let Err(err) = peek {
+            let code = unsafe { GetLastError() };
+            if code == ERROR_BROKEN_PIPE || code == ERROR_NO_DATA {
+                return BoundedReaderResult {
+                    bytes,
+                    exceeded: false,
+                    failed: false,
+                };
+            }
+            let _ = err;
+            return BoundedReaderResult {
+                bytes,
+                exceeded: false,
+                failed: true,
+            };
+        }
+        if available == 0 {
+            std::thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        let read_len = (available as usize).min(chunk.len());
+        let mut read = 0u32;
+        if let Err(_err) =
+            unsafe { ReadFile(handle, Some(&mut chunk[..read_len]), Some(&mut read), None) }
+        {
+            if stop.load(Ordering::Acquire) {
+                return BoundedReaderResult {
+                    bytes,
+                    exceeded: false,
+                    failed: false,
+                };
+            }
+            return BoundedReaderResult {
+                bytes,
+                exceeded: false,
+                failed: true,
+            };
+        }
+        if read == 0 {
+            continue;
+        }
+        let read = read as usize;
+        if bytes.len().saturating_add(read) > limit {
+            overflow.store(true, Ordering::Release);
+            return BoundedReaderResult {
+                bytes,
+                exceeded: true,
+                failed: false,
+            };
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn frozen_executable_roots() -> Vec<PathBuf> {
+    #[cfg(unix)]
+    {
+        vec![PathBuf::from("/usr/bin"), PathBuf::from("/bin")]
+    }
+    #[cfg(windows)]
+    {
+        let mut roots = Vec::new();
+        if let Ok(system_root) = std::env::var("SystemRoot") {
+            let system32 = PathBuf::from(system_root).join("System32");
+            roots.push(system32.join("WindowsPowerShell").join("v1.0"));
+            roots.push(system32);
+        }
+        roots.push(PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0"));
+        roots.push(PathBuf::from(r"C:\Windows\System32"));
+        roots
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Vec::new()
+    }
+}
+
+fn resolve_bounded_executable(command: &str) -> Result<PathBuf, PlatformError> {
+    let path = Path::new(command);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    if command.contains('/') || command.contains('\\') || command.contains(':') {
+        return Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(command),
+            reason: "relative executable paths are not allowed".to_string(),
+        });
+    }
+    for root in frozen_executable_roots() {
+        let candidate = root.join(command);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        #[cfg(windows)]
+        {
+            let exe = root.join(format!("{command}.exe"));
+            if exe.is_file() {
+                return Ok(exe);
+            }
+        }
+    }
+    Err(PlatformError::ProcessSpawnFailure {
+        operation: "bounded process execution".to_string(),
+        command: command.to_string(),
+        message: "command is not in the frozen executable roots".to_string(),
+    })
+}
+
+#[cfg(unix)]
+fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResult, PlatformError> {
+    if request.timeout.is_zero() {
+        return Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(&request.process.command),
+            reason: "a finite timeout is required".to_string(),
+        });
+    }
+    if request.process.cancelled || request.cancellation.load(Ordering::Acquire) {
+        return Err(PlatformError::Cancelled {
+            operation: "bounded process execution".to_string(),
+        });
+    }
+    if request.process.stdin.is_some() {
+        return Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(&request.process.command),
+            reason: "bounded execution does not accept stdin".to_string(),
+        });
+    }
+
+    let started = Instant::now();
+    let reader_deadline = started
+        .checked_add(request.timeout)
+        .unwrap_or_else(Instant::now);
+    let executable = resolve_bounded_executable(&request.process.command)?;
+    let mut command = Command::new(&executable);
+    command.args(&request.process.args);
+    command.env_clear();
+    if let Some(cwd) = &request.process.cwd {
+        command.current_dir(cwd);
+    }
+    for (key, value) in child_environment_vars(&request.process.env) {
+        command.env(key, value);
+    }
+    command
+        .stdin(if request.process.stdin.is_some() {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        })
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                    .map_err(|err| io::Error::from_raw_os_error(err as i32))?;
+                Ok(())
+            });
+        }
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| PlatformError::ProcessSpawnFailure {
+            operation: "bounded process execution".to_string(),
+            command: request.process.command.clone(),
+            message: err.to_string(),
+        })?;
+
+    #[cfg(windows)]
+    let mut process_job = match assign_windows_process_job(&child) {
+        Some(job) => Some(job),
+        None => {
+            terminate_timed_out_process(&mut child);
+            return Err(PlatformError::UnsupportedOperation {
+                operation: "bounded process execution".to_string(),
+                path: PathBuf::from(&request.process.command),
+                reason: "unable to assign child process job".to_string(),
+            });
+        }
+    };
+    let output_overflow = Arc::new(AtomicBool::new(false));
+    let reader_stop = Arc::new(AtomicBool::new(false));
+    let stdout_reader = child.stdout.take().map(|pipe| {
+        let limit = request.max_stdout_bytes;
+        let overflow = output_overflow.clone();
+        let stop = reader_stop.clone();
+        std::thread::spawn(move || {
+            unix_bounded_reader(pipe, limit, overflow, stop, reader_deadline)
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|pipe| {
+        let limit = request.max_stderr_bytes;
+        let overflow = output_overflow.clone();
+        let stop = reader_stop.clone();
+        std::thread::spawn(move || {
+            unix_bounded_reader(pipe, limit, overflow, stop, reader_deadline)
+        })
+    });
+
+    let termination = loop {
+        if request.cancellation.load(Ordering::Acquire) {
+            reader_stop.store(true, Ordering::Release);
+            terminate_bounded_child(&mut child);
+            break match bounded_reap_child(&mut child, &request.process.command) {
+                Ok(()) => Err(PlatformError::Cancelled {
+                    operation: "bounded process execution".to_string(),
+                }),
+                Err(err) => Err(err),
+            };
+        }
+        if output_overflow.load(Ordering::Acquire) {
+            reader_stop.store(true, Ordering::Release);
+            terminate_bounded_child(&mut child);
+            break match bounded_reap_child(&mut child, &request.process.command) {
+                Ok(()) => Ok(-1),
+                Err(err) => Err(err),
+            };
+        }
+        if started.elapsed() > request.timeout {
+            reader_stop.store(true, Ordering::Release);
+            terminate_bounded_child(&mut child);
+            break match bounded_reap_child(&mut child, &request.process.command) {
+                Ok(()) => Err(PlatformError::Timeout {
+                    operation: format!("process `{}`", request.process.command),
+                    duration: started.elapsed(),
+                }),
+                Err(err) => Err(err),
+            };
+        }
+        // nix exposes waitid only on these targets. Other Unix hosts, including
+        // macOS, fall back to Child::try_wait so the child handle still owns the
+        // reap and we never import a configured-out waitid symbol.
+        #[cfg(any(
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "haiku",
+            all(target_os = "linux", not(target_env = "uclibc")),
+        ))]
+        let observed = {
+            use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
+            use nix::unistd::Pid;
+            match waitid(
+                Id::Pid(Pid::from_raw(child.id() as i32)),
+                WaitPidFlag::WEXITED | WaitPidFlag::WNOHANG | WaitPidFlag::WNOWAIT,
+            ) {
+                Ok(WaitStatus::StillAlive) => Ok(None),
+                Ok(status) => {
+                    reader_stop.store(true, Ordering::Release);
+                    terminate_bounded_child(&mut child);
+                    let code = match status {
+                        WaitStatus::Exited(_, code) => code,
+                        WaitStatus::Signaled(_, signal, _) => -(signal as i32),
+                        _ => -1,
+                    };
+                    Ok(Some(code))
+                }
+                Err(err) => Err(PlatformError::from_io_error(
+                    "observe bounded process",
+                    PathBuf::from(&request.process.command),
+                    io::Error::other(err.to_string()),
+                )),
+            }
+        };
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "haiku",
+            all(target_os = "linux", not(target_env = "uclibc")),
+        )))]
+        let observed = child
+            .try_wait()
+            .map(|status| status.map(|status| status.code().unwrap_or(-1)))
+            .map_err(|err| {
+                PlatformError::from_io_error(
+                    "wait bounded process",
+                    PathBuf::from(&request.process.command),
+                    err,
+                )
+            });
+        match observed {
+            Ok(Some(status)) => {
+                terminate_bounded_child(&mut child);
+                break bounded_reap_child(&mut child, &request.process.command).map(|_| status);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                reader_stop.store(true, Ordering::Release);
+                terminate_bounded_child(&mut child);
+                break match bounded_reap_child(&mut child, &request.process.command) {
+                    Ok(()) => Err(err),
+                    Err(cleanup) => Err(cleanup),
+                };
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+
+    let stdout = stdout_reader
+        .map(|handle| {
+            handle.join().unwrap_or(BoundedReaderResult {
+                bytes: Vec::new(),
+                exceeded: false,
+                failed: true,
+            })
+        })
+        .unwrap_or(BoundedReaderResult {
+            bytes: Vec::new(),
+            exceeded: false,
+            failed: false,
+        });
+    let stderr = stderr_reader
+        .map(|handle| {
+            handle.join().unwrap_or(BoundedReaderResult {
+                bytes: Vec::new(),
+                exceeded: false,
+                failed: true,
+            })
+        })
+        .unwrap_or(BoundedReaderResult {
+            bytes: Vec::new(),
+            exceeded: false,
+            failed: false,
+        });
+    let exit_code = termination?;
+    if stdout.exceeded {
+        return Err(PlatformError::ProcessOutputLimit {
+            stream: "stdout",
+            limit: request.max_stdout_bytes,
+        });
+    }
+    if stderr.exceeded {
+        return Err(PlatformError::ProcessOutputLimit {
+            stream: "stderr",
+            limit: request.max_stderr_bytes,
+        });
+    }
+    if stdout.failed {
+        return Err(PlatformError::ProcessOutputReadFailure { stream: "stdout" });
+    }
+    if stderr.failed {
+        return Err(PlatformError::ProcessOutputReadFailure { stream: "stderr" });
+    }
+    let stdout = String::from_utf8(stdout.bytes).map_err(|_| PlatformError::Encoding {
+        operation: "decode bounded process stdout".to_string(),
+        path: PathBuf::from(&request.process.command),
+        source: io::Error::new(io::ErrorKind::InvalidData, "stdout was not UTF-8"),
+    })?;
+    let stderr = String::from_utf8(stderr.bytes).map_err(|_| PlatformError::Encoding {
+        operation: "decode bounded process stderr".to_string(),
+        path: PathBuf::from(&request.process.command),
+        source: io::Error::new(io::ErrorKind::InvalidData, "stderr was not UTF-8"),
+    })?;
+    Ok(ProcessResult {
+        exit_code,
+        stdout,
+        stderr,
+        elapsed: started.elapsed(),
+    })
+}
+
+#[cfg(windows)]
+fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResult, PlatformError> {
+    use ::windows::Win32::Foundation::{
+        CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, SetHandleInformation, TRUE,
+    };
+    use ::windows::Win32::Security::SECURITY_ATTRIBUTES;
+    use ::windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use ::windows::Win32::System::Pipes::CreatePipe;
+    use ::windows::Win32::System::Threading::{
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+        DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
+        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
+        STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    };
+    use ::windows::core::{PCWSTR, PWSTR};
+    use std::mem::{size_of, zeroed};
+    use std::ptr;
+
+    struct Owned(HANDLE);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+    impl Owned {
+        fn into_raw(self) -> HANDLE {
+            let h = self.0;
+            std::mem::forget(self);
+            h
+        }
+    }
+
+    fn fail(request: &BoundedProcessRequest, reason: impl Into<String>) -> PlatformError {
+        PlatformError::ProcessSpawnFailure {
+            operation: "bounded process execution".to_string(),
+            command: request.process.command.clone(),
+            message: reason.into(),
+        }
+    }
+    fn terminate_tree(process: HANDLE, job: Option<Owned>) -> bool {
+        drop(job);
+        unsafe {
+            let _ = TerminateProcess(process, 1);
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                let wait = WaitForSingleObject(process, 10);
+                if wait.0 == 0 {
+                    return true;
+                }
+                if wait.0 == u32::MAX || Instant::now() >= deadline {
+                    return false;
+                }
+            }
+        }
+    }
+
+    if request.timeout.is_zero() {
+        return Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(&request.process.command),
+            reason: "a finite timeout is required".to_string(),
+        });
+    }
+    if request.process.cancelled || request.cancellation.load(Ordering::Acquire) {
+        return Err(PlatformError::Cancelled {
+            operation: "bounded process execution".to_string(),
+        });
+    }
+    if request.process.stdin.is_some() {
+        return Err(PlatformError::UnsupportedOperation {
+            operation: "bounded process execution".to_string(),
+            path: PathBuf::from(&request.process.command),
+            reason: "bounded execution does not accept stdin".to_string(),
+        });
+    }
+
+    let started = Instant::now();
+    let reader_deadline = started
+        .checked_add(request.timeout)
+        .unwrap_or_else(Instant::now);
+    unsafe {
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: ptr::null_mut(),
+            bInheritHandle: TRUE,
+        };
+        let mut stdout_read = HANDLE::default();
+        let mut stdout_write = HANDLE::default();
+        let mut stderr_read = HANDLE::default();
+        let mut stderr_write = HANDLE::default();
+        CreatePipe(&mut stdout_read, &mut stdout_write, Some(&sa), 0)
+            .map_err(|e| fail(request, format!("create stdout pipe: {e}")))?;
+        if let Err(e) = CreatePipe(&mut stderr_read, &mut stderr_write, Some(&sa), 0) {
+            let _ = CloseHandle(stdout_read);
+            let _ = CloseHandle(stdout_write);
+            return Err(fail(request, format!("create stderr pipe: {e}")));
+        }
+        let stdout_read = Owned(stdout_read);
+        let stdout_write = Owned(stdout_write);
+        let stderr_read = Owned(stderr_read);
+        let stderr_write = Owned(stderr_write);
+        SetHandleInformation(stdout_read.0, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0))
+            .map_err(|e| fail(request, format!("make stdout read handle private: {e}")))?;
+        SetHandleInformation(stderr_read.0, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0))
+            .map_err(|e| fail(request, format!("make stderr read handle private: {e}")))?;
+
+        let mut startup: STARTUPINFOEXW = zeroed();
+        startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdOutput = stdout_write.0;
+        startup.StartupInfo.hStdError = stderr_write.0;
+        startup.StartupInfo.hStdInput = HANDLE::default();
+        let inherited = [stdout_write.0, stderr_write.0];
+        let mut attr_size = 0usize;
+        let _ = InitializeProcThreadAttributeList(None, 1, Some(0), &mut attr_size);
+        let attr_words = attr_size.div_ceil(size_of::<usize>());
+        let mut attr_storage = vec![0usize; attr_words];
+        let attrs = LPPROC_THREAD_ATTRIBUTE_LIST(attr_storage.as_mut_ptr().cast());
+        InitializeProcThreadAttributeList(Some(attrs), 1, Some(0), &mut attr_size).map_err(
+            |e| {
+                fail(
+                    request,
+                    format!("initialize inherited-handle whitelist: {e}"),
+                )
+            },
+        )?;
+        let attr_result = UpdateProcThreadAttribute(
+            attrs,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+            Some(inherited.as_ptr().cast()),
+            size_of::<HANDLE>() * inherited.len(),
+            None,
+            None,
+        );
+        if let Err(e) = attr_result {
+            DeleteProcThreadAttributeList(attrs);
+            return Err(fail(
+                request,
+                format!("configure inherited-handle whitelist: {e}"),
+            ));
+        }
+        startup.lpAttributeList = attrs;
+
+        let executable = resolve_bounded_executable(&request.process.command)?;
+        let mut process = request.process.clone();
+        process.command = executable.to_string_lossy().into_owned();
+        let mut command_line = windows_process_command_line(&process);
+        let current_dir = request
+            .process
+            .cwd
+            .as_ref()
+            .map(|p| wide_null(&p.to_string_lossy()));
+        let current_dir = current_dir
+            .as_ref()
+            .map_or(PCWSTR(ptr::null()), |v| PCWSTR(v.as_ptr()));
+        let env_block = windows_environment_block(&child_environment_vars(&request.process.env));
+        let mut info = PROCESS_INFORMATION::default();
+        let spawn = CreateProcessW(
+            PCWSTR(ptr::null()),
+            Some(PWSTR(command_line.as_mut_ptr())),
+            None,
+            None,
+            true,
+            EXTENDED_STARTUPINFO_PRESENT
+                | CREATE_SUSPENDED
+                | CREATE_NO_WINDOW
+                | CREATE_UNICODE_ENVIRONMENT,
+            Some(env_block.as_ptr().cast()),
+            current_dir,
+            (&startup.StartupInfo) as *const _,
+            &mut info,
+        );
+        DeleteProcThreadAttributeList(attrs);
+        if let Err(e) = spawn {
+            return Err(fail(request, format!("CreateProcessW: {e}")));
+        }
+        let process = Owned(info.hProcess);
+        let thread = Owned(info.hThread);
+        drop(stdout_write);
+        drop(stderr_write);
+
+        let job = match CreateJobObjectW(None, PCWSTR(ptr::null())) {
+            Ok(h) => Owned(h),
+            Err(e) => {
+                if !terminate_tree(process.0, None) {
+                    return Err(PlatformError::ProcessCleanupFailure {
+                        command: request.process.command.clone(),
+                        reason: "process did not terminate within cleanup grace".to_string(),
+                    });
+                }
+                return Err(fail(request, format!("create process job: {e}")));
+            }
+        };
+        let mut job = Some(job);
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Err(e) = SetInformationJobObject(
+            job.as_ref().unwrap().0,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const core::ffi::c_void,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) {
+            if !terminate_tree(process.0, job.take()) {
+                return Err(PlatformError::ProcessCleanupFailure {
+                    command: request.process.command.clone(),
+                    reason: "process did not terminate within cleanup grace".to_string(),
+                });
+            }
+            return Err(fail(request, format!("configure process job: {e}")));
+        }
+        if let Err(e) = AssignProcessToJobObject(job.as_ref().unwrap().0, process.0) {
+            if !terminate_tree(process.0, job.take()) {
+                return Err(PlatformError::ProcessCleanupFailure {
+                    command: request.process.command.clone(),
+                    reason: "process did not terminate within cleanup grace".to_string(),
+                });
+            }
+            return Err(fail(request, format!("assign process job: {e}")));
+        }
+        if ResumeThread(thread.0) == u32::MAX {
+            if !terminate_tree(process.0, job.take()) {
+                return Err(PlatformError::ProcessCleanupFailure {
+                    command: request.process.command.clone(),
+                    reason: "process did not terminate within cleanup grace".to_string(),
+                });
+            }
+            return Err(fail(request, "ResumeThread failed"));
+        }
+
+        let overflow = Arc::new(AtomicBool::new(false));
+        let reader_stop = Arc::new(AtomicBool::new(false));
+        let out_overflow = overflow.clone();
+        let err_overflow = overflow.clone();
+        let out_stop = reader_stop.clone();
+        let err_stop = reader_stop.clone();
+        let out_limit = request.max_stdout_bytes;
+        let err_limit = request.max_stderr_bytes;
+        use std::os::windows::io::FromRawHandle;
+        let stdout_file = std::fs::File::from_raw_handle(stdout_read.into_raw().0 as _);
+        let stderr_file = std::fs::File::from_raw_handle(stderr_read.into_raw().0 as _);
+        let out_thread = std::thread::spawn(move || {
+            windows_bounded_reader(
+                stdout_file,
+                out_limit,
+                out_overflow,
+                out_stop,
+                reader_deadline,
+            )
+        });
+        let err_thread = std::thread::spawn(move || {
+            windows_bounded_reader(
+                stderr_file,
+                err_limit,
+                err_overflow,
+                err_stop,
+                reader_deadline,
+            )
+        });
+        let mut termination: Result<i32, PlatformError> = Ok(0);
+        loop {
+            if request.cancellation.load(Ordering::Acquire) {
+                reader_stop.store(true, Ordering::Release);
+                termination = if terminate_tree(process.0, job.take()) {
+                    Err(PlatformError::Cancelled {
+                        operation: "bounded process execution".to_string(),
+                    })
+                } else {
+                    Err(PlatformError::ProcessCleanupFailure {
+                        command: request.process.command.clone(),
+                        reason: "process did not terminate within cleanup grace".to_string(),
+                    })
+                };
+                break;
+            }
+            if overflow.load(Ordering::Acquire) {
+                reader_stop.store(true, Ordering::Release);
+                if !terminate_tree(process.0, job.take()) {
+                    termination = Err(PlatformError::ProcessCleanupFailure {
+                        command: request.process.command.clone(),
+                        reason: "process did not terminate within cleanup grace".to_string(),
+                    });
+                }
+                break;
+            }
+            if started.elapsed() > request.timeout {
+                reader_stop.store(true, Ordering::Release);
+                termination = if terminate_tree(process.0, job.take()) {
+                    Err(PlatformError::Timeout {
+                        operation: format!("process `{}`", request.process.command),
+                        duration: started.elapsed(),
+                    })
+                } else {
+                    Err(PlatformError::ProcessCleanupFailure {
+                        command: request.process.command.clone(),
+                        reason: "process did not terminate within cleanup grace".to_string(),
+                    })
+                };
+                break;
+            }
+            let wait = WaitForSingleObject(process.0, 5);
+            if wait.0 == 0 {
+                let mut code = 0u32;
+                if let Err(e) = GetExitCodeProcess(process.0, &mut code) {
+                    termination = Err(PlatformError::from_io_error(
+                        "read bounded process exit code",
+                        PathBuf::from(&request.process.command),
+                        io::Error::other(e.to_string()),
+                    ));
+                } else {
+                    termination = Ok(code as i32);
+                }
+                drop(job.take());
+                break;
+            }
+            if wait.0 == u32::MAX {
+                reader_stop.store(true, Ordering::Release);
+                termination = if terminate_tree(process.0, job.take()) {
+                    Err(PlatformError::from_io_error(
+                        "wait bounded process",
+                        PathBuf::from(&request.process.command),
+                        io::Error::last_os_error(),
+                    ))
+                } else {
+                    Err(PlatformError::ProcessCleanupFailure {
+                        command: request.process.command.clone(),
+                        reason: "process did not terminate within cleanup grace".to_string(),
+                    })
+                };
+                break;
+            }
+        }
+        let stdout = out_thread.join().unwrap_or(BoundedReaderResult {
+            bytes: Vec::new(),
+            exceeded: false,
+            failed: true,
+        });
+        let stderr = err_thread.join().unwrap_or(BoundedReaderResult {
+            bytes: Vec::new(),
+            exceeded: false,
+            failed: true,
+        });
+        let exit_code = termination?;
+        if stdout.exceeded {
+            return Err(PlatformError::ProcessOutputLimit {
+                stream: "stdout",
+                limit: request.max_stdout_bytes,
+            });
+        }
+        if stderr.exceeded {
+            return Err(PlatformError::ProcessOutputLimit {
+                stream: "stderr",
+                limit: request.max_stderr_bytes,
+            });
+        }
+        if stdout.failed {
+            return Err(PlatformError::ProcessOutputReadFailure { stream: "stdout" });
+        }
+        if stderr.failed {
+            return Err(PlatformError::ProcessOutputReadFailure { stream: "stderr" });
+        }
+        let stdout = String::from_utf8(stdout.bytes).map_err(|_| PlatformError::Encoding {
+            operation: "decode bounded process stdout".to_string(),
+            path: PathBuf::from(&request.process.command),
+            source: io::Error::new(io::ErrorKind::InvalidData, "stdout was not UTF-8"),
+        })?;
+        let stderr = String::from_utf8(stderr.bytes).map_err(|_| PlatformError::Encoding {
+            operation: "decode bounded process stderr".to_string(),
+            path: PathBuf::from(&request.process.command),
+            source: io::Error::new(io::ErrorKind::InvalidData, "stderr was not UTF-8"),
+        })?;
+        Ok(ProcessResult {
+            exit_code,
+            stdout,
+            stderr,
+            elapsed: started.elapsed(),
+        })
+    }
 }
 
 /// Forcibly terminates a process that exceeded its timeout, taking down its
@@ -1176,6 +2119,52 @@ fn terminate_timed_out_process(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Terminates the bounded child's owned process group without reaping it.
+/// Unix callers must invoke `bounded_reap_child` afterward while the original
+/// child handle still owns the observed leader; this avoids a post-reap PID race.
+#[cfg(unix)]
+fn terminate_bounded_child(child: &mut std::process::Child) {
+    let pid = child.id() as i32;
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(-pid),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+    let _ = child.kill();
+}
+
+#[cfg(unix)]
+fn bounded_reap_child(child: &mut std::process::Child, command: &str) -> Result<(), PlatformError> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) => {
+                return Err(PlatformError::ProcessCleanupFailure {
+                    command: command.to_string(),
+                    reason: "process did not terminate within cleanup grace".to_string(),
+                });
+            }
+            Err(err) => {
+                return Err(PlatformError::from_io_error(
+                    "reap bounded process",
+                    PathBuf::from(command),
+                    err,
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn execute_bounded_native(request: &BoundedProcessRequest) -> Result<ProcessResult, PlatformError> {
+    Err(PlatformError::UnsupportedOperation {
+        operation: "bounded process execution".to_string(),
+        path: PathBuf::from(&request.process.command),
+        reason: "bounded process execution is unsupported on this target".to_string(),
+    })
 }
 
 #[cfg(windows)]
@@ -1686,6 +2675,14 @@ fn close_windows_conpty_handles(
 
 #[cfg(windows)]
 fn windows_command_line(request: &PtyRequest) -> Vec<u16> {
+    let mut parts = Vec::with_capacity(request.args.len() + 1);
+    parts.push(quote_windows_arg(&request.command));
+    parts.extend(request.args.iter().map(|arg| quote_windows_arg(arg)));
+    wide_null(&parts.join(" "))
+}
+
+#[cfg(windows)]
+fn windows_process_command_line(request: &ProcessRequest) -> Vec<u16> {
     let mut parts = Vec::with_capacity(request.args.len() + 1);
     parts.push(quote_windows_arg(&request.command));
     parts.extend(request.args.iter().map(|arg| quote_windows_arg(arg)));

@@ -11,8 +11,8 @@ use legion_desktop::{
     workflow::{DesktopEframeApp, DesktopLaunchConfig, DesktopRuntime, DesktopWorkflowOutcome},
 };
 use legion_protocol::{
-    CanonicalPath, SessionPanelState, TimestampMillis, WorkbenchSettingsRecord,
-    WorkspaceSessionRecord,
+    CanonicalPath, LanguageToolchainSettingsRecord, SessionPanelState, TimestampMillis,
+    WorkbenchSettingsRecord, WorkspaceSessionRecord,
 };
 use legion_ui::{
     DockLayout, DockMode, DockSide, DockSideLayout, PanelId, ThemePreferenceProjection,
@@ -602,6 +602,7 @@ fn minimal_record(root: &Path) -> WorkspaceSessionRecord {
         },
         dock_layouts: Vec::new(),
         workbench_settings: WorkbenchSettingsRecord::default(),
+        language_toolchain_settings: LanguageToolchainSettingsRecord::default(),
         memory_snapshot_json: None,
         dirty_indicators: Vec::new(),
         saved_at: TimestampMillis::now(),
