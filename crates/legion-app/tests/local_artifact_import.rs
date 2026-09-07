@@ -742,12 +742,15 @@ fn local_import_async_terminal_delivery_and_deadline_cleanup_are_bounded() {
 #[test]
 fn local_import_cancellation_cleans_private_staging() {
     let dir = tempdir().unwrap();
+    // Keep the copy phase in flight so an immediate cancel cannot lose the
+    // race against a completed Ready on a fast runner.
+    let body = vec![b'x'; 2 * 1024 * 1024];
     let bytes = archive(&[
         (
             "package/package.json",
             br#"{"name":"pyright","version":"1.1.400"}"#,
         ),
-        ("package/langserver.index.js", b"entry"),
+        ("package/langserver.index.js", &body),
     ]);
     let archive_path = dir.path().join("cancel.tgz");
     std::fs::write(&archive_path, &bytes).unwrap();
@@ -758,17 +761,22 @@ fn local_import_cancellation_cleans_private_staging() {
         &dir.path().join("cache-cancel"),
     );
     let handle = LanguageArtifactMaterializer::start(req);
-    handle.cancel();
     let mut terminal = false;
-    for _ in 0..16 {
-        if let Ok(event) = handle.recv()
-            && matches!(
-                event,
-                legion_app::language::MaterializeEvent::Failed(MaterializeError::Cancelled)
-            )
-        {
-            terminal = true;
-            break;
+    for _ in 0..64 {
+        let event = handle.recv().expect("worker delivers until a terminal");
+        if matches!(event, legion_app::language::MaterializeEvent::Progress(_)) {
+            handle.cancel();
+        }
+        match event {
+            legion_app::language::MaterializeEvent::Failed(MaterializeError::Cancelled) => {
+                terminal = true;
+                break;
+            }
+            legion_app::language::MaterializeEvent::Ready(_)
+            | legion_app::language::MaterializeEvent::Failed(_) => {
+                panic!("expected Cancelled terminal, got {event:?}");
+            }
+            legion_app::language::MaterializeEvent::Progress(_) => {}
         }
     }
     assert!(terminal);
