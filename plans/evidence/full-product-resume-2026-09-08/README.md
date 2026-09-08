@@ -157,3 +157,148 @@ The full-product goal remains unfinished, not blocked and not complete. Native
 GUI automation is resumed on this Windows host by owner instruction; macOS and
 Linux hosts remain unavailable and their rows stay blocked with their recorded
 prerequisite strings.
+
+---
+
+# Round r01 — packet round evidence (appended 2026-09-08)
+
+## What round r01 was
+
+One bounded packet round on branch `codex/full-product-resume`. One packet
+passed review: `s2-03b-language-extract`, a pure-move extraction of the language
+toolchain settings and the proposal-kind dispatch out of
+`crates/legion-app/src/lib.rs` into `crates/legion-app/src/language/`. Two
+packets were rejected at review and reverted before any test ran
+(`s2-03a-bounded-stdin`, `s0-03e-register-verify`); no packet failed its tests.
+
+**Classification for every log below: component or integrated evidence.
+Not packaged evidence, not native GUI evidence, not product acceptance.**
+
+No `acceptance` value in `plans/completion/requirements.json` was changed on the
+strength of any of these runs, and none may be. These are crate-level compile
+checks, crate-level unit and integration tests, a static lint pass, and
+repository hygiene gates. They exercise no packaged artifact, no real window, no
+real language-server process, and no cross-OS host.
+
+## Commands
+
+The raw logs carry no invocation header — each begins directly with tool output
+and ends with a trailing `EXIT=<code>` line written by the runner. The command
+column below is the command the round driver
+(`.superpowers/sdd/2026-09-04-full-product-completion/legion-completion-round.js`,
+steps Check and Test) issues for that step, and it is consistent with the tool
+output present in each log. Every cargo command in this round took `-j 1` under
+the single-cargo-lane rule.
+
+## Logs
+
+| log | command | exit | classification |
+|---|---|---|---|
+| `round-r01-check0-legion-platform.log` | `cargo check -p legion-platform --all-targets -j 1` | 0 | component evidence — compile check only, no test executed |
+| `round-r01-check0-legion-app.log` | `cargo check -p legion-app --all-targets -j 1` | 0 | component evidence — compile check only, no test executed |
+| `round-r01-check0-xtask.log` | `cargo check -p xtask --all-targets -j 1` | 0 | component evidence — compile check only, no test executed |
+| `round-r01-test-step1.log` | `git checkout --` of the rejected packets' tracked paths (no cargo) | 0 | process record, not product evidence — records the revert of the two rejected packets |
+| `round-r01-test-step2a.log` | `cargo test -p legion-app --test typescript_toolchain_settings -j 1 --no-fail-fast` | 0 | integrated evidence, crate level — in-crate integration target, no real language server, no packaged product |
+| `round-r01-test-step2b.log` | `cargo test -p legion-app --lib -j 1 --no-fail-fast language::formatting_dispatch_tests` | 0 | component evidence — in-crate unit tests |
+| `round-r01-test-step2c.log` | `cargo test -p legion-app --lib -j 1 --no-fail-fast language::toolchain_settings::toolchain_approval_tests` | 0 | component evidence — in-crate unit tests |
+| `round-r01-test-step4a.log` | `cargo test -p legion-app --lib -j 1` | 0 | component evidence — crate unit suite, regression guard |
+| `round-r01-test-step4b.log` | `cargo test -p legion-desktop --lib -j 1` | 0 | component evidence — crate unit suite, regression guard |
+| `round-r01-test-step5.log` | `cargo clippy --workspace --all-targets -j 1 -- -D warnings` | 0 | component evidence — static lint, no test executed |
+| `round-r01-test-step6a.log` | `cargo fmt --all --check` | 0 | component evidence — repository hygiene gate |
+| `round-r01-test-step6b.log` | `cargo run -p xtask -- check-deps` | 0 | component evidence — repository hygiene gate |
+| `round-r01-test-step6c.log` | `cargo run -p xtask -- docs-hygiene` | 0 | component evidence — repository hygiene gate |
+| `round-r01-test-step6d.log` | `cargo run -p xtask -- claim-audit` | 0 | component evidence — repository hygiene gate |
+| `round-r01-test-step6e.log` | `cargo run -p xtask -- extract-before-modify` | 0 | component evidence — chokepoint growth gate |
+
+Step 3 of the driver (the `--ignored` real-server startup suites) produced no log
+because no packet in this round was marked `real_server`; the passed packet is a
+pure move. That absence is not a skipped pass — the real-server rows simply have
+no evidence from round r01.
+
+## Copy integrity
+
+Each log was copied byte-identical from the gitignored ledger
+`.superpowers/sdd/2026-09-04-full-product-completion/` into this directory and
+re-hashed after the copy; every pair matched.
+
+| log | lines | SHA-256 |
+|---|---|---|
+| `round-r01-check0-legion-platform.log` | 4 | `2c546ca14139c3828f449558cd0c747e81cba2db751fa19780726be463b66fb3` |
+| `round-r01-check0-legion-app.log` | 25 | `60e6339b68d365ad8a95fb0a6f346b482f7f20f845a6fb96db241fae11ba1a46` |
+| `round-r01-check0-xtask.log` | 10 | `007f9de0f447ab3e323138f1aff8de69b79fb3864847f313eb08e739e1b366d8` |
+| `round-r01-test-step1.log` | 25 | `4b0c8cdfe2567d25c642d813b0a58ec6f930e2126df5b882eb71c5e2c1f328bd` |
+| `round-r01-test-step2a.log` | 18 | `ea15b1708a508c82af9d4febd0dacda27be2249c01be4de73c136618767ab55d` |
+| `round-r01-test-step2b.log` | 12 | `e0e1a55589c3f2f370f7c82c3356d8db0e727c503e8f3450548e3492ba3170d2` |
+| `round-r01-test-step2c.log` | 11 | `372db2a3864684d4fa3de24b82b23d07a199c69c6b8c3a3159a8edf341954bce` |
+| `round-r01-test-step4a.log` | 447 | `755d52241e6765c9cbcb8810058246c83238e0b74beaa5ece4e106922cf7b8ea` |
+| `round-r01-test-step4b.log` | 270 | `768700fde9254d8c8e5a3cfb679610ba70046c65f89cac5aa7c78b32dbbdff91` |
+| `round-r01-test-step5.log` | 22 | `b344d85a276c4d281245ccea62a83dc58ee476279bc5dd6391b48492646b8446` |
+| `round-r01-test-step6a.log` | 1 | `418a5c17f33c70e99b0cc0a07fce69191489cfedc94164bfa903785777c5bd4b` |
+| `round-r01-test-step6b.log` | 7 | `718f6d2e2a47a0de3efd52d3acee85a51746f0d18e3bd1e183c538e7648ff88f` |
+| `round-r01-test-step6c.log` | 4 | `31a4c7b8571b88142024770317c27cec193fa0cb884af5c9dacd78909066505b` |
+| `round-r01-test-step6d.log` | 4 | `61a4c8e60570d2bb6d4c97cc28156db6791917256960e01635a7d985b500b0a3` |
+| `round-r01-test-step6e.log` | 4 | `e56ade19083b2c5e960a68ff8dd507c8befa2e633b08647a8da3795dce4f6767` |
+
+The hashes above are of the LF bytes as the runner wrote them, which is
+also what git stores: this repository sets `core.autocrlf=true` and
+`.gitattributes` carries no rule for `plans/evidence/**`, so a Windows checkout
+expands these logs to CRLF and re-hashing them there will not reproduce these
+values. Compare against the stored blob (`git show <rev>:<path> | sha256sum`),
+not against a Windows working-tree copy.
+
+## Outcomes exactly as logged
+
+- `check0` (three logs): all three crates checked with `--all-targets`; the `dev`
+  profile finished in 17.73s, 52.56s and 29.57s respectively; zero compiler
+  errors; `EXIT=0`.
+- Step 1: the two rejected packets' tracked files were restored with
+  `git checkout --` (`checkout rc=0`), and the one untracked file the rejected
+  bounded-stdin packet would have added
+  (`crates/legion-platform/src/bounded_stdin.rs`) was recorded `ABSENT (never
+  created; nothing to delete)`. The pre-revert diffstat it discarded was 5 files,
+  1021 insertions, 38 deletions. Post-revert status for those paths is empty; the
+  only remaining dirty paths are the four owned by the passed packet.
+- Step 2a: `test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0
+  filtered out; finished in 0.02s`.
+- Step 2b: `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 436
+  filtered out; finished in 0.01s`.
+- Step 2c: `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 436
+  filtered out; finished in 0.01s`.
+- Step 4a regression guard: `test result: ok. 439 passed; 0 failed; 0 ignored; 0
+  measured; 0 filtered out; finished in 0.65s`. The driver expects 439 or more;
+  439 observed, no regression.
+- Step 4b regression guard: `test result: ok. 243 passed; 0 failed; 0 ignored; 0
+  measured; 0 filtered out; finished in 11.09s`. The driver expects 243 or more;
+  243 observed, no regression.
+- Step 5: clippy finished in 1m 15s with `EXIT=0`. The only warning in the log is
+  the vendored-crate `float_literal_f32_fallback` future-incompatibility at
+  `vendor/epaint/src/tessellator.rs:2326:34` and its `epaint (lib) generated 1
+  warning` roll-up; `epaint` is excluded from the workspace lint failure. No
+  `legion-*` crate warned.
+- Step 6a: no output at all apart from the trailing `EXIT=0` — the formatting
+  gate found nothing to report.
+- Step 6b: `dependency policy checks passed`.
+- Step 6c: `documentation hygiene checks passed`.
+- Step 6d: `claim audit passed`.
+- Step 6e: `extract-before-modify: no chokepoint file grew past its slack`.
+
+Every one of the fifteen logs ends `EXIT=0`. No log contains a `FAILED` marker, a
+`failures:` section, a `panicked at` line, or a non-`ok.` `test result:` line.
+
+## Register effect of round r01: none
+
+The reviewer-proposed implementation transition for the passed packet was
+`COMP-LANG-007` to `partial`. That row was already `partial`, so applying the
+transition changed nothing: `plans/completion/requirements.json` still holds 419
+rows, the implementation tally is unchanged at 143 implemented / 233 partial / 43
+absent, and all 419 `acceptance` values remain `unassessed`. The file is
+byte-identical to its state before the round. A pure move is expected to be
+register-neutral; it relocates code without adding product behaviour.
+
+## Standing position
+
+The full-product goal remains unfinished, not blocked and not complete. Native
+GUI automation is resumed on this Windows host by owner instruction; macOS and
+Linux hosts remain unavailable and their rows stay blocked with the exact
+prerequisite strings recorded in `plans/completion/decisions.md` and in the local
+`blockers.json`.

@@ -455,3 +455,63 @@ The retained `COMP-P0-F4-T1-1` protection was explicitly rewired from internal
 GAP-08 to `COMP-DIST-009`, `COMP-SCOPE-GAP-01`, and `COMP-SCOPE-GAP-02`.
 Dependencies do not point through protected edges, and combined validation
 remains acyclic; all other non-GAP objects remain exact.
+
+## Owner-blocked prerequisites (2026-09-08, round r01)
+
+This section is the canonical list of prerequisites only the owner can supply. A
+blocker never promotes or demotes an `acceptance` value by itself; it records
+exactly what is missing. An unavailable host, tool, or credential is recorded
+here as blocked with an exact prerequisite string, never as passed and never as
+skipped. A result from an available host is never substituted for a row that
+names an unavailable one.
+
+Standing authority as of this date: native GUI automation is resumed on this
+Windows host by owner instruction. macOS and Linux hosts remain unavailable and
+their rows stay blocked.
+
+### BLK-2026-09-08-01 — Unix bounded-process stdin branch
+
+Prerequisite, exact: a Linux or macOS host with this workspace checked out and a
+Rust toolchain able to run `cargo test -p legion-platform --test bounded_process`.
+
+Needed to assess the Unix nonblocking `fcntl` stdin branch of packet
+`s2-03a-bounded-stdin`. That branch is compiled out on this Windows host, so it
+stays unassessed. It is never passed by substitution from the Windows
+anonymous-pipe `PIPE_NOWAIT` branch, which exercises different code. The packet
+itself was rejected at review in round r01 and reverted; the bounded stdin
+specification `docs/superpowers/specs/2026-09-08-bounded-process-stdin.md`
+remains planning only.
+
+### BLK-2026-09-08-02 — macOS and Linux packaged native GUI rows
+
+Prerequisite, exact: a macOS host and a Linux host with the packaged native
+product installed and a real display session, able to run the windowed GUI e2e
+suite.
+
+Needed for every macOS and Linux native-GUI and packaged-journey row:
+`COMP-LANG-013`, `COMP-BTD-009`, `COMP-SCM-010`, `COMP-PRES-011`, and the
+packaged-native rows of packages `S3-07` and `S4-06`. Those rows stay blocked.
+Native GUI automation is resumed on the Windows host only, so a Windows result
+never stands in for a macOS or Linux row, and no packaged, cross-OS, or release
+readiness may be claimed from Windows evidence.
+
+### Register ratification status on this date
+
+`plans/completion/requirements.json` currently carries no `owner_approval_ref`
+values at all, so there is no ratified cell in the register on this date,
+provisional or otherwise. Should any be added, they must point at a dated entry
+in this file stating that the ratification is provisional and agent-made, and
+release mode must reject provisional cells. All 419 rows remain
+`acceptance: unassessed`.
+
+### Round r01 register effect
+
+Round r01 applied one reviewer-proposed implementation transition,
+`COMP-LANG-007` to `partial`, for the passed pure-move packet
+`s2-03b-language-extract`. The row already read `partial`, so the file is
+byte-identical before and after: 419 rows, 143 implemented / 233 partial / 43
+absent, all 419 `acceptance` values `unassessed`. The round's fifteen green logs
+are component or crate-level integrated evidence and are recorded as such in
+`plans/evidence/full-product-resume-2026-09-08/README.md`; none of them is
+packaged evidence, native GUI evidence, or product acceptance, and no acceptance
+value was set from any of them.
