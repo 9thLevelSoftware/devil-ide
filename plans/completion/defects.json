@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "defects": [
+    {
+      "id": "DEF-2026-09-05-01",
+      "requirement_ids": [
+        "COMP-PLAT-002"
+      ],
+      "scenario_id": "SC-MANUAL-EDIT-INPUT-RECOVERY",
+      "configuration_id": "CFG-WIN11-X64-PRODUCT-JOURNEY",
+      "severity": "P1",
+      "invalidates_required_outcome": true,
+      "reproduction": [
+        "Build the exploratory desktop binary (debug, --no-default-features --features offline) and launch it as an ordinary eframe application with --workspace pointing at a disposable clone of the repository; no --smoke, --beta-smoke, --windowed-e2e or test helper flag is used.",
+        "Open README.md from the Explorer drawer, close the drawer, and click the first-line code surface so the accessible text element reports focus.",
+        "Type the marker NATIVE_BASELINE_20260905 with native OS key injection; the buffer shows the marker and the tab shows the dirty indicator.",
+        "With the reported caret at Ln 1 Col 8, press the OS Home key.",
+        "Read the caret position the product reports."
+      ],
+      "expected": "Home moves the caret to the start of the current line and the product reports the new column; End moves it to the end of the line, and the command modifier with Home or End moves to the start or end of the document.",
+      "observed": "On 2026-09-05, with the caret reported at Ln 1 Col 8 in the open README, the OS Home key did not move the reported cursor at all. A read-only source trace then confirmed the cause: the desktop keyboard path contained no egui::Key::Home or egui::Key::End arm, editor_keyboard_control_actions handled only the arrow and PageUp/PageDown keys, and the code canvas is a custom painter rather than an egui TextEdit, so nothing else could have supplied the mapping. A source fix has since landed in crates/legion-desktop/src/workflow.rs, which now maps Home and End to EditorBoundaryKind::LineStart and LineEnd and, with the command modifier, to DocumentStart and DocumentEnd. No native run has re-observed the key since that change, so the fix is unverified at the product layer.",
+      "owner": "luna_worker",
+      "status": "fixed-awaiting-verification",
+      "repair_package_id": "S1-04",
+      "verification_run_ids": []
+    },
+    {
+      "id": "DEF-2026-09-05-02",
+      "requirement_ids": [
+        "COMP-PLAT-002"
+      ],
+      "scenario_id": "SC-MANUAL-EDIT-INPUT-RECOVERY",
+      "configuration_id": "CFG-WIN11-X64-PRODUCT-JOURNEY",
+      "severity": "P1",
+      "invalidates_required_outcome": true,
+      "reproduction": [
+        "Build the exploratory desktop binary (debug, --no-default-features --features offline) and launch it as an ordinary eframe application with --workspace pointing at a disposable clone of the repository.",
+        "Open README.md, click the first-line code surface, and type the marker NATIVE_BASELINE_20260905 with native OS key injection so the tab shows the dirty indicator.",
+        "Inject the OS chord Control_L+s.",
+        "Refresh the window state and read the tab dirty indicator.",
+        "From a host shell, read README.md and compute its SHA-256, then run git diff in the clone.",
+        "For contrast, open the Command palette, focus its native query edit, type save, wait for the filter to settle so Save Active Buffer is selected, and press Return.",
+        "Refresh, read the dirty indicator again, and repeat the host read, hash and git diff."
+      ],
+      "expected": "The OS Control+S chord saves the active buffer through the same authoritative route the Save Active Buffer command uses: the dirty indicator clears and the file on disk changes to contain the typed marker.",
+      "observed": "On 2026-09-05, after native typing, the injected Control_L+s chord left the dirty indicator set and left the external README bytes unchanged on a subsequent host read. The Command palette route on the same session and the same buffer cleared the dirty indicator and produced a verified on-disk change (README SHA-256 moved from 607892DC8A45879A54B0B3F1BE149A3A28E447090715E9BB24EB14AA2673F2FC to D5D1264A0B0C212A1D74A46279D7AEF99FD97F2CC5AAD42CFA16C6B356459E33, with git diff reporting one addition and one deletion on the first line only). That contrast narrows the failure to shortcut and input ingress rather than the write path. HYPOTHESIS, UNCONFIRMED: the leading explanation is a frame-level egui::Modifiers.command mismatch for an injected Control_L+s, because the desktop dispatcher qualifies a key event with the frame-level modifier state rather than the event-time modifiers. No native event log capturing the actual egui::InputState.modifiers or Event::Key fields for that chord exists, so the cause is not established and no source defect is asserted here. Automation-tool and desktop-focus interference events were observed in the same session and are deliberately excluded; they are not product behaviour.",
+      "owner": "luna_worker",
+      "status": "open",
+      "repair_package_id": "S1-02",
+      "verification_run_ids": []
+    }
+  ]
+}

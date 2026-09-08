@@ -515,3 +515,343 @@ are component or crate-level integrated evidence and are recorded as such in
 `plans/evidence/full-product-resume-2026-09-08/README.md`; none of them is
 packaged evidence, native GUI evidence, or product acceptance, and no acceptance
 value was set from any of them.
+
+## 2026-09-08 provisional register ratification
+
+### What this section ratifies, and what it does not
+
+On 2026-09-08, in round r02 of the full-product-resume workspace, an agent
+authored the four canonical register files that had never existed:
+`plans/completion/matrix.json`, `plans/completion/scenarios.json`,
+`plans/completion/dependencies.json` and `plans/completion/defects.json`.
+Until they existed, `validate_register_structure` could not load the register at
+all, so the register lane had no signal of any kind.
+
+The ratification recorded here is **provisional and agent-made**. No owner has
+approved any cell in `matrix.json`, any scenario in `scenarios.json`, any
+milestone in `dependencies.json`, or either defect. Every configuration in
+`matrix.json` carries the single `owner_approval_ref` string
+
+```
+plans/completion/decisions.md#2026-09-08-provisional-register-ratification (PROVISIONAL: agent-made, not owner-ratified)
+```
+
+verbatim, in all 42 rows, and that string points at this section. The literal
+token `PROVISIONAL:` is the marker a release-mode check must look for: **release
+mode must reject every cell carrying it.** A cell becomes owner-ratified only
+when the owner replaces that string with an approval reference of their own, in
+a separate step this packet does not perform.
+
+Nothing written here is evidence. No `EvidenceRun` exists for anything in these
+four files, no row's `implementation` value moved, and no row's `acceptance`
+value moved.
+
+### Unselected values are visible placeholders
+
+Every `tool_versions` value beginning `PENDING:S0-02-` is an unselected
+placeholder awaiting an S0-02 owner decision, not an observation and not a
+support promise. The measured values on this laptop — Rust/cargo/rust-analyzer
+1.97.1, Node 24.19.0, npm 11.17.0, bundled Python 3.12.14, Windows 11
+`10.0.26200`, Git 2.55.0, PowerShell 7.6.5, Ollama 0.33.3 — were deliberately
+**not** promoted into any target pin. Availability on one developer laptop is
+not an approved support commitment, and the schema draft rationale says so
+explicitly. The one real version label kept from the plan and workflow material
+is macOS 15, which appears as `macOS-15 (plan label; exact patch pending)`
+because the exact patch level is still unresolved.
+
+The owner must still supply, before any of these cells can stop being
+provisional: exact Windows and Linux OS versions and reference hardware; the
+exact macOS patch level; Rust, rust-analyzer, TypeScript, Node, language-server,
+browser, Python, test-runner, build-backend and debug-adapter releases;
+representative project repositories with commits or tags and a lockfile and
+network policy; package formats per OS; the accessibility provider session
+configuration per OS; the Manual/offline artifact flavor and the OS-level
+per-process network-capture tool per OS; and the signer, notarizer and trust
+verifier per OS. No credential, certificate, key, keychain entry or secret name
+appears in any cell, and none may be added to one.
+
+### Matrix shape: 42 configurations
+
+- 32 language/project tuples, copied verbatim from the S0-05 schema draft: four
+  OS/architecture targets (Windows x64, macOS x64, macOS arm64, native Linux
+  x64) crossed with the eight required project categories. Only
+  `owner_approval_ref` was changed.
+- 4 `packaged-product-journey` cells, one per OS/architecture target, from the
+  proposal's platform cells `OS-WIN11-X64-REF1`, `OS-MAC15-X64-REF1`,
+  `OS-MAC15-ARM-REF1` and `OS-LINUX-UBUNTU-X64-REF1`. These exist because the
+  accessibility, workbench and Manual journey scenarios run against an OS cell,
+  not against a language tuple.
+- 3 `manual-offline-artifact` cells from `DIST-MANUAL-OFFLINE-{WIN,MAC,LINUX}`.
+- 3 `signed-stable-artifact` cells from `DIST-STABLE-SIGNED-{WIN,MAC,LINUX}`.
+
+**macOS arm64 for the distribution cells.** The Manual/offline and signed-stable
+cells use macOS arm64 rather than macOS x64 because the release workflow's
+primary macOS runner label is `macos-15` (arm64) and `macos-15-intel` is the
+secondary. Both macOS architectures remain present in the language tuples and in
+the packaged-product-journey cells; only the two distribution families are
+narrowed to the primary architecture, and widening them is an owner decision.
+
+`hardware` is non-blank on every row because the validator rejects a blank one.
+For macOS and Linux it names *target reference hardware pending owner
+selection*, and for the signed-stable cells it says explicitly that no clean
+machine is available in this workspace. No row is worded as though a macOS host,
+a Linux host, a clean VM or a signing credential existed.
+
+### Scenario shape: 37 scenarios and their requirement selection
+
+`scenarios.json` is exactly the native scenario catalog of
+`matrix-contract-draft.md`, with the brace suffixes expanded: 6 `SC-MANUAL-*`,
+16 `SC-LANG-*` (four families across Rust, TypeScript, JavaScript, Python), 3
+`SC-PLATFORM-A11Y-*`, 3 `SC-MANUAL-OFFLINE-30M-*` and 9 `SC-RELEASE-*`.
+
+Configuration binding: the six `SC-MANUAL-*` scenarios use all four
+packaged-product-journey cells; `SC-PLATFORM-A11Y-*` uses the
+packaged-product-journey cell(s) for its OS (both macOS cells for `-MAC`);
+`SC-MANUAL-OFFLINE-30M-*` uses the Manual/offline cell for its OS;
+`SC-RELEASE-*` uses the signed-stable cell for its OS; and each `SC-LANG-*`
+family uses the language tuples matching its language across all four
+OS/architecture targets.
+
+Each scenario carries at most six `requirement_ids`, chosen because the row's own
+title text names the outcome the scenario exercises. **Coverage of the 419 rows
+is explicitly not attempted here**, and no scenario was widened to raise a
+coverage number. One line per scenario:
+
+- `SC-MANUAL-OPEN-TYPE-SAVE` — PRES-001/002 are the save and Save-As/Save-All
+  write path, PRES-003 is the restart-with-dirty-buffer recovery, PRES-008 is
+  the external-overwrite conflict, WB-001 is the dirty tab and dirty-close
+  prompt, WB-007 is the palette save command the run falls back to.
+- `SC-MANUAL-WORKBENCH-RESTORE` — WB-002 splits and tab groups, WB-003 dock
+  geometry persistence and the corrupt-layout path, WB-005 restart restoration,
+  WB-001 tab order and dirty markers, CAN-001 the Canvas viewport that the
+  arrangement includes, PRES-003 the dirty buffer carried across the restart.
+- `SC-MANUAL-EDIT-INPUT-RECOVERY` — PLAT-002 is the packaged native input path
+  itself and is the row both native defects sit on; EDIT-006 clipboard, EDIT-007
+  IME commit after focus change, EDIT-008 one authoritative route per input
+  kind, EDIT-010 Vim motions through the key feed, PRES-007 grouped undo/redo.
+  The accessibility tree is used here only as an oracle; the accessibility
+  outcome rows belong to `SC-PLATFORM-A11Y-*`.
+- `SC-MANUAL-REFACTOR-SEARCH-REVIEW` — NAV-002 symbol navigation, NAV-007
+  literal and regex workspace search, NAV-009 the complete reviewable preview,
+  NAV-010 cancel without mutation, NAV-011 apply with preconditions and
+  rollback, NAV-012 stale/out-of-workspace rejection.
+- `SC-MANUAL-TERMINAL-TUI` — TERM-001 command execution from the workspace root,
+  TERM-006 interactive TUI control keys and resize, TERM-008 task exit code and
+  duration metadata, TERM-010 cancellation, timeout, kill escalation and orphan
+  cleanup, TERM-015 the child PID / launch time / exit status evidence contract,
+  PRES-012 the editor buffer surviving terminal loss.
+- `SC-MANUAL-GIT-HISTORY-RECOVERY` — SCM-002 stage/unstage including a partial
+  hunk, SCM-003 commit, SCM-004 branch workflows, SCM-005 merge conflict and
+  resolution, SCM-009 external-change and restart recovery, PRES-006 local
+  history restore through proposal authority.
+- `SC-LANG-LSP-LIFECYCLE-RUST` — LANG-002 provisioning and provenance, LANG-003
+  toolchain and workspace discovery, LANG-004 the lifecycle and its failure
+  modes, LANG-005 completion/diagnostics/hover, LANG-006 definition and
+  references, LANG-008 the real rust-analyzer process.
+- `SC-LANG-LSP-LIFECYCLE-TS` — same five lifecycle rows plus LANG-009, the row
+  that names the real TypeScript/JavaScript servers.
+- `SC-LANG-LSP-LIFECYCLE-JS` — same five lifecycle rows plus LANG-009, which
+  covers the JavaScript half of the same outcome.
+- `SC-LANG-LSP-LIFECYCLE-PY` — same five lifecycle rows plus LANG-010, the
+  Python server and isolated environment row.
+- `SC-LANG-REFACTOR-RUST` — LANG-007 is the reviewable rename/format/code-action
+  proposal outcome, LANG-006 the cross-file navigation the rename depends on,
+  LANG-005 the post-edit diagnostics, LANG-008 the Rust server.
+- `SC-LANG-REFACTOR-TS` — LANG-007, LANG-006, LANG-005 and LANG-009.
+- `SC-LANG-REFACTOR-JS` — LANG-007, LANG-006, LANG-005 and LANG-009.
+- `SC-LANG-REFACTOR-PY` — LANG-007, LANG-006, LANG-005 and LANG-010.
+- `SC-LANG-BUILD-TEST-RUST` — LANG-011 build/test discovery and execution,
+  BTD-002 prerequisite validation, BTD-003 run/stop/rerun with real exit status,
+  BTD-004 targeted and grouped tests with genuine results, BTD-005 the
+  cancellation, missing-runner and stale-result recovery states.
+- `SC-LANG-BUILD-TEST-TS` — the same five rows; they are language-general by
+  their own titles, which name all four languages.
+- `SC-LANG-BUILD-TEST-JS` — the same five rows.
+- `SC-LANG-BUILD-TEST-PY` — the same five rows.
+- `SC-LANG-DEBUG-RUST` — LANG-012 adapter resolution and session control,
+  BTD-006 adapter discovery and startup failure, BTD-007 breakpoints and
+  stepping, BTD-008 frames, variables and console evaluation, PRES-013 the
+  editor buffer surviving adapter loss.
+- `SC-LANG-DEBUG-TS` — the same five rows.
+- `SC-LANG-DEBUG-JS` — the same five rows.
+- `SC-LANG-DEBUG-PY` — the same five rows.
+- `SC-PLATFORM-A11Y-WIN` — PLAT-003 the accessibility tree and focus order,
+  PLAT-009 the packaged platform qualification that externally checks
+  accessibility, WB-004 keyboard reachability of every workbench surface,
+  WB-009 focus and DPI restoration across the matrix, SCOPE-GAP-05 the native
+  accessibility gap row.
+- `SC-PLATFORM-A11Y-MAC` — the same five rows, bound to both macOS cells.
+- `SC-PLATFORM-A11Y-LINUX` — the same five rows.
+- `SC-MANUAL-OFFLINE-30M-WIN` — DIST-004 the separately labelled Manual/offline
+  artifact with zero egress, TRAIN-006 the OS-level capture proving no egress
+  regardless of stored consent, SCOPE-GAP-06 the Manual/offline zero-egress gap
+  row. The editing, search and Git work inside the thirty minutes is the vehicle,
+  not the outcome under test, so those rows are not claimed here.
+- `SC-MANUAL-OFFLINE-30M-MAC` — the same three rows.
+- `SC-MANUAL-OFFLINE-30M-LINUX` — the same three rows.
+- `SC-RELEASE-CLEAN-INSTALL-WIN` — DIST-003 real signer and OS-verifier
+  evidence, DIST-007 clean-machine install and trust qualification,
+  SCOPE-GAP-02 the release signing and trust gap row.
+- `SC-RELEASE-CLEAN-INSTALL-MAC` — the same three rows.
+- `SC-RELEASE-CLEAN-INSTALL-LINUX` — the same three rows.
+- `SC-RELEASE-UPDATE-ROLLBACK-WIN` — DIST-005 channel descriptors, hashes and
+  feed provenance, DIST-006 the helper-driven atomic swap, restart
+  acknowledgement and rollback, SCOPE-GAP-03 the signed update and rollback gap
+  row.
+- `SC-RELEASE-UPDATE-ROLLBACK-MAC` — the same three rows.
+- `SC-RELEASE-UPDATE-ROLLBACK-LINUX` — the same three rows.
+- `SC-RELEASE-CRASH-PRIVACY-WIN` — DIST-008 opt-in, metadata-only, redacted,
+  exportable and deletable diagnostics with a deletion receipt, PRES-004 crash
+  and restart recovery of dirty text, SCOPE-GAP-04 the packaged
+  work-preservation gap row, SCOPE-GAP-10 the support, privacy and legal
+  distribution gap row.
+- `SC-RELEASE-CRASH-PRIVACY-MAC` — the same four rows.
+- `SC-RELEASE-CRASH-PRIVACY-LINUX` — the same four rows.
+
+Deliberately **not** bound in this packet: the S2-06 umbrella evidence rows
+`COMP-LANG-013` and `COMP-BTD-009`, and the other packaged-journey umbrella rows
+(`COMP-SCM-010`, `COMP-PRES-011`, `COMP-CAN-009`, `COMP-DIST-010`,
+`COMP-GAP-001`). They describe the existence of an EvidenceRun per configuration
+rather than a behaviour a single scenario exercises, and binding them would
+inflate coverage without adding a checkable outcome. Their binding is left open.
+
+Each `sensitive_artifact_policy` is written for its own scenario; the
+crash/privacy, release and Manual/offline policies are strict about payload
+inspection, capture filtering and sealed retention, while the editor and
+workbench policies are ordinary. No single policy string is pasted across all
+37 scenarios.
+
+### Package register: 54 packages, 419 rows
+
+`dependencies.json` contains exactly the 54 distinct `package_id` values present
+in `requirements.json` — no invented aggregate owner — and their
+`requirement_ids` partition all 419 rows exactly once, derived mechanically from
+`requirements.json` rather than hand-typed.
+
+**`owner_role` rule.** A package takes the `owner_role` carried by the most of
+its own rows; a tie is broken in favour of `luna_worker`. Eight packages have
+rows with more than one role: `S0-02`, `S3-01`, `S3-05`, `S3-06`, `S4-02`,
+`S4-03`, `S4-04` and `S4-05`. Under the rule they resolve to `luna_worker`,
+`luna_worker`, `luna_worker`, `luna_worker`, `sol_engineer`, `luna_worker`,
+`sol_engineer` and `sol_engineer` respectively. No tie actually occurred, so the
+tie-break was not exercised. This is routing metadata, not an assignment of work
+to a person.
+
+**`implementation_stage`.** For 52 packages every row declares the same stage and
+that stage is used. `XQ-03` and `XQ-07` each have rows at both S0 and S1; the
+declared value is `S0` for both, per the S0-01b section above ("`XQ-02` stage 1,
+`XQ-03`/`XQ-07`/`XQ-08` stage 0, `XQ-04`/`XQ-05`/`XQ-06` stage 1"). The
+divergence is recorded here rather than repaired: repairing the individual rows
+would mean editing `requirements.json`, which this packet may not do.
+
+**`acceptance_stage`.** No source plan declares an acceptance stage separate from
+the implementation stage for any of the 54 packages. Every `acceptance_stage`
+therefore repeats its package's `implementation_stage`. **This is a provisional
+default, not a plan fact**, and it must be revisited when the owner ratifies the
+stage model.
+
+**`deliverable_refs`.** Each milestone cites the plan file and the heading that
+defines the package, using the heading's GitHub anchor slug so the reference
+resolves rather than merely naming the package, for example
+`docs/superpowers/plans/2026-09-04-manual-language-completion.md#s1-04-finish-editing-semantics-input-methods-keymaps-and-settings`.
+All 54 packages have such a heading: `S0-*` in the full-product-completion plan,
+`S1-*` and `S2-*` in the manual-language plan, `S3-*`, `S4-*` and `S5-*` in the
+AI/team plan, and `XQ-*` and `S6-01` in the production-qualification plan. Every
+path and anchor was verified against the file before it was written. Each package
+has `<pkg>:implemented` and `<pkg>:accepted`, with `accepted` depending on
+`implemented` and no other edges, so the milestone graph is acyclic by
+construction.
+
+**`external_prerequisites`.** Only real holds are listed; a package with no
+external prerequisite has an empty list, and none was padded. The two open
+blockers are reused verbatim: `BLK-2026-09-08-01` is attached to `S1-06`, the
+package that owns the terminal and bounded-process execution rows whose Unix
+stdin branch it concerns; `BLK-2026-09-08-02` is attached to `S3-07` and `S4-06`,
+which it names explicitly; to `S1-07`, `S1-08` and `S2-06`, the packages that own
+the four requirement rows it names (`COMP-SCM-010` in `S1-07`, `COMP-PRES-011` in
+`S1-08`, `COMP-LANG-013` and `COMP-BTD-009` in `S2-06`); to `XQ-02`, whose whole
+task is ingesting native input and accessibility evidence on Windows, macOS and
+Linux; and to `S6-01`, whose final journey spans all three OSes. The remaining
+entries are the holds the
+matrix-contract-draft lists under "Observed, declared, and missing inputs",
+attached to the packages that need them: version and repository selection to
+`S0-02` and `S2-01`; reference hardware and images to `S0-02`; the
+TypeScript/JavaScript server, browser and debug setup, the usable Pyright
+artifact and the Python environment to `S2-02` and `S2-05`; the debug-adapter
+binaries to `S2-05`; the accessibility provider session to `XQ-02`; the signing,
+notarization and feed infrastructure to `XQ-04`, `XQ-07` and `S6-01`; clean
+machines to `XQ-07` and `S6-01`; the OS-level per-process network capture to
+`XQ-06`; the external endpoints and credentials to `S3-02`, `S5-07`, `S5-09`,
+`S5-11` and `S5-14`; and the independent external auditor and archived report to
+`XQ-08`.
+
+### Defects: two native Windows observations, and nothing invented
+
+`defects.json` contains exactly the two observations from the native Windows
+baseline session of 2026-09-05. Both sit on `COMP-PLAT-002`, the packaged native
+input path row, on scenario `SC-MANUAL-EDIT-INPUT-RECOVERY` and configuration
+`CFG-WIN11-X64-PRODUCT-JOURNEY`.
+
+- **`DEF-2026-09-05-01` — Home and End have no editor mapping.** Severity `P1`,
+  `invalidates_required_outcome: true`. P1 rather than P0 because the product
+  still starts, still edits and still saves, and no data is lost or silently
+  corrupted; P1 rather than P2 because line-start and line-end motion is part of
+  the ordinary keyboard contract every editor user relies on many times an hour,
+  and `COMP-PLAT-002` is a required row that cannot be accepted while a standard
+  key produces no effect at all. Status is `fixed-awaiting-verification`:
+  `crates/legion-desktop/src/workflow.rs` now maps `Home`/`End` to
+  `EditorBoundaryKind::LineStart`/`LineEnd` and, with the command modifier, to
+  `DocumentStart`/`DocumentEnd`, but **no native run has re-observed the key
+  since that change**, so `verification_run_ids` is empty and the defect is not
+  closed. Closing it requires a native EvidenceRun; the validator only demands
+  verification runs for `closed`, so this honesty is a discipline, not a
+  mechanism.
+- **`DEF-2026-09-05-02` — native Ctrl+S did not persist.** Severity `P1`,
+  `invalidates_required_outcome: true`. P1 rather than P0 because the dirty
+  indicator stayed set, so the user was told the truth about the unsaved state,
+  a working save route exists through the command palette, and no data was lost;
+  P1 rather than P2 because the platform save chord is the single most-used
+  command in an editor and `COMP-PLAT-002` cannot be accepted while it does
+  nothing. Status is `open`. The cause is **not** established: the observed field
+  records the leading explanation — a frame-level `egui::Modifiers.command`
+  mismatch for an injected `Control_L+s` — explicitly as
+  `HYPOTHESIS, UNCONFIRMED`, because no native event log capturing the actual
+  `egui::InputState.modifiers` or `Event::Key` fields for that chord exists. The
+  automation-tool and desktop-focus interference events observed in the same
+  session are deliberately excluded and are not recorded as product behaviour.
+
+`repair_package_id` is `S1-04` for the first (editing semantics, input methods
+and keymaps) and `S1-02` for the second (the native input acceptance boundary).
+`owner` names a role, `luna_worker`, not a person.
+
+### What this packet did not touch, and what remains open
+
+`plans/completion/requirements.json` was not read for values to change, not
+written and not staged; it is byte-identical to HEAD. `plans/completion/candidate.json`
+was not created; nominating a candidate is a separate, owner-authorised step.
+No `acceptance` value moved anywhere: all 419 rows remain `unassessed`.
+
+Binding the 419 rows back to scenarios, configurations and defects — filling
+`scenario_ids`, `configuration_ids` and `defect_ids` in `requirements.json` —
+remains open and is owned by the record role. Because those arrays are all still
+empty, `validate_register_structure` is expected to exit nonzero on four issue
+classes attributable to that missing binding: required rows with empty coverage
+(419), scenario-to-requirement links that are not yet bidirectional (170),
+requirement/scenario/configuration triples not yet linked by the requirement
+(923), and the two defect links that are not yet bidirectional (2). That nonzero
+exit is the correct, truthful result for this repository today; a clean run would
+have meant scenarios or defects had been omitted, or links invented. Any further
+issue in those four classes is a defect in these four files.
+
+A fifth group of 65 issues is expected as well, and none of it is reachable from
+the four files this packet owns. It comes entirely from `requirements.json` and
+the workspace paths it points at: 34 `source_refs` entries that name a directory
+rather than a file (`plans/evidence/production/M9/`, `crates/legion-app/tests`,
+`crates/legion-desktop/tests`); 26 product rows that still carry
+`protected_product_ids`, plus one whose protected target is not a product row;
+three `legacy_ids` values (`COMP-P4-F1-T1-1`, `COMP-P4-F1-T2-1`,
+`COMP-P4-F1-T3-1`) that are requirement ids rather than Kanban task ids; and
+`COMP-DIST-010`, a product row whose `package_id` is `S6-01`. These are recorded
+here as observations for the record role. They are not repaired by this packet,
+they say nothing about the four new files, and they must not be counted against
+them.

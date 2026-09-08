@@ -1,0 +1,2466 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "SC-MANUAL-OPEN-TYPE-SAVE",
+      "requirement_ids": [
+        "COMP-PRES-001",
+        "COMP-PRES-002",
+        "COMP-PRES-003",
+        "COMP-PRES-008",
+        "COMP-WB-001",
+        "COMP-WB-007"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Clone the ratified sample repository into a disposable directory outside the product source tree and record its HEAD commit and the SHA-256 of the target file.",
+        "Launch the packaged product with the disposable clone as the workspace and grant workspace trust when prompted.",
+        "Open the target file from the Explorer, confirm the tab title and that no dirty marker is shown.",
+        "Click into the text surface and type a unique run marker with the OS keyboard; confirm the marker appears in the buffer and the dirty marker appears on the tab.",
+        "Press the OS save shortcut for the platform; if the dirty marker does not clear, record that as an observation and continue through the command palette Save Active Buffer command.",
+        "Read the file from disk outside the product and compare its SHA-256 and its `git diff` against the recorded pre-edit values.",
+        "Open a second file, edit it, and use Save All; confirm both files on disk and that no unrelated file changed in `git status`.",
+        "Use Save As to write the second buffer to a new path, then read both paths from disk and confirm encoding and newline bytes are unchanged."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-DISK-BYTES",
+          "description": "A host process outside the product reads the saved file and its SHA-256 differs from the recorded pre-edit hash by exactly the typed marker."
+        },
+        {
+          "id": "OR-GIT-DIFF",
+          "description": "`git diff --stat` run in the disposable clone by a host shell reports only the edited files and the expected added/deleted line counts."
+        },
+        {
+          "id": "OR-GIT-STATUS-UNRELATED",
+          "description": "`git status --porcelain` run by a host shell lists no path other than the files the run edited."
+        },
+        {
+          "id": "OR-ENCODING-BYTES",
+          "description": "A host byte dump of the Save As target shows the same encoding signature and line-ending bytes as the source file."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-FOCUS-LOSS",
+          "description": "Move OS focus to another application mid-edit and return; the dirty buffer text and caret survive and the next save still writes the expected bytes."
+        },
+        {
+          "id": "RC-TRUST-DENIED",
+          "description": "Relaunch against an untrusted workspace and deny trust; the save is refused with a visible reason and the file on disk is byte-identical afterwards."
+        },
+        {
+          "id": "RC-EXTERNAL-OVERWRITE",
+          "description": "Overwrite the file from a host shell after opening but before saving; the save reports an explicit conflict and neither the disk bytes nor the dirty buffer is silently discarded."
+        },
+        {
+          "id": "RC-RESTART-DIRTY",
+          "description": "Kill and relaunch the product with an unsaved buffer; the recoverable dirty text is offered and the on-disk file is still the pre-edit bytes."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the disposable workspace path, the edited file bytes, the git diff and the app log for the run only. Redact absolute user-home segments and any workspace path outside the disposable clone. Retain under the run evidence directory for the candidate; delete with the candidate. No provider prompt, no clipboard payload beyond the typed marker, and no keyring or credential material is captured."
+    },
+    {
+      "id": "SC-MANUAL-WORKBENCH-RESTORE",
+      "requirement_ids": [
+        "COMP-WB-001",
+        "COMP-WB-002",
+        "COMP-WB-003",
+        "COMP-WB-005",
+        "COMP-CAN-001",
+        "COMP-PRES-003"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Launch the packaged product on the disposable clone and record the layout metadata file path and its SHA-256 before any change.",
+        "Open four files, reorder two tabs, and split the editor into two panes with a different active tab in each.",
+        "Collapse one docked panel and resize another, then open the Canvas and pan and zoom to a non-default viewport.",
+        "Edit two of the open files without saving one of them, and note which tab carries the dirty marker.",
+        "Save the still-clean file, then close the product through the ordinary window close and answer the dirty-close prompt by keeping the unsaved buffer.",
+        "Read the persisted layout metadata from disk with a host process and record its contents.",
+        "Relaunch the product with only the workspace argument and compare the restored split arrangement, tab order, active tabs, dock geometry and Canvas viewport against the recorded state.",
+        "Read both edited files from disk with a host process and confirm the saved file matches the edit and the unsaved file is unchanged on disk."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-LAYOUT-FILE",
+          "description": "A host process reads the persisted layout/session metadata file and its recorded pane, tab-order, dock and viewport fields match what was arranged before close."
+        },
+        {
+          "id": "OR-FILE-BYTES",
+          "description": "A host process reads both edited files; the saved one carries the edit and the unsaved one is byte-identical to its pre-edit SHA-256."
+        },
+        {
+          "id": "OR-PROCESS-EXIT",
+          "description": "The OS reports the first product process id as absent after close, so the restore is observed on a genuinely new process."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-LAYOUT-CANCEL",
+          "description": "Cancel a layout change mid-drag; the previous arrangement is retained and the layout metadata on disk is unchanged."
+        },
+        {
+          "id": "RC-LAYOUT-CORRUPT",
+          "description": "Truncate the layout metadata file with a host process before relaunch; the product starts with a truthful default layout, reports the corrupt state, and does not lose the files on disk."
+        },
+        {
+          "id": "RC-DIRTY-RECOVERY",
+          "description": "Restart with the unsaved buffer outstanding; the recoverable text is offered and the on-disk file remains the pre-edit bytes."
+        },
+        {
+          "id": "RC-STORAGE-FAILURE",
+          "description": "Make the layout metadata directory read-only from the host before close; the failure is reported, the session still closes, and no edited file is lost."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the persisted layout/session metadata files verbatim, the two edited files and screenshots of the restored windows. Redact absolute user-home segments and any workspace identity outside the disposable clone. Screenshots are reviewed for incidental on-screen content before retention. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-MANUAL-EDIT-INPUT-RECOVERY",
+      "requirement_ids": [
+        "COMP-PLAT-002",
+        "COMP-EDIT-006",
+        "COMP-EDIT-007",
+        "COMP-EDIT-008",
+        "COMP-EDIT-010",
+        "COMP-PRES-007"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Launch the packaged product on the disposable clone and open a UTF-8 file that contains ASCII, CJK and an emoji grapheme cluster.",
+        "Click into the text surface with the OS pointer and confirm the caret position reported by the product matches the clicked offset.",
+        "Type a unique run marker with the OS keyboard, then exercise Home, End, arrow and word-motion keys and record the reported caret position after each.",
+        "Select a range with shift-arrow, copy it with the OS clipboard shortcut, move the caret and paste; then read the OS clipboard from a host process and compare it with the selected text.",
+        "Switch the OS input method to a CJK IME, compose and commit a phrase, and confirm the committed text appears exactly once in the buffer.",
+        "Enable Vim mode, perform a motion, an operator over a motion, a register yank/put and an explicit insert-mode entry, confirming no normal-mode key is inserted as text.",
+        "Undo every edit back to the opened state and redo forward again, comparing the buffer against the recorded intermediate states.",
+        "Move OS focus to another application and back, then repeat one keyboard edit and one pointer selection to confirm input still reaches the same authoritative route.",
+        "Dump the platform accessibility tree for the product window and record the text value and caret of the focused text element."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-CLIPBOARD",
+          "description": "A host process reads the OS clipboard and its contents equal the text that was selected in the editor, byte for byte."
+        },
+        {
+          "id": "OR-A11Y-TREE",
+          "description": "A platform accessibility dump (UIA, AX or AT-SPI) of the product window reports the focused text element value and caret offset, and they match the buffer state after each step."
+        },
+        {
+          "id": "OR-DISK-AFTER-SAVE",
+          "description": "After the final save a host process reads the file and its bytes contain the typed marker, the pasted text and the committed IME phrase exactly once each."
+        },
+        {
+          "id": "OR-PROCESS-ALIVE",
+          "description": "The OS reports the product process id unchanged across the whole sequence, so no crash-and-restart masked a lost input."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-IME-CANCEL",
+          "description": "Start an IME composition and cancel it before commit; no partial composition text remains in the buffer and the dirty state is unchanged."
+        },
+        {
+          "id": "RC-INPUT-FAILURE",
+          "description": "Send a key sequence the product does not map; nothing is inserted as text, the caret does not move, and the unmapped sequence is reported rather than silently swallowed."
+        },
+        {
+          "id": "RC-FOCUS-REGAIN",
+          "description": "Take OS focus away mid-selection and return; the selection and undo stack survive and the next keystroke edits the same buffer."
+        },
+        {
+          "id": "RC-RESTART",
+          "description": "Restart the product after the edits; the recoverable dirty text and undo grouping boundaries are restored or the loss is reported truthfully."
+        },
+        {
+          "id": "RC-AT-UNAVAILABLE",
+          "description": "If the platform accessibility provider cannot be started, the run is recorded blocked with the exact missing provider and is never recorded as passed."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture typed markers, the buffer text, the undo history summary and the accessibility tree dump. The accessibility dump is filtered to the Legion window subtree so no other application window text is retained. No raw OS-wide key log is captured or retained. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-MANUAL-REFACTOR-SEARCH-REVIEW",
+      "requirement_ids": [
+        "COMP-NAV-002",
+        "COMP-NAV-007",
+        "COMP-NAV-009",
+        "COMP-NAV-010",
+        "COMP-NAV-011",
+        "COMP-NAV-012"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Clone the ratified multi-file sample repository, record the SHA-256 of every file that contains the target identifier, and launch the packaged product on it.",
+        "Open the symbol palette, search for the target symbol, and navigate to a result in a different file than the active one.",
+        "Run a literal workspace search for the identifier and record the reported match count and file list.",
+        "Rerun the search as a regex with whole-word and case options set, and compare the match set against the same regex run by a host `grep`/`rg` process.",
+        "Start a multi-file replacement, open the preview, and confirm every affected canonical file and range appears in the diff.",
+        "Cancel the first preview and read every candidate file from disk to confirm no bytes changed.",
+        "Start the replacement again, approve it, and let it apply.",
+        "Read every affected file from disk with a host process and compare against the preview, then run the host search again and confirm zero remaining matches."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-HOST-GREP",
+          "description": "A host `rg`/`grep` process run with the same pattern over the clone returns the same file/line match set the product reported, before and after the replacement."
+        },
+        {
+          "id": "OR-DISK-UNCHANGED-ON-CANCEL",
+          "description": "After the cancelled preview, host-computed SHA-256 values for every candidate file equal the recorded pre-run values."
+        },
+        {
+          "id": "OR-GIT-DIFF-APPLIED",
+          "description": "`git diff` run by a host shell after apply lists exactly the files and hunks the preview showed, and no others."
+        },
+        {
+          "id": "OR-STALE-REJECT",
+          "description": "After a host process edits one target file mid-preview, the apply is refused and `git diff` shows the host edit intact and no product write."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-EXTERNAL-EDIT",
+          "description": "Edit one target file from a host shell between preview and apply; the apply is rejected with a visible stale reason and the host edit survives."
+        },
+        {
+          "id": "RC-STALE-RESULT",
+          "description": "Delete a matched file from the host between search and replace; the affected entry is reported unavailable and the remaining files are unaffected."
+        },
+        {
+          "id": "RC-MALFORMED-PATTERN",
+          "description": "Enter an invalid regular expression; the error is reported, no proposal is created, and no file is written."
+        },
+        {
+          "id": "RC-CANCEL-PREVIEW",
+          "description": "Cancel the preview; the pending proposal is withdrawn, dirty buffers are untouched, and the search surface remains usable."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the search/replace preview, the proposal diff, and the affected file bytes before and after. Redact absolute user-home segments and any match text drawn from files outside the disposable clone. Regex patterns and match excerpts are retained only for files inside the clone. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-MANUAL-TERMINAL-TUI",
+      "requirement_ids": [
+        "COMP-TERM-001",
+        "COMP-TERM-006",
+        "COMP-TERM-008",
+        "COMP-TERM-010",
+        "COMP-TERM-015",
+        "COMP-PRES-012"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Launch the packaged product on the disposable clone with a dirty editor buffer open in another tab.",
+        "Open the terminal panel, confirm the reported shell profile and that the working directory is the workspace root.",
+        "Run a command that writes a unique marker file into the workspace and exits zero; record the reported child PID, start time and exit status.",
+        "Confirm from the host that the marker file exists with the expected contents and that the recorded PID belonged to a real child of the product process.",
+        "Run a command that exits non-zero and confirm the reported exit status equals the host-observed status.",
+        "Start an interactive TUI program, resize the terminal panel, send a control key to it, and confirm the program reacts and then exits cleanly.",
+        "Start a long-running command and cancel it from the product; record the reported state and confirm from the host that the child process and its descendants are gone.",
+        "Switch back to the editor tab and confirm its text, selection and undo history are intact.",
+        "Close the product and confirm from the host that no orphan child process remains."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-CHILD-PID",
+          "description": "A host process listing shows the reported child PID with the product process as its parent while the command runs, and shows it absent after exit."
+        },
+        {
+          "id": "OR-EXIT-STATUS",
+          "description": "The host-observed process exit status for each command equals the status the product reported, including the non-zero case."
+        },
+        {
+          "id": "OR-MARKER-FILE",
+          "description": "A host process reads the marker file the command wrote and its contents match what the command was asked to write."
+        },
+        {
+          "id": "OR-NO-ORPHANS",
+          "description": "After product close a host process listing shows no descendant of the recorded product PID still running."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-NONZERO-EXIT",
+          "description": "A failing command reports a truthful failed state with the real exit code and does not present as success."
+        },
+        {
+          "id": "RC-TIMEOUT",
+          "description": "A command that exceeds the configured deadline is terminated, reported as timed out, and its child tree is reaped."
+        },
+        {
+          "id": "RC-CANCEL",
+          "description": "Cancelling a running command leaves a truthful cancelled state and no surviving child process."
+        },
+        {
+          "id": "RC-CLOSE-CLEANUP",
+          "description": "Closing the product while a child runs terminates the child; the host process listing confirms no orphan remains."
+        },
+        {
+          "id": "RC-BUFFER-INTACT",
+          "description": "After cancellation and child loss the editor buffer text, selection and undo history are unchanged."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the child PID, launch and exit timestamps, exit status and a bounded transcript tail. Strip the spawned process environment from the transcript and record only the allow-listed variable names, never their values. Redact absolute user-home segments and any token-shaped string. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-MANUAL-GIT-HISTORY-RECOVERY",
+      "requirement_ids": [
+        "COMP-SCM-002",
+        "COMP-SCM-003",
+        "COMP-SCM-004",
+        "COMP-SCM-005",
+        "COMP-SCM-009",
+        "COMP-PRES-006"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Clone the ratified sample repository into a disposable directory, record `git log --oneline -5` and `git status --porcelain` from a host shell, and launch the packaged product on it.",
+        "Edit two files so that one has two separable hunks, and confirm the source-control surface lists both as modified.",
+        "Stage one whole file and one individual hunk of the other, then compare the product view against host `git diff --cached` and `git diff` output.",
+        "Create a commit with an explicit message from the staged changes and compare the resulting commit against host `git log -1 --stat`.",
+        "Create a branch, switch to it, make a conflicting edit, commit, switch back and merge to force a conflict.",
+        "Resolve the conflict in the product, complete the merge, and compare the result against host `git status` and the file bytes on disk.",
+        "Open local history for one edited file, restore an earlier revision through the review surface, and compare the restored bytes with the recorded history entry.",
+        "From a host shell, overwrite one tracked file while the product holds it dirty, then attempt a stage from the product and record the reported conflict."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-GIT-LOG",
+          "description": "Host `git log -1 --stat` reports the commit id, message and file list the product claimed to create."
+        },
+        {
+          "id": "OR-GIT-INDEX",
+          "description": "Host `git diff --cached --name-only` lists exactly the file and hunk the product staged, and `git diff --name-only` lists exactly what was left unstaged."
+        },
+        {
+          "id": "OR-WORKTREE-BYTES",
+          "description": "A host read of the merged and restored files shows the expected bytes and no leftover conflict markers."
+        },
+        {
+          "id": "OR-BRANCH-STATE",
+          "description": "Host `git branch --show-current` and `git status` report the branch and merge state the product displayed."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-MERGE-CONFLICT",
+          "description": "The conflicted paths are listed, unresolved state persists until resolved, and the index reflects the resolution only after it is completed."
+        },
+        {
+          "id": "RC-EXTERNAL-OVERWRITE",
+          "description": "A host overwrite of a dirty tracked file yields an explicit conflict; neither the host bytes nor the in-memory buffer is silently discarded."
+        },
+        {
+          "id": "RC-RESTART-DIRTY",
+          "description": "Restart during a dirty edit; the dirty buffer is recoverable and the index and worktree state reported afterwards match host `git status`."
+        },
+        {
+          "id": "RC-PARTIAL-WRITE",
+          "description": "Make the worktree read-only from the host during a restore; the operation fails closed, the last known good file remains, and the failure is reported."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture git log, git status, the index and worktree listings, the conflict markers and the restored local-history file. Author identity is reduced to the configured test identity; no remote URL, credential helper output or token is captured. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-LSP-LIFECYCLE-RUST",
+      "requirement_ids": [
+        "COMP-LANG-002",
+        "COMP-LANG-003",
+        "COMP-LANG-004",
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-008"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-RUST-BIN",
+        "CFG-WIN11-X64-RUST-LIB",
+        "CFG-WIN11-X64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-BIN",
+        "CFG-MAC15-X64-RUST-LIB",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-BIN",
+        "CFG-MAC15-ARM64-RUST-LIB",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-LINUX-UBUNTU-X64-RUST-BIN",
+        "CFG-LINUX-UBUNTU-X64-RUST-LIB",
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE"
+      ],
+      "steps": [
+        "Provision the ratified Rust binary, library and multi-crate workspace projects into a disposable directory and record the toolchain, language-server and package-manager versions from a host shell.",
+        "Launch the packaged product on the project, grant workspace trust, and wait for the language status to report the server started.",
+        "Record the language-server process id from a host process listing and confirm the product process is its parent.",
+        "Trigger completion at a known position and confirm the returned items include the expected project symbol.",
+        "Request hover, signature help and inlay hints at recorded positions and compare the returned text with the project source.",
+        "Use go-to-definition and find-references from a symbol used in one file and defined in another, and confirm the opened canonical file and range.",
+        "Introduce a deliberate error, confirm a diagnostic appears with the correct file and range, fix it, and confirm the diagnostic clears.",
+        "Kill the language-server process from the host and confirm the product reports the loss, backs off, restarts the server, and preserves the open buffer and its dirty state.",
+        "Point the configuration at a missing server binary, restart, and confirm the unavailable tool is reported with its exact missing prerequisite rather than silently degraded."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-SERVER-PID",
+          "description": "A host process listing shows the language-server process id running as a child of the product while the session is live, and absent after the server is killed."
+        },
+        {
+          "id": "OR-SERVER-VERSION",
+          "description": "The server version the product reports equals the version a host shell obtains by invoking the same binary directly."
+        },
+        {
+          "id": "OR-SOURCE-TARGET",
+          "description": "A host read of the file the definition jump opened shows the symbol declared at the reported line and column."
+        },
+        {
+          "id": "OR-RESTART-PID",
+          "description": "After the kill, a host process listing shows a new language-server process id different from the recorded original."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-SERVER-KILL",
+          "description": "Killing the server from the host produces a truthful unavailable state, an automatic restart with backoff, and no loss of buffer text or dirty state."
+        },
+        {
+          "id": "RC-SERVER-UNREACHABLE",
+          "description": "Configuring an unreachable server path reports the exact missing binary and does not present stale results as live ones."
+        },
+        {
+          "id": "RC-MALFORMED-RESPONSE",
+          "description": "A malformed server response is rejected with a visible error and no editor mutation."
+        },
+        {
+          "id": "RC-TOOL-MISSING",
+          "description": "If the Rust toolchain or server is not installed on the host, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the language-server process id, its version banner, the request/response pairs for the exercised methods and the diagnostics list. Server stderr is retained bounded and scanned for token-shaped strings before retention. No source file outside the disposable project is captured. Redact absolute user-home segments and the interpreter/toolchain install path. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-LSP-LIFECYCLE-TS",
+      "requirement_ids": [
+        "COMP-LANG-002",
+        "COMP-LANG-003",
+        "COMP-LANG-004",
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-009"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-TS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-TS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-TS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-TS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified TypeScript browser and TypeScript/JavaScript Node projects into a disposable directory and record the toolchain, language-server and package-manager versions from a host shell.",
+        "Launch the packaged product on the project, grant workspace trust, and wait for the language status to report the server started.",
+        "Record the language-server process id from a host process listing and confirm the product process is its parent.",
+        "Trigger completion at a known position and confirm the returned items include the expected project symbol.",
+        "Request hover, signature help and inlay hints at recorded positions and compare the returned text with the project source.",
+        "Use go-to-definition and find-references from a symbol used in one file and defined in another, and confirm the opened canonical file and range.",
+        "Introduce a deliberate error, confirm a diagnostic appears with the correct file and range, fix it, and confirm the diagnostic clears.",
+        "Kill the language-server process from the host and confirm the product reports the loss, backs off, restarts the server, and preserves the open buffer and its dirty state.",
+        "Point the configuration at a missing server binary, restart, and confirm the unavailable tool is reported with its exact missing prerequisite rather than silently degraded."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-SERVER-PID",
+          "description": "A host process listing shows the language-server process id running as a child of the product while the session is live, and absent after the server is killed."
+        },
+        {
+          "id": "OR-SERVER-VERSION",
+          "description": "The server version the product reports equals the version a host shell obtains by invoking the same binary directly."
+        },
+        {
+          "id": "OR-SOURCE-TARGET",
+          "description": "A host read of the file the definition jump opened shows the symbol declared at the reported line and column."
+        },
+        {
+          "id": "OR-RESTART-PID",
+          "description": "After the kill, a host process listing shows a new language-server process id different from the recorded original."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-SERVER-KILL",
+          "description": "Killing the server from the host produces a truthful unavailable state, an automatic restart with backoff, and no loss of buffer text or dirty state."
+        },
+        {
+          "id": "RC-SERVER-UNREACHABLE",
+          "description": "Configuring an unreachable server path reports the exact missing binary and does not present stale results as live ones."
+        },
+        {
+          "id": "RC-MALFORMED-RESPONSE",
+          "description": "A malformed server response is rejected with a visible error and no editor mutation."
+        },
+        {
+          "id": "RC-TOOL-MISSING",
+          "description": "If the TypeScript toolchain or server is not installed on the host, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the language-server process id, its version banner, the request/response pairs for the exercised methods and the diagnostics list. Server stderr is retained bounded and scanned for token-shaped strings before retention. No source file outside the disposable project is captured. Redact absolute user-home segments and the interpreter/toolchain install path. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-LSP-LIFECYCLE-JS",
+      "requirement_ids": [
+        "COMP-LANG-002",
+        "COMP-LANG-003",
+        "COMP-LANG-004",
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-009"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-JS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-JS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-JS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-JS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified JavaScript browser and TypeScript/JavaScript Node projects into a disposable directory and record the toolchain, language-server and package-manager versions from a host shell.",
+        "Launch the packaged product on the project, grant workspace trust, and wait for the language status to report the server started.",
+        "Record the language-server process id from a host process listing and confirm the product process is its parent.",
+        "Trigger completion at a known position and confirm the returned items include the expected project symbol.",
+        "Request hover, signature help and inlay hints at recorded positions and compare the returned text with the project source.",
+        "Use go-to-definition and find-references from a symbol used in one file and defined in another, and confirm the opened canonical file and range.",
+        "Introduce a deliberate error, confirm a diagnostic appears with the correct file and range, fix it, and confirm the diagnostic clears.",
+        "Kill the language-server process from the host and confirm the product reports the loss, backs off, restarts the server, and preserves the open buffer and its dirty state.",
+        "Point the configuration at a missing server binary, restart, and confirm the unavailable tool is reported with its exact missing prerequisite rather than silently degraded."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-SERVER-PID",
+          "description": "A host process listing shows the language-server process id running as a child of the product while the session is live, and absent after the server is killed."
+        },
+        {
+          "id": "OR-SERVER-VERSION",
+          "description": "The server version the product reports equals the version a host shell obtains by invoking the same binary directly."
+        },
+        {
+          "id": "OR-SOURCE-TARGET",
+          "description": "A host read of the file the definition jump opened shows the symbol declared at the reported line and column."
+        },
+        {
+          "id": "OR-RESTART-PID",
+          "description": "After the kill, a host process listing shows a new language-server process id different from the recorded original."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-SERVER-KILL",
+          "description": "Killing the server from the host produces a truthful unavailable state, an automatic restart with backoff, and no loss of buffer text or dirty state."
+        },
+        {
+          "id": "RC-SERVER-UNREACHABLE",
+          "description": "Configuring an unreachable server path reports the exact missing binary and does not present stale results as live ones."
+        },
+        {
+          "id": "RC-MALFORMED-RESPONSE",
+          "description": "A malformed server response is rejected with a visible error and no editor mutation."
+        },
+        {
+          "id": "RC-TOOL-MISSING",
+          "description": "If the JavaScript toolchain or server is not installed on the host, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the language-server process id, its version banner, the request/response pairs for the exercised methods and the diagnostics list. Server stderr is retained bounded and scanned for token-shaped strings before retention. No source file outside the disposable project is captured. Redact absolute user-home segments and the interpreter/toolchain install path. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-LSP-LIFECYCLE-PY",
+      "requirement_ids": [
+        "COMP-LANG-002",
+        "COMP-LANG-003",
+        "COMP-LANG-004",
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-010"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PY-APP",
+        "CFG-WIN11-X64-PY-PKG",
+        "CFG-MAC15-X64-PY-APP",
+        "CFG-MAC15-X64-PY-PKG",
+        "CFG-MAC15-ARM64-PY-APP",
+        "CFG-MAC15-ARM64-PY-PKG",
+        "CFG-LINUX-UBUNTU-X64-PY-APP",
+        "CFG-LINUX-UBUNTU-X64-PY-PKG"
+      ],
+      "steps": [
+        "Provision the ratified isolated Python application and Python package projects into a disposable directory and record the toolchain, language-server and package-manager versions from a host shell.",
+        "Launch the packaged product on the project, grant workspace trust, and wait for the language status to report the server started.",
+        "Record the language-server process id from a host process listing and confirm the product process is its parent.",
+        "Trigger completion at a known position and confirm the returned items include the expected project symbol.",
+        "Request hover, signature help and inlay hints at recorded positions and compare the returned text with the project source.",
+        "Use go-to-definition and find-references from a symbol used in one file and defined in another, and confirm the opened canonical file and range.",
+        "Introduce a deliberate error, confirm a diagnostic appears with the correct file and range, fix it, and confirm the diagnostic clears.",
+        "Kill the language-server process from the host and confirm the product reports the loss, backs off, restarts the server, and preserves the open buffer and its dirty state.",
+        "Point the configuration at a missing server binary, restart, and confirm the unavailable tool is reported with its exact missing prerequisite rather than silently degraded."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-SERVER-PID",
+          "description": "A host process listing shows the language-server process id running as a child of the product while the session is live, and absent after the server is killed."
+        },
+        {
+          "id": "OR-SERVER-VERSION",
+          "description": "The server version the product reports equals the version a host shell obtains by invoking the same binary directly."
+        },
+        {
+          "id": "OR-SOURCE-TARGET",
+          "description": "A host read of the file the definition jump opened shows the symbol declared at the reported line and column."
+        },
+        {
+          "id": "OR-RESTART-PID",
+          "description": "After the kill, a host process listing shows a new language-server process id different from the recorded original."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-SERVER-KILL",
+          "description": "Killing the server from the host produces a truthful unavailable state, an automatic restart with backoff, and no loss of buffer text or dirty state."
+        },
+        {
+          "id": "RC-SERVER-UNREACHABLE",
+          "description": "Configuring an unreachable server path reports the exact missing binary and does not present stale results as live ones."
+        },
+        {
+          "id": "RC-MALFORMED-RESPONSE",
+          "description": "A malformed server response is rejected with a visible error and no editor mutation."
+        },
+        {
+          "id": "RC-TOOL-MISSING",
+          "description": "If the Python toolchain or server is not installed on the host, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the language-server process id, its version banner, the request/response pairs for the exercised methods and the diagnostics list. Server stderr is retained bounded and scanned for token-shaped strings before retention. No source file outside the disposable project is captured. Redact absolute user-home segments and the interpreter/toolchain install path. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-REFACTOR-RUST",
+      "requirement_ids": [
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-007",
+        "COMP-LANG-008"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-RUST-BIN",
+        "CFG-WIN11-X64-RUST-LIB",
+        "CFG-WIN11-X64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-BIN",
+        "CFG-MAC15-X64-RUST-LIB",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-BIN",
+        "CFG-MAC15-ARM64-RUST-LIB",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-LINUX-UBUNTU-X64-RUST-BIN",
+        "CFG-LINUX-UBUNTU-X64-RUST-LIB",
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE"
+      ],
+      "steps": [
+        "Provision the ratified Rust binary, library and multi-crate workspace projects into a disposable directory, initialise it as a git repository, and record the SHA-256 of every file that references the symbol to be renamed.",
+        "Launch the packaged product on the project and wait for the language server to report ready.",
+        "Invoke rename on a symbol that is declared in one file and used in at least two others, and open the resulting proposal preview.",
+        "Confirm the preview lists every referencing file and range, then cancel it and verify from the host that no file bytes changed.",
+        "Invoke rename again and approve the proposal.",
+        "Read every affected file from the host and compare against the preview, then run the project formatter and organize-imports code action and approve each proposal.",
+        "Run the language toolchain check or compile command from a host shell and confirm it succeeds on the refactored project.",
+        "Edit one target file from a host shell while a proposal is open, then attempt to apply it and record the stale rejection."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-GIT-DIFF",
+          "description": "Host `git diff` after apply lists exactly the files and hunks the preview showed and no others."
+        },
+        {
+          "id": "OR-DISK-UNCHANGED-ON-CANCEL",
+          "description": "Host-computed SHA-256 values after the cancelled preview equal the recorded pre-run values for every candidate file."
+        },
+        {
+          "id": "OR-TOOLCHAIN-CHECK",
+          "description": "A host shell runs the Rust check or compile command on the refactored project and it exits zero."
+        },
+        {
+          "id": "OR-DIAGNOSTICS-CLEAR",
+          "description": "After apply the product reports no diagnostic for the renamed symbol, and a host run of the same analysis tool reports none either."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-STALE-PROPOSAL",
+          "description": "A host edit to a target file between preview and apply causes an explicit stale rejection and the host edit survives."
+        },
+        {
+          "id": "RC-DENIED-PROPOSAL",
+          "description": "Rejecting the proposal leaves every file byte-identical and the editor usable."
+        },
+        {
+          "id": "RC-EXTERNAL-EDIT",
+          "description": "A file deleted from the host mid-proposal is reported unavailable and the remaining targets are not partially written."
+        },
+        {
+          "id": "RC-MALFORMED-EDIT",
+          "description": "A malformed workspace edit from the server is rejected before mutation and reported."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the proposal preview, the applied workspace edit, the file bytes before and after and the post-edit diagnostics. Redact absolute user-home segments and toolchain install paths. No dependency source outside the disposable project is captured. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-REFACTOR-TS",
+      "requirement_ids": [
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-007",
+        "COMP-LANG-009"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-TS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-TS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-TS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-TS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified TypeScript browser and TypeScript/JavaScript Node projects into a disposable directory, initialise it as a git repository, and record the SHA-256 of every file that references the symbol to be renamed.",
+        "Launch the packaged product on the project and wait for the language server to report ready.",
+        "Invoke rename on a symbol that is declared in one file and used in at least two others, and open the resulting proposal preview.",
+        "Confirm the preview lists every referencing file and range, then cancel it and verify from the host that no file bytes changed.",
+        "Invoke rename again and approve the proposal.",
+        "Read every affected file from the host and compare against the preview, then run the project formatter and organize-imports code action and approve each proposal.",
+        "Run the language toolchain check or compile command from a host shell and confirm it succeeds on the refactored project.",
+        "Edit one target file from a host shell while a proposal is open, then attempt to apply it and record the stale rejection."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-GIT-DIFF",
+          "description": "Host `git diff` after apply lists exactly the files and hunks the preview showed and no others."
+        },
+        {
+          "id": "OR-DISK-UNCHANGED-ON-CANCEL",
+          "description": "Host-computed SHA-256 values after the cancelled preview equal the recorded pre-run values for every candidate file."
+        },
+        {
+          "id": "OR-TOOLCHAIN-CHECK",
+          "description": "A host shell runs the TypeScript check or compile command on the refactored project and it exits zero."
+        },
+        {
+          "id": "OR-DIAGNOSTICS-CLEAR",
+          "description": "After apply the product reports no diagnostic for the renamed symbol, and a host run of the same analysis tool reports none either."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-STALE-PROPOSAL",
+          "description": "A host edit to a target file between preview and apply causes an explicit stale rejection and the host edit survives."
+        },
+        {
+          "id": "RC-DENIED-PROPOSAL",
+          "description": "Rejecting the proposal leaves every file byte-identical and the editor usable."
+        },
+        {
+          "id": "RC-EXTERNAL-EDIT",
+          "description": "A file deleted from the host mid-proposal is reported unavailable and the remaining targets are not partially written."
+        },
+        {
+          "id": "RC-MALFORMED-EDIT",
+          "description": "A malformed workspace edit from the server is rejected before mutation and reported."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the proposal preview, the applied workspace edit, the file bytes before and after and the post-edit diagnostics. Redact absolute user-home segments and toolchain install paths. No dependency source outside the disposable project is captured. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-REFACTOR-JS",
+      "requirement_ids": [
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-007",
+        "COMP-LANG-009"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-JS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-JS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-JS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-JS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified JavaScript browser and TypeScript/JavaScript Node projects into a disposable directory, initialise it as a git repository, and record the SHA-256 of every file that references the symbol to be renamed.",
+        "Launch the packaged product on the project and wait for the language server to report ready.",
+        "Invoke rename on a symbol that is declared in one file and used in at least two others, and open the resulting proposal preview.",
+        "Confirm the preview lists every referencing file and range, then cancel it and verify from the host that no file bytes changed.",
+        "Invoke rename again and approve the proposal.",
+        "Read every affected file from the host and compare against the preview, then run the project formatter and organize-imports code action and approve each proposal.",
+        "Run the language toolchain check or compile command from a host shell and confirm it succeeds on the refactored project.",
+        "Edit one target file from a host shell while a proposal is open, then attempt to apply it and record the stale rejection."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-GIT-DIFF",
+          "description": "Host `git diff` after apply lists exactly the files and hunks the preview showed and no others."
+        },
+        {
+          "id": "OR-DISK-UNCHANGED-ON-CANCEL",
+          "description": "Host-computed SHA-256 values after the cancelled preview equal the recorded pre-run values for every candidate file."
+        },
+        {
+          "id": "OR-TOOLCHAIN-CHECK",
+          "description": "A host shell runs the JavaScript check or compile command on the refactored project and it exits zero."
+        },
+        {
+          "id": "OR-DIAGNOSTICS-CLEAR",
+          "description": "After apply the product reports no diagnostic for the renamed symbol, and a host run of the same analysis tool reports none either."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-STALE-PROPOSAL",
+          "description": "A host edit to a target file between preview and apply causes an explicit stale rejection and the host edit survives."
+        },
+        {
+          "id": "RC-DENIED-PROPOSAL",
+          "description": "Rejecting the proposal leaves every file byte-identical and the editor usable."
+        },
+        {
+          "id": "RC-EXTERNAL-EDIT",
+          "description": "A file deleted from the host mid-proposal is reported unavailable and the remaining targets are not partially written."
+        },
+        {
+          "id": "RC-MALFORMED-EDIT",
+          "description": "A malformed workspace edit from the server is rejected before mutation and reported."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the proposal preview, the applied workspace edit, the file bytes before and after and the post-edit diagnostics. Redact absolute user-home segments and toolchain install paths. No dependency source outside the disposable project is captured. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-REFACTOR-PY",
+      "requirement_ids": [
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-007",
+        "COMP-LANG-010"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PY-APP",
+        "CFG-WIN11-X64-PY-PKG",
+        "CFG-MAC15-X64-PY-APP",
+        "CFG-MAC15-X64-PY-PKG",
+        "CFG-MAC15-ARM64-PY-APP",
+        "CFG-MAC15-ARM64-PY-PKG",
+        "CFG-LINUX-UBUNTU-X64-PY-APP",
+        "CFG-LINUX-UBUNTU-X64-PY-PKG"
+      ],
+      "steps": [
+        "Provision the ratified isolated Python application and Python package projects into a disposable directory, initialise it as a git repository, and record the SHA-256 of every file that references the symbol to be renamed.",
+        "Launch the packaged product on the project and wait for the language server to report ready.",
+        "Invoke rename on a symbol that is declared in one file and used in at least two others, and open the resulting proposal preview.",
+        "Confirm the preview lists every referencing file and range, then cancel it and verify from the host that no file bytes changed.",
+        "Invoke rename again and approve the proposal.",
+        "Read every affected file from the host and compare against the preview, then run the project formatter and organize-imports code action and approve each proposal.",
+        "Run the language toolchain check or compile command from a host shell and confirm it succeeds on the refactored project.",
+        "Edit one target file from a host shell while a proposal is open, then attempt to apply it and record the stale rejection."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-GIT-DIFF",
+          "description": "Host `git diff` after apply lists exactly the files and hunks the preview showed and no others."
+        },
+        {
+          "id": "OR-DISK-UNCHANGED-ON-CANCEL",
+          "description": "Host-computed SHA-256 values after the cancelled preview equal the recorded pre-run values for every candidate file."
+        },
+        {
+          "id": "OR-TOOLCHAIN-CHECK",
+          "description": "A host shell runs the Python check or compile command on the refactored project and it exits zero."
+        },
+        {
+          "id": "OR-DIAGNOSTICS-CLEAR",
+          "description": "After apply the product reports no diagnostic for the renamed symbol, and a host run of the same analysis tool reports none either."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-STALE-PROPOSAL",
+          "description": "A host edit to a target file between preview and apply causes an explicit stale rejection and the host edit survives."
+        },
+        {
+          "id": "RC-DENIED-PROPOSAL",
+          "description": "Rejecting the proposal leaves every file byte-identical and the editor usable."
+        },
+        {
+          "id": "RC-EXTERNAL-EDIT",
+          "description": "A file deleted from the host mid-proposal is reported unavailable and the remaining targets are not partially written."
+        },
+        {
+          "id": "RC-MALFORMED-EDIT",
+          "description": "A malformed workspace edit from the server is rejected before mutation and reported."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the proposal preview, the applied workspace edit, the file bytes before and after and the post-edit diagnostics. Redact absolute user-home segments and toolchain install paths. No dependency source outside the disposable project is captured. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-BUILD-TEST-RUST",
+      "requirement_ids": [
+        "COMP-LANG-011",
+        "COMP-BTD-002",
+        "COMP-BTD-003",
+        "COMP-BTD-004",
+        "COMP-BTD-005"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-RUST-BIN",
+        "CFG-WIN11-X64-RUST-LIB",
+        "CFG-WIN11-X64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-BIN",
+        "CFG-MAC15-X64-RUST-LIB",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-BIN",
+        "CFG-MAC15-ARM64-RUST-LIB",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-LINUX-UBUNTU-X64-RUST-BIN",
+        "CFG-LINUX-UBUNTU-X64-RUST-LIB",
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE"
+      ],
+      "steps": [
+        "Provision the ratified Rust binary, library and multi-crate workspace projects into a disposable directory, install its dependencies from a host shell, and record the runner and dependency versions.",
+        "Launch the packaged product on the project and confirm the discovered build, task and test configuration matches the project files.",
+        "Introduce a deliberate assertion failure in one test.",
+        "Run that single test from the product; record the reported result, the child process id and the reported exit status.",
+        "Compare the product output with the same command run directly from a host shell, including its stdout, stderr and exit status.",
+        "Fix the test, rerun the same single test, and confirm it now passes with a real zero exit status.",
+        "Run the whole test group or module and compare the pass/fail/ignored counts with the host run of the same command.",
+        "Run the project build command from the product and confirm the produced artifact exists on disk with the expected path.",
+        "Start a long test run and cancel it; confirm from the host that the runner process tree is gone and the reported state is cancelled, not passed.",
+        "Rename or remove the runner binary from PATH, rerun, and confirm the missing runner is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-HOST-RUN",
+          "description": "A host shell runs the identical command and its exit status, and the pass/fail counts parsed from its output, equal what the product reported."
+        },
+        {
+          "id": "OR-CHILD-PID",
+          "description": "A host process listing shows the runner process id as a child of the product while the run is live and absent afterwards."
+        },
+        {
+          "id": "OR-BUILD-ARTIFACT",
+          "description": "A host process finds the built artifact on disk at the expected path with a modification time inside the run window."
+        },
+        {
+          "id": "OR-CANCEL-NO-PROCESS",
+          "description": "After cancellation a host process listing shows no surviving descendant of the recorded runner process id."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-MISSING-DEPENDENCY",
+          "description": "With a dependency uninstalled, the run reports the exact missing dependency and does not present as passed."
+        },
+        {
+          "id": "RC-TIMEOUT",
+          "description": "A run exceeding the configured deadline is terminated and reported as timed out with its child tree reaped."
+        },
+        {
+          "id": "RC-CANCEL",
+          "description": "Cancelling a run yields a truthful cancelled state with no surviving runner process and no fabricated result."
+        },
+        {
+          "id": "RC-NONZERO-EXIT",
+          "description": "A genuinely failing test reports failed with the real exit status and the real failure output."
+        },
+        {
+          "id": "RC-RUNNER-MISSING",
+          "description": "With the runner binary absent from PATH the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the runner command line, its exit status, and bounded stdout/stderr. The command line is recorded with environment values removed and only allow-listed variable names retained. Any registry token, package index credential or CI secret shaped string is rejected before retention. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-BUILD-TEST-TS",
+      "requirement_ids": [
+        "COMP-LANG-011",
+        "COMP-BTD-002",
+        "COMP-BTD-003",
+        "COMP-BTD-004",
+        "COMP-BTD-005"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-TS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-TS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-TS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-TS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified TypeScript browser and TypeScript/JavaScript Node projects into a disposable directory, install its dependencies from a host shell, and record the runner and dependency versions.",
+        "Launch the packaged product on the project and confirm the discovered build, task and test configuration matches the project files.",
+        "Introduce a deliberate assertion failure in one test.",
+        "Run that single test from the product; record the reported result, the child process id and the reported exit status.",
+        "Compare the product output with the same command run directly from a host shell, including its stdout, stderr and exit status.",
+        "Fix the test, rerun the same single test, and confirm it now passes with a real zero exit status.",
+        "Run the whole test group or module and compare the pass/fail/ignored counts with the host run of the same command.",
+        "Run the project build command from the product and confirm the produced artifact exists on disk with the expected path.",
+        "Start a long test run and cancel it; confirm from the host that the runner process tree is gone and the reported state is cancelled, not passed.",
+        "Rename or remove the runner binary from PATH, rerun, and confirm the missing runner is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-HOST-RUN",
+          "description": "A host shell runs the identical command and its exit status, and the pass/fail counts parsed from its output, equal what the product reported."
+        },
+        {
+          "id": "OR-CHILD-PID",
+          "description": "A host process listing shows the runner process id as a child of the product while the run is live and absent afterwards."
+        },
+        {
+          "id": "OR-BUILD-ARTIFACT",
+          "description": "A host process finds the built artifact on disk at the expected path with a modification time inside the run window."
+        },
+        {
+          "id": "OR-CANCEL-NO-PROCESS",
+          "description": "After cancellation a host process listing shows no surviving descendant of the recorded runner process id."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-MISSING-DEPENDENCY",
+          "description": "With a dependency uninstalled, the run reports the exact missing dependency and does not present as passed."
+        },
+        {
+          "id": "RC-TIMEOUT",
+          "description": "A run exceeding the configured deadline is terminated and reported as timed out with its child tree reaped."
+        },
+        {
+          "id": "RC-CANCEL",
+          "description": "Cancelling a run yields a truthful cancelled state with no surviving runner process and no fabricated result."
+        },
+        {
+          "id": "RC-NONZERO-EXIT",
+          "description": "A genuinely failing test reports failed with the real exit status and the real failure output."
+        },
+        {
+          "id": "RC-RUNNER-MISSING",
+          "description": "With the runner binary absent from PATH the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the runner command line, its exit status, and bounded stdout/stderr. The command line is recorded with environment values removed and only allow-listed variable names retained. Any registry token, package index credential or CI secret shaped string is rejected before retention. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-BUILD-TEST-JS",
+      "requirement_ids": [
+        "COMP-LANG-011",
+        "COMP-BTD-002",
+        "COMP-BTD-003",
+        "COMP-BTD-004",
+        "COMP-BTD-005"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-JS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-JS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-JS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-JS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified JavaScript browser and TypeScript/JavaScript Node projects into a disposable directory, install its dependencies from a host shell, and record the runner and dependency versions.",
+        "Launch the packaged product on the project and confirm the discovered build, task and test configuration matches the project files.",
+        "Introduce a deliberate assertion failure in one test.",
+        "Run that single test from the product; record the reported result, the child process id and the reported exit status.",
+        "Compare the product output with the same command run directly from a host shell, including its stdout, stderr and exit status.",
+        "Fix the test, rerun the same single test, and confirm it now passes with a real zero exit status.",
+        "Run the whole test group or module and compare the pass/fail/ignored counts with the host run of the same command.",
+        "Run the project build command from the product and confirm the produced artifact exists on disk with the expected path.",
+        "Start a long test run and cancel it; confirm from the host that the runner process tree is gone and the reported state is cancelled, not passed.",
+        "Rename or remove the runner binary from PATH, rerun, and confirm the missing runner is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-HOST-RUN",
+          "description": "A host shell runs the identical command and its exit status, and the pass/fail counts parsed from its output, equal what the product reported."
+        },
+        {
+          "id": "OR-CHILD-PID",
+          "description": "A host process listing shows the runner process id as a child of the product while the run is live and absent afterwards."
+        },
+        {
+          "id": "OR-BUILD-ARTIFACT",
+          "description": "A host process finds the built artifact on disk at the expected path with a modification time inside the run window."
+        },
+        {
+          "id": "OR-CANCEL-NO-PROCESS",
+          "description": "After cancellation a host process listing shows no surviving descendant of the recorded runner process id."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-MISSING-DEPENDENCY",
+          "description": "With a dependency uninstalled, the run reports the exact missing dependency and does not present as passed."
+        },
+        {
+          "id": "RC-TIMEOUT",
+          "description": "A run exceeding the configured deadline is terminated and reported as timed out with its child tree reaped."
+        },
+        {
+          "id": "RC-CANCEL",
+          "description": "Cancelling a run yields a truthful cancelled state with no surviving runner process and no fabricated result."
+        },
+        {
+          "id": "RC-NONZERO-EXIT",
+          "description": "A genuinely failing test reports failed with the real exit status and the real failure output."
+        },
+        {
+          "id": "RC-RUNNER-MISSING",
+          "description": "With the runner binary absent from PATH the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the runner command line, its exit status, and bounded stdout/stderr. The command line is recorded with environment values removed and only allow-listed variable names retained. Any registry token, package index credential or CI secret shaped string is rejected before retention. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-BUILD-TEST-PY",
+      "requirement_ids": [
+        "COMP-LANG-011",
+        "COMP-BTD-002",
+        "COMP-BTD-003",
+        "COMP-BTD-004",
+        "COMP-BTD-005"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PY-APP",
+        "CFG-WIN11-X64-PY-PKG",
+        "CFG-MAC15-X64-PY-APP",
+        "CFG-MAC15-X64-PY-PKG",
+        "CFG-MAC15-ARM64-PY-APP",
+        "CFG-MAC15-ARM64-PY-PKG",
+        "CFG-LINUX-UBUNTU-X64-PY-APP",
+        "CFG-LINUX-UBUNTU-X64-PY-PKG"
+      ],
+      "steps": [
+        "Provision the ratified isolated Python application and Python package projects into a disposable directory, install its dependencies from a host shell, and record the runner and dependency versions.",
+        "Launch the packaged product on the project and confirm the discovered build, task and test configuration matches the project files.",
+        "Introduce a deliberate assertion failure in one test.",
+        "Run that single test from the product; record the reported result, the child process id and the reported exit status.",
+        "Compare the product output with the same command run directly from a host shell, including its stdout, stderr and exit status.",
+        "Fix the test, rerun the same single test, and confirm it now passes with a real zero exit status.",
+        "Run the whole test group or module and compare the pass/fail/ignored counts with the host run of the same command.",
+        "Run the project build command from the product and confirm the produced artifact exists on disk with the expected path.",
+        "Start a long test run and cancel it; confirm from the host that the runner process tree is gone and the reported state is cancelled, not passed.",
+        "Rename or remove the runner binary from PATH, rerun, and confirm the missing runner is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-HOST-RUN",
+          "description": "A host shell runs the identical command and its exit status, and the pass/fail counts parsed from its output, equal what the product reported."
+        },
+        {
+          "id": "OR-CHILD-PID",
+          "description": "A host process listing shows the runner process id as a child of the product while the run is live and absent afterwards."
+        },
+        {
+          "id": "OR-BUILD-ARTIFACT",
+          "description": "A host process finds the built artifact on disk at the expected path with a modification time inside the run window."
+        },
+        {
+          "id": "OR-CANCEL-NO-PROCESS",
+          "description": "After cancellation a host process listing shows no surviving descendant of the recorded runner process id."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-MISSING-DEPENDENCY",
+          "description": "With a dependency uninstalled, the run reports the exact missing dependency and does not present as passed."
+        },
+        {
+          "id": "RC-TIMEOUT",
+          "description": "A run exceeding the configured deadline is terminated and reported as timed out with its child tree reaped."
+        },
+        {
+          "id": "RC-CANCEL",
+          "description": "Cancelling a run yields a truthful cancelled state with no surviving runner process and no fabricated result."
+        },
+        {
+          "id": "RC-NONZERO-EXIT",
+          "description": "A genuinely failing test reports failed with the real exit status and the real failure output."
+        },
+        {
+          "id": "RC-RUNNER-MISSING",
+          "description": "With the runner binary absent from PATH the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the runner command line, its exit status, and bounded stdout/stderr. The command line is recorded with environment values removed and only allow-listed variable names retained. Any registry token, package index credential or CI secret shaped string is rejected before retention. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-DEBUG-RUST",
+      "requirement_ids": [
+        "COMP-LANG-012",
+        "COMP-BTD-006",
+        "COMP-BTD-007",
+        "COMP-BTD-008",
+        "COMP-PRES-013"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-RUST-BIN",
+        "CFG-WIN11-X64-RUST-LIB",
+        "CFG-WIN11-X64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-BIN",
+        "CFG-MAC15-X64-RUST-LIB",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-BIN",
+        "CFG-MAC15-ARM64-RUST-LIB",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-LINUX-UBUNTU-X64-RUST-BIN",
+        "CFG-LINUX-UBUNTU-X64-RUST-LIB",
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE"
+      ],
+      "steps": [
+        "Provision the ratified Rust binary, library and multi-crate workspace projects into a disposable directory together with the ratified debug adapter, and record the adapter version from a host shell.",
+        "Launch the packaged product on the project and open the file containing the entry point.",
+        "Set a breakpoint on a line inside a function that receives a known fixture value, and start a debug session from the product UI.",
+        "Record the adapter process id and the debuggee process id from a host process listing and confirm both are running.",
+        "Confirm the session stops at the breakpoint and that the reported source file and line match the line the breakpoint was set on.",
+        "Step over, step into and step out once each, recording the reported stop location after every step.",
+        "Inspect a local variable and evaluate an expression in the debug console; compare both against the fixture value the program was given.",
+        "Continue to completion and confirm the debuggee exit status reported by the product equals the host-observed exit status.",
+        "Start a second session and kill the adapter process from the host; confirm the loss is reported and the editor buffer, selection and undo history are intact.",
+        "Remove the adapter binary and start a third session; confirm the unavailable adapter is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-ADAPTER-PID",
+          "description": "A host process listing shows the debug adapter process id running during the session and absent after termination."
+        },
+        {
+          "id": "OR-DEBUGGEE-PID",
+          "description": "A host process listing shows the debuggee process id running while stopped at the breakpoint, proving a real process rather than a simulated session."
+        },
+        {
+          "id": "OR-DEBUGGEE-EXIT",
+          "description": "The host-observed exit status of the debuggee equals the status the product reported on completion."
+        },
+        {
+          "id": "OR-FIXTURE-VALUE",
+          "description": "The variable value and expression result shown in the product equal the fixture value the host wrote into the program input."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-ADAPTER-KILL",
+          "description": "Killing the adapter from the host reports a truthful lost state and no fabricated stop or variable data."
+        },
+        {
+          "id": "RC-DEBUGGEE-CRASH",
+          "description": "A debuggee that crashes reports the real termination reason and leaves no orphan process."
+        },
+        {
+          "id": "RC-ADAPTER-UNAVAILABLE",
+          "description": "With the adapter binary absent the session is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-RERUN",
+          "description": "Rerunning after a failure produces a fresh adapter and debuggee process pair with new process ids."
+        },
+        {
+          "id": "RC-BUFFER-INTACT",
+          "description": "After adapter loss the editor buffer text, selection and undo history are unchanged."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the adapter and debuggee PIDs, the adapter protocol log, breakpoint/stop locations and the inspected variable values for the fixture data only. Variable dumps are limited to the fixture scope so no unrelated process memory is retained. Redact absolute user-home segments and toolchain install paths. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-DEBUG-TS",
+      "requirement_ids": [
+        "COMP-LANG-012",
+        "COMP-BTD-006",
+        "COMP-BTD-007",
+        "COMP-BTD-008",
+        "COMP-PRES-013"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-TS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-TS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-TS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-TS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified TypeScript browser and TypeScript/JavaScript Node projects into a disposable directory together with the ratified debug adapter, and record the adapter version from a host shell.",
+        "Launch the packaged product on the project and open the file containing the entry point.",
+        "Set a breakpoint on a line inside a function that receives a known fixture value, and start a debug session from the product UI.",
+        "Record the adapter process id and the debuggee process id from a host process listing and confirm both are running.",
+        "Confirm the session stops at the breakpoint and that the reported source file and line match the line the breakpoint was set on.",
+        "Step over, step into and step out once each, recording the reported stop location after every step.",
+        "Inspect a local variable and evaluate an expression in the debug console; compare both against the fixture value the program was given.",
+        "Continue to completion and confirm the debuggee exit status reported by the product equals the host-observed exit status.",
+        "Start a second session and kill the adapter process from the host; confirm the loss is reported and the editor buffer, selection and undo history are intact.",
+        "Remove the adapter binary and start a third session; confirm the unavailable adapter is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-ADAPTER-PID",
+          "description": "A host process listing shows the debug adapter process id running during the session and absent after termination."
+        },
+        {
+          "id": "OR-DEBUGGEE-PID",
+          "description": "A host process listing shows the debuggee process id running while stopped at the breakpoint, proving a real process rather than a simulated session."
+        },
+        {
+          "id": "OR-DEBUGGEE-EXIT",
+          "description": "The host-observed exit status of the debuggee equals the status the product reported on completion."
+        },
+        {
+          "id": "OR-FIXTURE-VALUE",
+          "description": "The variable value and expression result shown in the product equal the fixture value the host wrote into the program input."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-ADAPTER-KILL",
+          "description": "Killing the adapter from the host reports a truthful lost state and no fabricated stop or variable data."
+        },
+        {
+          "id": "RC-DEBUGGEE-CRASH",
+          "description": "A debuggee that crashes reports the real termination reason and leaves no orphan process."
+        },
+        {
+          "id": "RC-ADAPTER-UNAVAILABLE",
+          "description": "With the adapter binary absent the session is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-RERUN",
+          "description": "Rerunning after a failure produces a fresh adapter and debuggee process pair with new process ids."
+        },
+        {
+          "id": "RC-BUFFER-INTACT",
+          "description": "After adapter loss the editor buffer text, selection and undo history are unchanged."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the adapter and debuggee PIDs, the adapter protocol log, breakpoint/stop locations and the inspected variable values for the fixture data only. Variable dumps are limited to the fixture scope so no unrelated process memory is retained. Redact absolute user-home segments and toolchain install paths. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-DEBUG-JS",
+      "requirement_ids": [
+        "COMP-LANG-012",
+        "COMP-BTD-006",
+        "COMP-BTD-007",
+        "COMP-BTD-008",
+        "COMP-PRES-013"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-JS-BROWSER",
+        "CFG-WIN11-X64-TSJS-NODE",
+        "CFG-MAC15-X64-JS-BROWSER",
+        "CFG-MAC15-X64-TSJS-NODE",
+        "CFG-MAC15-ARM64-JS-BROWSER",
+        "CFG-MAC15-ARM64-TSJS-NODE",
+        "CFG-LINUX-UBUNTU-X64-JS-BROWSER",
+        "CFG-LINUX-UBUNTU-X64-TSJS-NODE"
+      ],
+      "steps": [
+        "Provision the ratified JavaScript browser and TypeScript/JavaScript Node projects into a disposable directory together with the ratified debug adapter, and record the adapter version from a host shell.",
+        "Launch the packaged product on the project and open the file containing the entry point.",
+        "Set a breakpoint on a line inside a function that receives a known fixture value, and start a debug session from the product UI.",
+        "Record the adapter process id and the debuggee process id from a host process listing and confirm both are running.",
+        "Confirm the session stops at the breakpoint and that the reported source file and line match the line the breakpoint was set on.",
+        "Step over, step into and step out once each, recording the reported stop location after every step.",
+        "Inspect a local variable and evaluate an expression in the debug console; compare both against the fixture value the program was given.",
+        "Continue to completion and confirm the debuggee exit status reported by the product equals the host-observed exit status.",
+        "Start a second session and kill the adapter process from the host; confirm the loss is reported and the editor buffer, selection and undo history are intact.",
+        "Remove the adapter binary and start a third session; confirm the unavailable adapter is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-ADAPTER-PID",
+          "description": "A host process listing shows the debug adapter process id running during the session and absent after termination."
+        },
+        {
+          "id": "OR-DEBUGGEE-PID",
+          "description": "A host process listing shows the debuggee process id running while stopped at the breakpoint, proving a real process rather than a simulated session."
+        },
+        {
+          "id": "OR-DEBUGGEE-EXIT",
+          "description": "The host-observed exit status of the debuggee equals the status the product reported on completion."
+        },
+        {
+          "id": "OR-FIXTURE-VALUE",
+          "description": "The variable value and expression result shown in the product equal the fixture value the host wrote into the program input."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-ADAPTER-KILL",
+          "description": "Killing the adapter from the host reports a truthful lost state and no fabricated stop or variable data."
+        },
+        {
+          "id": "RC-DEBUGGEE-CRASH",
+          "description": "A debuggee that crashes reports the real termination reason and leaves no orphan process."
+        },
+        {
+          "id": "RC-ADAPTER-UNAVAILABLE",
+          "description": "With the adapter binary absent the session is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-RERUN",
+          "description": "Rerunning after a failure produces a fresh adapter and debuggee process pair with new process ids."
+        },
+        {
+          "id": "RC-BUFFER-INTACT",
+          "description": "After adapter loss the editor buffer text, selection and undo history are unchanged."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the adapter and debuggee PIDs, the adapter protocol log, breakpoint/stop locations and the inspected variable values for the fixture data only. Variable dumps are limited to the fixture scope so no unrelated process memory is retained. Redact absolute user-home segments and toolchain install paths. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-LANG-DEBUG-PY",
+      "requirement_ids": [
+        "COMP-LANG-012",
+        "COMP-BTD-006",
+        "COMP-BTD-007",
+        "COMP-BTD-008",
+        "COMP-PRES-013"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PY-APP",
+        "CFG-WIN11-X64-PY-PKG",
+        "CFG-MAC15-X64-PY-APP",
+        "CFG-MAC15-X64-PY-PKG",
+        "CFG-MAC15-ARM64-PY-APP",
+        "CFG-MAC15-ARM64-PY-PKG",
+        "CFG-LINUX-UBUNTU-X64-PY-APP",
+        "CFG-LINUX-UBUNTU-X64-PY-PKG"
+      ],
+      "steps": [
+        "Provision the ratified isolated Python application and Python package projects into a disposable directory together with the ratified debug adapter, and record the adapter version from a host shell.",
+        "Launch the packaged product on the project and open the file containing the entry point.",
+        "Set a breakpoint on a line inside a function that receives a known fixture value, and start a debug session from the product UI.",
+        "Record the adapter process id and the debuggee process id from a host process listing and confirm both are running.",
+        "Confirm the session stops at the breakpoint and that the reported source file and line match the line the breakpoint was set on.",
+        "Step over, step into and step out once each, recording the reported stop location after every step.",
+        "Inspect a local variable and evaluate an expression in the debug console; compare both against the fixture value the program was given.",
+        "Continue to completion and confirm the debuggee exit status reported by the product equals the host-observed exit status.",
+        "Start a second session and kill the adapter process from the host; confirm the loss is reported and the editor buffer, selection and undo history are intact.",
+        "Remove the adapter binary and start a third session; confirm the unavailable adapter is reported with its exact prerequisite."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-ADAPTER-PID",
+          "description": "A host process listing shows the debug adapter process id running during the session and absent after termination."
+        },
+        {
+          "id": "OR-DEBUGGEE-PID",
+          "description": "A host process listing shows the debuggee process id running while stopped at the breakpoint, proving a real process rather than a simulated session."
+        },
+        {
+          "id": "OR-DEBUGGEE-EXIT",
+          "description": "The host-observed exit status of the debuggee equals the status the product reported on completion."
+        },
+        {
+          "id": "OR-FIXTURE-VALUE",
+          "description": "The variable value and expression result shown in the product equal the fixture value the host wrote into the program input."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-ADAPTER-KILL",
+          "description": "Killing the adapter from the host reports a truthful lost state and no fabricated stop or variable data."
+        },
+        {
+          "id": "RC-DEBUGGEE-CRASH",
+          "description": "A debuggee that crashes reports the real termination reason and leaves no orphan process."
+        },
+        {
+          "id": "RC-ADAPTER-UNAVAILABLE",
+          "description": "With the adapter binary absent the session is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-RERUN",
+          "description": "Rerunning after a failure produces a fresh adapter and debuggee process pair with new process ids."
+        },
+        {
+          "id": "RC-BUFFER-INTACT",
+          "description": "After adapter loss the editor buffer text, selection and undo history are unchanged."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the adapter and debuggee PIDs, the adapter protocol log, breakpoint/stop locations and the inspected variable values for the fixture data only. Variable dumps are limited to the fixture scope so no unrelated process memory is retained. Redact absolute user-home segments and toolchain install paths. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-PLATFORM-A11Y-WIN",
+      "requirement_ids": [
+        "COMP-PLAT-003",
+        "COMP-PLAT-009",
+        "COMP-WB-004",
+        "COMP-WB-009",
+        "COMP-SCOPE-GAP-05"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Start the Windows UIA with Narrator session on the target host and confirm from the host that the provider is running before the product is launched.",
+        "Launch the packaged product on the disposable clone and put the OS pointer aside for the remainder of the run.",
+        "Using only the keyboard, traverse from the initial focus through the Explorer, editor, command palette, terminal panel, source-control surface and diff review, recording the focus order.",
+        "At each stop, confirm a visible focus indicator and that the screen reader announces a name and role for the focused element.",
+        "Capture a UI Automation tree dump of the product window and record the role, name, value and state of every focused element in the traversal.",
+        "Open a file, type a line, and save, all from the keyboard, then confirm the announced state changes match the buffer and dirty state.",
+        "Invoke one accessibility action exposed by the tree (for example activate or expand) and confirm the product performs the corresponding operation.",
+        "Change the display scale, restart the product, and repeat the traversal to confirm focus order and reachability survive the DPI change.",
+        "Read the saved file from the host and confirm the keyboard-only journey produced the expected bytes."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-A11Y-TREE",
+          "description": "A UI Automation tree dump taken by a host tool reports a name, role and state for every element reached in the traversal."
+        },
+        {
+          "id": "OR-A11Y-ACTION",
+          "description": "An accessibility action invoked through the host tool causes the product to perform the corresponding operation, observed as a disk or buffer effect."
+        },
+        {
+          "id": "OR-PROVIDER-RUNNING",
+          "description": "A host process listing shows the accessibility provider and screen reader running for the whole window of the run."
+        },
+        {
+          "id": "OR-DISK-BYTES",
+          "description": "A host read of the file saved during the keyboard-only journey shows the typed line."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-PROVIDER-UNAVAILABLE",
+          "description": "If the accessibility provider or screen reader cannot be started, the run is recorded blocked with the exact missing prerequisite and never as passed or skipped."
+        },
+        {
+          "id": "RC-PERMISSION-DENIED",
+          "description": "If the OS denies accessibility permission to the tooling, the denial is recorded as blocked with the exact permission required."
+        },
+        {
+          "id": "RC-SESSION-LOST",
+          "description": "If the screen reader session drops mid-run, the partial traversal is discarded and the run is repeated rather than reported from partial data."
+        },
+        {
+          "id": "RC-DPI-RESTART",
+          "description": "After the display-scale change and restart, focus order and element reachability are re-verified; any regression is recorded as a defect, not smoothed over."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the accessibility tree dump and action results for the Legion window subtree only, plus the keyboard focus order trace. No screen reader speech log covering other applications is retained, and no OS-wide accessibility recording is enabled. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-PLATFORM-A11Y-MAC",
+      "requirement_ids": [
+        "COMP-PLAT-003",
+        "COMP-PLAT-009",
+        "COMP-WB-004",
+        "COMP-WB-009",
+        "COMP-SCOPE-GAP-05"
+      ],
+      "configuration_ids": [
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Start the macOS AX with VoiceOver session on the target host and confirm from the host that the provider is running before the product is launched.",
+        "Launch the packaged product on the disposable clone and put the OS pointer aside for the remainder of the run.",
+        "Using only the keyboard, traverse from the initial focus through the Explorer, editor, command palette, terminal panel, source-control surface and diff review, recording the focus order.",
+        "At each stop, confirm a visible focus indicator and that the screen reader announces a name and role for the focused element.",
+        "Capture an AX tree dump of the product window and record the role, name, value and state of every focused element in the traversal.",
+        "Open a file, type a line, and save, all from the keyboard, then confirm the announced state changes match the buffer and dirty state.",
+        "Invoke one accessibility action exposed by the tree (for example activate or expand) and confirm the product performs the corresponding operation.",
+        "Change the display scale, restart the product, and repeat the traversal to confirm focus order and reachability survive the DPI change.",
+        "Read the saved file from the host and confirm the keyboard-only journey produced the expected bytes."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-A11Y-TREE",
+          "description": "An AX tree dump taken by a host tool reports a name, role and state for every element reached in the traversal."
+        },
+        {
+          "id": "OR-A11Y-ACTION",
+          "description": "An accessibility action invoked through the host tool causes the product to perform the corresponding operation, observed as a disk or buffer effect."
+        },
+        {
+          "id": "OR-PROVIDER-RUNNING",
+          "description": "A host process listing shows the accessibility provider and screen reader running for the whole window of the run."
+        },
+        {
+          "id": "OR-DISK-BYTES",
+          "description": "A host read of the file saved during the keyboard-only journey shows the typed line."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-PROVIDER-UNAVAILABLE",
+          "description": "If the accessibility provider or screen reader cannot be started, the run is recorded blocked with the exact missing prerequisite and never as passed or skipped."
+        },
+        {
+          "id": "RC-PERMISSION-DENIED",
+          "description": "If the OS denies accessibility permission to the tooling, the denial is recorded as blocked with the exact permission required."
+        },
+        {
+          "id": "RC-SESSION-LOST",
+          "description": "If the screen reader session drops mid-run, the partial traversal is discarded and the run is repeated rather than reported from partial data."
+        },
+        {
+          "id": "RC-DPI-RESTART",
+          "description": "After the display-scale change and restart, focus order and element reachability are re-verified; any regression is recorded as a defect, not smoothed over."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the accessibility tree dump and action results for the Legion window subtree only, plus the keyboard focus order trace. No screen reader speech log covering other applications is retained, and no OS-wide accessibility recording is enabled. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-PLATFORM-A11Y-LINUX",
+      "requirement_ids": [
+        "COMP-PLAT-003",
+        "COMP-PLAT-009",
+        "COMP-WB-004",
+        "COMP-WB-009",
+        "COMP-SCOPE-GAP-05"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Start the Linux AT-SPI with Orca session on the target host and confirm from the host that the provider is running before the product is launched.",
+        "Launch the packaged product on the disposable clone and put the OS pointer aside for the remainder of the run.",
+        "Using only the keyboard, traverse from the initial focus through the Explorer, editor, command palette, terminal panel, source-control surface and diff review, recording the focus order.",
+        "At each stop, confirm a visible focus indicator and that the screen reader announces a name and role for the focused element.",
+        "Capture an AT-SPI tree dump of the product window and record the role, name, value and state of every focused element in the traversal.",
+        "Open a file, type a line, and save, all from the keyboard, then confirm the announced state changes match the buffer and dirty state.",
+        "Invoke one accessibility action exposed by the tree (for example activate or expand) and confirm the product performs the corresponding operation.",
+        "Change the display scale, restart the product, and repeat the traversal to confirm focus order and reachability survive the DPI change.",
+        "Read the saved file from the host and confirm the keyboard-only journey produced the expected bytes."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-A11Y-TREE",
+          "description": "An AT-SPI tree dump taken by a host tool reports a name, role and state for every element reached in the traversal."
+        },
+        {
+          "id": "OR-A11Y-ACTION",
+          "description": "An accessibility action invoked through the host tool causes the product to perform the corresponding operation, observed as a disk or buffer effect."
+        },
+        {
+          "id": "OR-PROVIDER-RUNNING",
+          "description": "A host process listing shows the accessibility provider and screen reader running for the whole window of the run."
+        },
+        {
+          "id": "OR-DISK-BYTES",
+          "description": "A host read of the file saved during the keyboard-only journey shows the typed line."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-PROVIDER-UNAVAILABLE",
+          "description": "If the accessibility provider or screen reader cannot be started, the run is recorded blocked with the exact missing prerequisite and never as passed or skipped."
+        },
+        {
+          "id": "RC-PERMISSION-DENIED",
+          "description": "If the OS denies accessibility permission to the tooling, the denial is recorded as blocked with the exact permission required."
+        },
+        {
+          "id": "RC-SESSION-LOST",
+          "description": "If the screen reader session drops mid-run, the partial traversal is discarded and the run is repeated rather than reported from partial data."
+        },
+        {
+          "id": "RC-DPI-RESTART",
+          "description": "After the display-scale change and restart, focus order and element reachability are re-verified; any regression is recorded as a defect, not smoothed over."
+        }
+      ],
+      "sensitive_artifact_policy": "Capture the accessibility tree dump and action results for the Legion window subtree only, plus the keyboard focus order trace. No screen reader speech log covering other applications is retained, and no OS-wide accessibility recording is enabled. Redact absolute user-home segments. Retain under the run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-MANUAL-OFFLINE-30M-WIN",
+      "requirement_ids": [
+        "COMP-DIST-004",
+        "COMP-TRAIN-006",
+        "COMP-SCOPE-GAP-06"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-MANUAL-OFFLINE"
+      ],
+      "steps": [
+        "Record the SHA-256 of the separately labelled Manual/offline artifact and confirm from its metadata that it is not the signed stable installer.",
+        "Install the Manual/offline artifact on the target host and record the installed file inventory.",
+        "Start the OS per-process network capture filtered to the product process tree, before the product is launched, and record the capture start time.",
+        "Launch the installed Manual artifact on a disposable clone and record its process id and every child process id it creates.",
+        "Turn every consent toggle the product offers to on, so the run proves the absence of egress independently of stored consent.",
+        "Work for a continuous thirty minutes: open and edit several files, save, run workspace search, stage and commit with Git, run a local build or test command, and use the terminal.",
+        "Attempt one action that would require a provider, an update check and a crash report, and record what the product does.",
+        "Stop the capture, and list every DNS query, TCP connection and UDP datagram attributed to the product process tree.",
+        "Confirm the workspace file effects from the host: the edited bytes, the commit in `git log`, and the build or test artifact."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-NET-CAPTURE",
+          "description": "The OS per-process capture attributed to the product process tree contains no external DNS query, TCP connection or UDP datagram; any non-loopback destination fails the run."
+        },
+        {
+          "id": "OR-PROCESS-TREE",
+          "description": "A host process listing records every child the product created during the window, so the capture filter demonstrably covered the whole tree."
+        },
+        {
+          "id": "OR-ARTIFACT-HASH",
+          "description": "The installed artifact SHA-256 equals the recorded Manual/offline artifact hash and differs from the signed stable installer hash."
+        },
+        {
+          "id": "OR-WORK-EFFECTS",
+          "description": "Host reads of the edited files, `git log` and the build or test output confirm the thirty-minute session did real local work."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-EGRESS-OBSERVED",
+          "description": "Any external DNS, TCP, UDP, telemetry, provider, update or crash traffic in the capture fails the run and is recorded as a defect; it is never explained away."
+        },
+        {
+          "id": "RC-PROVIDER-ATTEMPT",
+          "description": "A provider action is refused locally with a visible reason and produces no network attempt in the capture."
+        },
+        {
+          "id": "RC-CAPTURE-UNAVAILABLE",
+          "description": "If the OS per-process capture tool is unavailable or cannot attribute traffic to the process tree, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-ARTIFACT-MISSING",
+          "description": "If no separately labelled Manual/offline artifact exists, the run is recorded blocked; the signed stable installer is never substituted for it."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the per-process OS network capture, the packaged artifact hash and the workspace file effects. The capture is filtered to the packaged process tree and is retained as connection metadata (timestamp, direction, protocol, remote address, port, process id) with packet payloads discarded at capture time. No DNS query name outside the capture window is retained. The workspace is a disposable clone; no personal file, browser profile or credential store is in scope. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate and delete with the candidate; the capture is never copied outside it."
+    },
+    {
+      "id": "SC-MANUAL-OFFLINE-30M-MAC",
+      "requirement_ids": [
+        "COMP-DIST-004",
+        "COMP-TRAIN-006",
+        "COMP-SCOPE-GAP-06"
+      ],
+      "configuration_ids": [
+        "CFG-MAC15-ARM64-MANUAL-OFFLINE"
+      ],
+      "steps": [
+        "Record the SHA-256 of the separately labelled Manual/offline artifact and confirm from its metadata that it is not the signed stable installer.",
+        "Install the Manual/offline artifact on the target host and record the installed file inventory.",
+        "Start the OS per-process network capture filtered to the product process tree, before the product is launched, and record the capture start time.",
+        "Launch the installed Manual artifact on a disposable clone and record its process id and every child process id it creates.",
+        "Turn every consent toggle the product offers to on, so the run proves the absence of egress independently of stored consent.",
+        "Work for a continuous thirty minutes: open and edit several files, save, run workspace search, stage and commit with Git, run a local build or test command, and use the terminal.",
+        "Attempt one action that would require a provider, an update check and a crash report, and record what the product does.",
+        "Stop the capture, and list every DNS query, TCP connection and UDP datagram attributed to the product process tree.",
+        "Confirm the workspace file effects from the host: the edited bytes, the commit in `git log`, and the build or test artifact."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-NET-CAPTURE",
+          "description": "The OS per-process capture attributed to the product process tree contains no external DNS query, TCP connection or UDP datagram; any non-loopback destination fails the run."
+        },
+        {
+          "id": "OR-PROCESS-TREE",
+          "description": "A host process listing records every child the product created during the window, so the capture filter demonstrably covered the whole tree."
+        },
+        {
+          "id": "OR-ARTIFACT-HASH",
+          "description": "The installed artifact SHA-256 equals the recorded Manual/offline artifact hash and differs from the signed stable installer hash."
+        },
+        {
+          "id": "OR-WORK-EFFECTS",
+          "description": "Host reads of the edited files, `git log` and the build or test output confirm the thirty-minute session did real local work."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-EGRESS-OBSERVED",
+          "description": "Any external DNS, TCP, UDP, telemetry, provider, update or crash traffic in the capture fails the run and is recorded as a defect; it is never explained away."
+        },
+        {
+          "id": "RC-PROVIDER-ATTEMPT",
+          "description": "A provider action is refused locally with a visible reason and produces no network attempt in the capture."
+        },
+        {
+          "id": "RC-CAPTURE-UNAVAILABLE",
+          "description": "If the OS per-process capture tool is unavailable or cannot attribute traffic to the process tree, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-ARTIFACT-MISSING",
+          "description": "If no separately labelled Manual/offline artifact exists, the run is recorded blocked; the signed stable installer is never substituted for it."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the per-process OS network capture, the packaged artifact hash and the workspace file effects. The capture is filtered to the packaged process tree and is retained as connection metadata (timestamp, direction, protocol, remote address, port, process id) with packet payloads discarded at capture time. No DNS query name outside the capture window is retained. The workspace is a disposable clone; no personal file, browser profile or credential store is in scope. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate and delete with the candidate; the capture is never copied outside it."
+    },
+    {
+      "id": "SC-MANUAL-OFFLINE-30M-LINUX",
+      "requirement_ids": [
+        "COMP-DIST-004",
+        "COMP-TRAIN-006",
+        "COMP-SCOPE-GAP-06"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-MANUAL-OFFLINE"
+      ],
+      "steps": [
+        "Record the SHA-256 of the separately labelled Manual/offline artifact and confirm from its metadata that it is not the signed stable installer.",
+        "Install the Manual/offline artifact on the target host and record the installed file inventory.",
+        "Start the OS per-process network capture filtered to the product process tree, before the product is launched, and record the capture start time.",
+        "Launch the installed Manual artifact on a disposable clone and record its process id and every child process id it creates.",
+        "Turn every consent toggle the product offers to on, so the run proves the absence of egress independently of stored consent.",
+        "Work for a continuous thirty minutes: open and edit several files, save, run workspace search, stage and commit with Git, run a local build or test command, and use the terminal.",
+        "Attempt one action that would require a provider, an update check and a crash report, and record what the product does.",
+        "Stop the capture, and list every DNS query, TCP connection and UDP datagram attributed to the product process tree.",
+        "Confirm the workspace file effects from the host: the edited bytes, the commit in `git log`, and the build or test artifact."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-NET-CAPTURE",
+          "description": "The OS per-process capture attributed to the product process tree contains no external DNS query, TCP connection or UDP datagram; any non-loopback destination fails the run."
+        },
+        {
+          "id": "OR-PROCESS-TREE",
+          "description": "A host process listing records every child the product created during the window, so the capture filter demonstrably covered the whole tree."
+        },
+        {
+          "id": "OR-ARTIFACT-HASH",
+          "description": "The installed artifact SHA-256 equals the recorded Manual/offline artifact hash and differs from the signed stable installer hash."
+        },
+        {
+          "id": "OR-WORK-EFFECTS",
+          "description": "Host reads of the edited files, `git log` and the build or test output confirm the thirty-minute session did real local work."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-EGRESS-OBSERVED",
+          "description": "Any external DNS, TCP, UDP, telemetry, provider, update or crash traffic in the capture fails the run and is recorded as a defect; it is never explained away."
+        },
+        {
+          "id": "RC-PROVIDER-ATTEMPT",
+          "description": "A provider action is refused locally with a visible reason and produces no network attempt in the capture."
+        },
+        {
+          "id": "RC-CAPTURE-UNAVAILABLE",
+          "description": "If the OS per-process capture tool is unavailable or cannot attribute traffic to the process tree, the run is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-ARTIFACT-MISSING",
+          "description": "If no separately labelled Manual/offline artifact exists, the run is recorded blocked; the signed stable installer is never substituted for it."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the per-process OS network capture, the packaged artifact hash and the workspace file effects. The capture is filtered to the packaged process tree and is retained as connection metadata (timestamp, direction, protocol, remote address, port, process id) with packet payloads discarded at capture time. No DNS query name outside the capture window is retained. The workspace is a disposable clone; no personal file, browser profile or credential store is in scope. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate and delete with the candidate; the capture is never copied outside it."
+    },
+    {
+      "id": "SC-RELEASE-CLEAN-INSTALL-WIN",
+      "requirement_ids": [
+        "COMP-DIST-003",
+        "COMP-DIST-007",
+        "COMP-SCOPE-GAP-02"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Prepare a clean Windows machine with no prior Legion installation and record its baseline installed-application inventory.",
+        "Copy the signed stable artifact onto the machine and record its SHA-256.",
+        "Run the OS-native signature and trust verifier against the artifact from a host shell and record its full output.",
+        "Install the artifact through the ordinary user path and record every trust or warning dialog exactly as shown.",
+        "Record the installed file inventory and compare it against the baseline.",
+        "Launch the installed product, complete first run including the privacy and provider consent screens, and record the resulting consent state.",
+        "Open a real project, edit a file, save it, and run one build or test command.",
+        "Read the edited file and the build or test output from the host and confirm the ordinary workflow succeeded.",
+        "Uninstall the product and compare the resulting inventory against the baseline to confirm the removal is complete and leaves no broken state."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-OS-VERIFIER",
+          "description": "The Windows native signature and trust verifier, run from a host shell, reports the artifact as validly signed and trusted; its exact output is retained."
+        },
+        {
+          "id": "OR-ARTIFACT-HASH",
+          "description": "The installed artifact SHA-256 equals the hash recorded in the candidate manifest for this configuration."
+        },
+        {
+          "id": "OR-INSTALL-INVENTORY",
+          "description": "A host diff of the installed-application and filesystem inventory before and after shows exactly the expected install and, after uninstall, a return to the baseline."
+        },
+        {
+          "id": "OR-PROJECT-EFFECT",
+          "description": "A host read of the edited file and the build or test output shows the ordinary project workflow produced real effects on the clean machine."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-NO-SIGNER",
+          "description": "If no signing credential or signed artifact exists, the run is recorded blocked with the exact missing prerequisite and is never recorded as passed."
+        },
+        {
+          "id": "RC-NO-CLEAN-VM",
+          "description": "If no clean machine is available, the run is recorded blocked; a developer machine with prior state is never substituted for it."
+        },
+        {
+          "id": "RC-INSTALL-FAILURE",
+          "description": "An install failure is recorded with the exact OS error and the machine is restored to baseline before any retry."
+        },
+        {
+          "id": "RC-TRUST-WARNING",
+          "description": "Any OS trust warning shown to the user is recorded verbatim and counts as a failed trust outcome, not a cosmetic note."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the installer artifact hash, the OS trust/identity verifier output, the installed file inventory and the first-run consent state. Signer subject names appear only as they are printed by the OS verifier; no certificate, private key, keychain entry, credential, or secret value is captured, copied, or named. Machine identifiers are reduced to a run-local pseudonym. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-RELEASE-UPDATE-ROLLBACK-WIN",
+      "requirement_ids": [
+        "COMP-DIST-005",
+        "COMP-DIST-006",
+        "COMP-SCOPE-GAP-03"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Start from the installed signed candidate on the clean Windows machine and record the installed version, the binary SHA-256 and the update-descriptor contents.",
+        "Publish the newer signed candidate to the update channel the installed product is configured to read, and record its version, hash and descriptor.",
+        "Trigger the update from the ordinary user path and record the helper process id and each progress state it reports.",
+        "Let the update complete and the product restart; record the version and health acknowledgement the restarted product reports.",
+        "From the host, compare the installed binary SHA-256 with the newer candidate hash and confirm the backup of the previous version exists.",
+        "Trigger a forced failure of the next update by supplying an artifact whose hash does not match its descriptor.",
+        "Confirm the update is refused before any swap and the installed binary is still the current version.",
+        "Trigger an update and interrupt it mid-swap by terminating the helper; confirm the rollback restores the previous binary and the product still launches.",
+        "Record the final installed version and binary hash from the host and confirm they match the restored backup."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-BINARY-HASH",
+          "description": "A host SHA-256 of the installed binary equals the newer candidate hash after a successful update and the previous candidate hash after rollback."
+        },
+        {
+          "id": "OR-HELPER-PID",
+          "description": "A host process listing shows the separately packaged update helper running during the swap and exiting afterwards."
+        },
+        {
+          "id": "OR-BACKUP-PRESENT",
+          "description": "A host directory listing shows the backup of the previous version present before the swap and used during rollback."
+        },
+        {
+          "id": "OR-VERSION-REPORT",
+          "description": "The version the restarted product reports equals the version recorded in the candidate manifest for the installed binary."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-USER-CANCEL",
+          "description": "Cancelling the update before the swap leaves the installed binary hash unchanged and the product usable."
+        },
+        {
+          "id": "RC-BAD-HASH",
+          "description": "An artifact whose hash or signature does not match its descriptor is refused before the swap and the installed binary is unchanged."
+        },
+        {
+          "id": "RC-INTERRUPTED-SWAP",
+          "description": "Terminating the helper mid-swap results in a restored previous binary and a product that still launches."
+        },
+        {
+          "id": "RC-CRASH-DURING-UPDATE",
+          "description": "A crash during the update leaves either the previous or the new complete binary in place, never a truncated one; the host hash proves which."
+        },
+        {
+          "id": "RC-NO-FEED",
+          "description": "If no signed artifact or update feed is available, the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the update descriptor, both artifact hashes, the helper log, the restart acknowledgement and the restored backup inventory. Update-feed URLs are recorded as host plus path with any query string and token removed. No signing credential, feed credential, or machine certificate is captured or named. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-RELEASE-CRASH-PRIVACY-WIN",
+      "requirement_ids": [
+        "COMP-DIST-008",
+        "COMP-PRES-004",
+        "COMP-SCOPE-GAP-04",
+        "COMP-SCOPE-GAP-10"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Start the installed signed candidate on the clean Windows machine with crash reporting consent off, and record the consent state from the host-readable configuration.",
+        "Open a project file, type an unsaved line containing a synthetic Unicode marker and a synthetic secret-shaped token, and record the on-disk bytes before the crash.",
+        "Force a crash using the OS fault facility rather than an in-product test hook, and record the fault identifier the OS assigns.",
+        "Confirm from the host that no crash payload was written or queued for upload while consent is off.",
+        "Restart the product and confirm the unsaved Unicode marker is offered for recovery and the on-disk file is still the pre-crash bytes.",
+        "Turn crash reporting consent on, record the purpose, retention and destination the product displays, and force a second crash.",
+        "Restart, export the consented diagnostic bundle to a host path, and inspect every byte of it.",
+        "Confirm the bundle contains only metadata: no editor text, no terminal transcript, no prompt, no secret-shaped token and no unredacted file path.",
+        "Delete the consented data through the product, record the deletion receipt, and confirm from the host that the spooled payload is gone."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-OS-FAULT",
+          "description": "The OS fault facility records the crash with its own identifier, proving the crash was real rather than an in-product simulation."
+        },
+        {
+          "id": "OR-NO-PAYLOAD-CONSENT-OFF",
+          "description": "A host listing of the spool and upload directories shows no crash payload written or queued while consent was off."
+        },
+        {
+          "id": "OR-BUNDLE-CONTENT",
+          "description": "A host byte-level inspection of the exported bundle finds none of the synthetic Unicode marker, the synthetic secret token, the terminal transcript or an unredacted absolute path."
+        },
+        {
+          "id": "OR-DISK-PRECRASH",
+          "description": "A host read of the project file after the crash shows the pre-crash bytes, so the unsaved text was never partially written."
+        },
+        {
+          "id": "OR-DELETION",
+          "description": "After the deletion a host listing shows the spooled payload absent and the receipt identifier matches what the product displayed."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-CONSENT-OFF",
+          "description": "With consent off the crash produces no payload at all; the presence of any payload fails the run."
+        },
+        {
+          "id": "RC-DIRTY-RESTORE",
+          "description": "The unsaved Unicode marker is recoverable after restart, or its loss is reported truthfully rather than silently."
+        },
+        {
+          "id": "RC-RAW-LEAK",
+          "description": "Any editor text, terminal transcript, prompt or secret found in the bundle fails the run and is recorded as a defect; the bundle is then destroyed."
+        },
+        {
+          "id": "RC-FAULT-UNAVAILABLE",
+          "description": "If the OS fault facility is unavailable, the run is recorded blocked with the exact missing prerequisite; an in-product crash hook is never substituted for it."
+        },
+        {
+          "id": "RC-DELETE-FAILURE",
+          "description": "A failed deletion is reported with the retained data still accounted for, and no deletion receipt is issued."
+        }
+      ],
+      "sensitive_artifact_policy": "Strictest policy. Capture the crash metadata record, the consent state before and after, the export payload and the deletion receipt. The unsaved buffer used for the run contains only a synthetic Unicode marker, and the exported payload is inspected byte by byte to confirm it contains no editor text, terminal transcript, prompt, file path beyond the redacted workspace root, or secret-shaped string; a payload that fails that inspection is destroyed and the run recorded as failed. With consent off the expected payload is empty and nothing is retained. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate and honour the deletion receipt."
+    },
+    {
+      "id": "SC-RELEASE-CLEAN-INSTALL-MAC",
+      "requirement_ids": [
+        "COMP-DIST-003",
+        "COMP-DIST-007",
+        "COMP-SCOPE-GAP-02"
+      ],
+      "configuration_ids": [
+        "CFG-MAC15-ARM64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Prepare a clean macOS machine with no prior Legion installation and record its baseline installed-application inventory.",
+        "Copy the signed stable artifact onto the machine and record its SHA-256.",
+        "Run the OS-native signature and trust verifier against the artifact from a host shell and record its full output.",
+        "Install the artifact through the ordinary user path and record every trust or warning dialog exactly as shown.",
+        "Record the installed file inventory and compare it against the baseline.",
+        "Launch the installed product, complete first run including the privacy and provider consent screens, and record the resulting consent state.",
+        "Open a real project, edit a file, save it, and run one build or test command.",
+        "Read the edited file and the build or test output from the host and confirm the ordinary workflow succeeded.",
+        "Uninstall the product and compare the resulting inventory against the baseline to confirm the removal is complete and leaves no broken state."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-OS-VERIFIER",
+          "description": "The macOS native signature and trust verifier, run from a host shell, reports the artifact as validly signed and trusted; its exact output is retained."
+        },
+        {
+          "id": "OR-ARTIFACT-HASH",
+          "description": "The installed artifact SHA-256 equals the hash recorded in the candidate manifest for this configuration."
+        },
+        {
+          "id": "OR-INSTALL-INVENTORY",
+          "description": "A host diff of the installed-application and filesystem inventory before and after shows exactly the expected install and, after uninstall, a return to the baseline."
+        },
+        {
+          "id": "OR-PROJECT-EFFECT",
+          "description": "A host read of the edited file and the build or test output shows the ordinary project workflow produced real effects on the clean machine."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-NO-SIGNER",
+          "description": "If no signing credential or signed artifact exists, the run is recorded blocked with the exact missing prerequisite and is never recorded as passed."
+        },
+        {
+          "id": "RC-NO-CLEAN-VM",
+          "description": "If no clean machine is available, the run is recorded blocked; a developer machine with prior state is never substituted for it."
+        },
+        {
+          "id": "RC-INSTALL-FAILURE",
+          "description": "An install failure is recorded with the exact OS error and the machine is restored to baseline before any retry."
+        },
+        {
+          "id": "RC-TRUST-WARNING",
+          "description": "Any OS trust warning shown to the user is recorded verbatim and counts as a failed trust outcome, not a cosmetic note."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the installer artifact hash, the OS trust/identity verifier output, the installed file inventory and the first-run consent state. Signer subject names appear only as they are printed by the OS verifier; no certificate, private key, keychain entry, credential, or secret value is captured, copied, or named. Machine identifiers are reduced to a run-local pseudonym. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-RELEASE-UPDATE-ROLLBACK-MAC",
+      "requirement_ids": [
+        "COMP-DIST-005",
+        "COMP-DIST-006",
+        "COMP-SCOPE-GAP-03"
+      ],
+      "configuration_ids": [
+        "CFG-MAC15-ARM64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Start from the installed signed candidate on the clean macOS machine and record the installed version, the binary SHA-256 and the update-descriptor contents.",
+        "Publish the newer signed candidate to the update channel the installed product is configured to read, and record its version, hash and descriptor.",
+        "Trigger the update from the ordinary user path and record the helper process id and each progress state it reports.",
+        "Let the update complete and the product restart; record the version and health acknowledgement the restarted product reports.",
+        "From the host, compare the installed binary SHA-256 with the newer candidate hash and confirm the backup of the previous version exists.",
+        "Trigger a forced failure of the next update by supplying an artifact whose hash does not match its descriptor.",
+        "Confirm the update is refused before any swap and the installed binary is still the current version.",
+        "Trigger an update and interrupt it mid-swap by terminating the helper; confirm the rollback restores the previous binary and the product still launches.",
+        "Record the final installed version and binary hash from the host and confirm they match the restored backup."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-BINARY-HASH",
+          "description": "A host SHA-256 of the installed binary equals the newer candidate hash after a successful update and the previous candidate hash after rollback."
+        },
+        {
+          "id": "OR-HELPER-PID",
+          "description": "A host process listing shows the separately packaged update helper running during the swap and exiting afterwards."
+        },
+        {
+          "id": "OR-BACKUP-PRESENT",
+          "description": "A host directory listing shows the backup of the previous version present before the swap and used during rollback."
+        },
+        {
+          "id": "OR-VERSION-REPORT",
+          "description": "The version the restarted product reports equals the version recorded in the candidate manifest for the installed binary."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-USER-CANCEL",
+          "description": "Cancelling the update before the swap leaves the installed binary hash unchanged and the product usable."
+        },
+        {
+          "id": "RC-BAD-HASH",
+          "description": "An artifact whose hash or signature does not match its descriptor is refused before the swap and the installed binary is unchanged."
+        },
+        {
+          "id": "RC-INTERRUPTED-SWAP",
+          "description": "Terminating the helper mid-swap results in a restored previous binary and a product that still launches."
+        },
+        {
+          "id": "RC-CRASH-DURING-UPDATE",
+          "description": "A crash during the update leaves either the previous or the new complete binary in place, never a truncated one; the host hash proves which."
+        },
+        {
+          "id": "RC-NO-FEED",
+          "description": "If no signed artifact or update feed is available, the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the update descriptor, both artifact hashes, the helper log, the restart acknowledgement and the restored backup inventory. Update-feed URLs are recorded as host plus path with any query string and token removed. No signing credential, feed credential, or machine certificate is captured or named. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-RELEASE-CRASH-PRIVACY-MAC",
+      "requirement_ids": [
+        "COMP-DIST-008",
+        "COMP-PRES-004",
+        "COMP-SCOPE-GAP-04",
+        "COMP-SCOPE-GAP-10"
+      ],
+      "configuration_ids": [
+        "CFG-MAC15-ARM64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Start the installed signed candidate on the clean macOS machine with crash reporting consent off, and record the consent state from the host-readable configuration.",
+        "Open a project file, type an unsaved line containing a synthetic Unicode marker and a synthetic secret-shaped token, and record the on-disk bytes before the crash.",
+        "Force a crash using the OS fault facility rather than an in-product test hook, and record the fault identifier the OS assigns.",
+        "Confirm from the host that no crash payload was written or queued for upload while consent is off.",
+        "Restart the product and confirm the unsaved Unicode marker is offered for recovery and the on-disk file is still the pre-crash bytes.",
+        "Turn crash reporting consent on, record the purpose, retention and destination the product displays, and force a second crash.",
+        "Restart, export the consented diagnostic bundle to a host path, and inspect every byte of it.",
+        "Confirm the bundle contains only metadata: no editor text, no terminal transcript, no prompt, no secret-shaped token and no unredacted file path.",
+        "Delete the consented data through the product, record the deletion receipt, and confirm from the host that the spooled payload is gone."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-OS-FAULT",
+          "description": "The OS fault facility records the crash with its own identifier, proving the crash was real rather than an in-product simulation."
+        },
+        {
+          "id": "OR-NO-PAYLOAD-CONSENT-OFF",
+          "description": "A host listing of the spool and upload directories shows no crash payload written or queued while consent was off."
+        },
+        {
+          "id": "OR-BUNDLE-CONTENT",
+          "description": "A host byte-level inspection of the exported bundle finds none of the synthetic Unicode marker, the synthetic secret token, the terminal transcript or an unredacted absolute path."
+        },
+        {
+          "id": "OR-DISK-PRECRASH",
+          "description": "A host read of the project file after the crash shows the pre-crash bytes, so the unsaved text was never partially written."
+        },
+        {
+          "id": "OR-DELETION",
+          "description": "After the deletion a host listing shows the spooled payload absent and the receipt identifier matches what the product displayed."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-CONSENT-OFF",
+          "description": "With consent off the crash produces no payload at all; the presence of any payload fails the run."
+        },
+        {
+          "id": "RC-DIRTY-RESTORE",
+          "description": "The unsaved Unicode marker is recoverable after restart, or its loss is reported truthfully rather than silently."
+        },
+        {
+          "id": "RC-RAW-LEAK",
+          "description": "Any editor text, terminal transcript, prompt or secret found in the bundle fails the run and is recorded as a defect; the bundle is then destroyed."
+        },
+        {
+          "id": "RC-FAULT-UNAVAILABLE",
+          "description": "If the OS fault facility is unavailable, the run is recorded blocked with the exact missing prerequisite; an in-product crash hook is never substituted for it."
+        },
+        {
+          "id": "RC-DELETE-FAILURE",
+          "description": "A failed deletion is reported with the retained data still accounted for, and no deletion receipt is issued."
+        }
+      ],
+      "sensitive_artifact_policy": "Strictest policy. Capture the crash metadata record, the consent state before and after, the export payload and the deletion receipt. The unsaved buffer used for the run contains only a synthetic Unicode marker, and the exported payload is inspected byte by byte to confirm it contains no editor text, terminal transcript, prompt, file path beyond the redacted workspace root, or secret-shaped string; a payload that fails that inspection is destroyed and the run recorded as failed. With consent off the expected payload is empty and nothing is retained. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate and honour the deletion receipt."
+    },
+    {
+      "id": "SC-RELEASE-CLEAN-INSTALL-LINUX",
+      "requirement_ids": [
+        "COMP-DIST-003",
+        "COMP-DIST-007",
+        "COMP-SCOPE-GAP-02"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Prepare a clean Linux machine with no prior Legion installation and record its baseline installed-application inventory.",
+        "Copy the signed stable artifact onto the machine and record its SHA-256.",
+        "Run the OS-native signature and trust verifier against the artifact from a host shell and record its full output.",
+        "Install the artifact through the ordinary user path and record every trust or warning dialog exactly as shown.",
+        "Record the installed file inventory and compare it against the baseline.",
+        "Launch the installed product, complete first run including the privacy and provider consent screens, and record the resulting consent state.",
+        "Open a real project, edit a file, save it, and run one build or test command.",
+        "Read the edited file and the build or test output from the host and confirm the ordinary workflow succeeded.",
+        "Uninstall the product and compare the resulting inventory against the baseline to confirm the removal is complete and leaves no broken state."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-OS-VERIFIER",
+          "description": "The Linux native signature and trust verifier, run from a host shell, reports the artifact as validly signed and trusted; its exact output is retained."
+        },
+        {
+          "id": "OR-ARTIFACT-HASH",
+          "description": "The installed artifact SHA-256 equals the hash recorded in the candidate manifest for this configuration."
+        },
+        {
+          "id": "OR-INSTALL-INVENTORY",
+          "description": "A host diff of the installed-application and filesystem inventory before and after shows exactly the expected install and, after uninstall, a return to the baseline."
+        },
+        {
+          "id": "OR-PROJECT-EFFECT",
+          "description": "A host read of the edited file and the build or test output shows the ordinary project workflow produced real effects on the clean machine."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-NO-SIGNER",
+          "description": "If no signing credential or signed artifact exists, the run is recorded blocked with the exact missing prerequisite and is never recorded as passed."
+        },
+        {
+          "id": "RC-NO-CLEAN-VM",
+          "description": "If no clean machine is available, the run is recorded blocked; a developer machine with prior state is never substituted for it."
+        },
+        {
+          "id": "RC-INSTALL-FAILURE",
+          "description": "An install failure is recorded with the exact OS error and the machine is restored to baseline before any retry."
+        },
+        {
+          "id": "RC-TRUST-WARNING",
+          "description": "Any OS trust warning shown to the user is recorded verbatim and counts as a failed trust outcome, not a cosmetic note."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the installer artifact hash, the OS trust/identity verifier output, the installed file inventory and the first-run consent state. Signer subject names appear only as they are printed by the OS verifier; no certificate, private key, keychain entry, credential, or secret value is captured, copied, or named. Machine identifiers are reduced to a run-local pseudonym. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-RELEASE-UPDATE-ROLLBACK-LINUX",
+      "requirement_ids": [
+        "COMP-DIST-005",
+        "COMP-DIST-006",
+        "COMP-SCOPE-GAP-03"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Start from the installed signed candidate on the clean Linux machine and record the installed version, the binary SHA-256 and the update-descriptor contents.",
+        "Publish the newer signed candidate to the update channel the installed product is configured to read, and record its version, hash and descriptor.",
+        "Trigger the update from the ordinary user path and record the helper process id and each progress state it reports.",
+        "Let the update complete and the product restart; record the version and health acknowledgement the restarted product reports.",
+        "From the host, compare the installed binary SHA-256 with the newer candidate hash and confirm the backup of the previous version exists.",
+        "Trigger a forced failure of the next update by supplying an artifact whose hash does not match its descriptor.",
+        "Confirm the update is refused before any swap and the installed binary is still the current version.",
+        "Trigger an update and interrupt it mid-swap by terminating the helper; confirm the rollback restores the previous binary and the product still launches.",
+        "Record the final installed version and binary hash from the host and confirm they match the restored backup."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-BINARY-HASH",
+          "description": "A host SHA-256 of the installed binary equals the newer candidate hash after a successful update and the previous candidate hash after rollback."
+        },
+        {
+          "id": "OR-HELPER-PID",
+          "description": "A host process listing shows the separately packaged update helper running during the swap and exiting afterwards."
+        },
+        {
+          "id": "OR-BACKUP-PRESENT",
+          "description": "A host directory listing shows the backup of the previous version present before the swap and used during rollback."
+        },
+        {
+          "id": "OR-VERSION-REPORT",
+          "description": "The version the restarted product reports equals the version recorded in the candidate manifest for the installed binary."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-USER-CANCEL",
+          "description": "Cancelling the update before the swap leaves the installed binary hash unchanged and the product usable."
+        },
+        {
+          "id": "RC-BAD-HASH",
+          "description": "An artifact whose hash or signature does not match its descriptor is refused before the swap and the installed binary is unchanged."
+        },
+        {
+          "id": "RC-INTERRUPTED-SWAP",
+          "description": "Terminating the helper mid-swap results in a restored previous binary and a product that still launches."
+        },
+        {
+          "id": "RC-CRASH-DURING-UPDATE",
+          "description": "A crash during the update leaves either the previous or the new complete binary in place, never a truncated one; the host hash proves which."
+        },
+        {
+          "id": "RC-NO-FEED",
+          "description": "If no signed artifact or update feed is available, the run is recorded blocked with the exact missing prerequisite."
+        }
+      ],
+      "sensitive_artifact_policy": "Strict policy. Capture the update descriptor, both artifact hashes, the helper log, the restart acknowledgement and the restored backup inventory. Update-feed URLs are recorded as host plus path with any query string and token removed. No signing credential, feed credential, or machine certificate is captured or named. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-RELEASE-CRASH-PRIVACY-LINUX",
+      "requirement_ids": [
+        "COMP-DIST-008",
+        "COMP-PRES-004",
+        "COMP-SCOPE-GAP-04",
+        "COMP-SCOPE-GAP-10"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-STABLE-SIGNED"
+      ],
+      "steps": [
+        "Start the installed signed candidate on the clean Linux machine with crash reporting consent off, and record the consent state from the host-readable configuration.",
+        "Open a project file, type an unsaved line containing a synthetic Unicode marker and a synthetic secret-shaped token, and record the on-disk bytes before the crash.",
+        "Force a crash using the OS fault facility rather than an in-product test hook, and record the fault identifier the OS assigns.",
+        "Confirm from the host that no crash payload was written or queued for upload while consent is off.",
+        "Restart the product and confirm the unsaved Unicode marker is offered for recovery and the on-disk file is still the pre-crash bytes.",
+        "Turn crash reporting consent on, record the purpose, retention and destination the product displays, and force a second crash.",
+        "Restart, export the consented diagnostic bundle to a host path, and inspect every byte of it.",
+        "Confirm the bundle contains only metadata: no editor text, no terminal transcript, no prompt, no secret-shaped token and no unredacted file path.",
+        "Delete the consented data through the product, record the deletion receipt, and confirm from the host that the spooled payload is gone."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-OS-FAULT",
+          "description": "The OS fault facility records the crash with its own identifier, proving the crash was real rather than an in-product simulation."
+        },
+        {
+          "id": "OR-NO-PAYLOAD-CONSENT-OFF",
+          "description": "A host listing of the spool and upload directories shows no crash payload written or queued while consent was off."
+        },
+        {
+          "id": "OR-BUNDLE-CONTENT",
+          "description": "A host byte-level inspection of the exported bundle finds none of the synthetic Unicode marker, the synthetic secret token, the terminal transcript or an unredacted absolute path."
+        },
+        {
+          "id": "OR-DISK-PRECRASH",
+          "description": "A host read of the project file after the crash shows the pre-crash bytes, so the unsaved text was never partially written."
+        },
+        {
+          "id": "OR-DELETION",
+          "description": "After the deletion a host listing shows the spooled payload absent and the receipt identifier matches what the product displayed."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-CONSENT-OFF",
+          "description": "With consent off the crash produces no payload at all; the presence of any payload fails the run."
+        },
+        {
+          "id": "RC-DIRTY-RESTORE",
+          "description": "The unsaved Unicode marker is recoverable after restart, or its loss is reported truthfully rather than silently."
+        },
+        {
+          "id": "RC-RAW-LEAK",
+          "description": "Any editor text, terminal transcript, prompt or secret found in the bundle fails the run and is recorded as a defect; the bundle is then destroyed."
+        },
+        {
+          "id": "RC-FAULT-UNAVAILABLE",
+          "description": "If the OS fault facility is unavailable, the run is recorded blocked with the exact missing prerequisite; an in-product crash hook is never substituted for it."
+        },
+        {
+          "id": "RC-DELETE-FAILURE",
+          "description": "A failed deletion is reported with the retained data still accounted for, and no deletion receipt is issued."
+        }
+      ],
+      "sensitive_artifact_policy": "Strictest policy. Capture the crash metadata record, the consent state before and after, the export payload and the deletion receipt. The unsaved buffer used for the run contains only a synthetic Unicode marker, and the exported payload is inspected byte by byte to confirm it contains no editor text, terminal transcript, prompt, file path beyond the redacted workspace root, or secret-shaped string; a payload that fails that inspection is destroyed and the run recorded as failed. With consent off the expected payload is empty and nothing is retained. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate and honour the deletion receipt."
+    }
+  ]
+}
