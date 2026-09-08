@@ -347,3 +347,33 @@ the validator pass.
 The first gate attempt of this round was refuted and superseded. Its
 narration-only logs are retained in the local ledger and were deliberately not
 copied here, because they are not evidence of execution.
+
+## Round r03 — register binding, Python toolchain settings, formatter approval
+
+Three packets passed independent review. Component evidence only; every one of
+the 419 rows remains `acceptance: unassessed`.
+
+| Log | Result |
+| --- | --- |
+| `round-r03-gates-fmt.log` | `cargo fmt --all --check`, EXIT=0 |
+| `round-r03-gates-check-deps.log` | dependency policy, EXIT=0 |
+| `round-r03-gates-docs-hygiene.log` | documentation hygiene, EXIT=0 |
+| `round-r03-gates-claim-audit.log` | claim audit, EXIT=0 |
+| `round-r03-gates-extract-before-modify.log` | no chokepoint growth, EXIT=0 |
+| `round-r03-gates-regress-app.log` | `legion-app` lib, 446 passed, 0 failed |
+| `round-r03-gates-regress-desktop.log` | `legion-desktop` lib, 243 passed, 0 failed |
+| `round-r03-gates-clippy.log` | workspace all-targets `-D warnings`, EXIT=0 |
+| `round-r03-gates-register-verify.log` | `verify-completion-register`, **EXIT=1**, 144 structural issues |
+
+The register validator improves from 1579 issues to 144 and still exits 1,
+which is the honest state. The remainder is 77 rows the binding generator
+deliberately left unbound, each named with a reason code in its packet report,
+plus 67 pre-existing register defects that the first real validator run has now
+surfaced: product rows carrying `protected_product_ids`, `source_refs` pointing
+at directories rather than files, a product requirement owned by S6, and two
+non-bidirectional links. No row was accepted and no exemption was added.
+
+The round's first formatting gate failed with 13 mechanical rustfmt hunks in
+two files of the formatter-approval packet. `round-r03-fix-fmt.log` records the
+`cargo fmt --all` that repaired it, and every gate above is the re-run after
+that fix. The failed gate attempt is part of the record.
