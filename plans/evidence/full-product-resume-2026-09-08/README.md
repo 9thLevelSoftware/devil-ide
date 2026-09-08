@@ -302,3 +302,48 @@ GUI automation is resumed on this Windows host by owner instruction; macOS and
 Linux hosts remain unavailable and their rows stay blocked with the exact
 prerequisite strings recorded in `plans/completion/decisions.md` and in the local
 `blockers.json`.
+
+## Round r02 — bounded stdin, register validator, canonical registers
+
+Three packets passed independent review with no blocking findings. This is
+component evidence. It does not qualify packaged completion, native GUI
+behaviour, or any of the 419 requirements; every row remains `unassessed`.
+
+Packet checks:
+
+- `round-r02-test-packet-tests-s2-03a.log` and
+  `round-r02-test-packet-tests-s2-03a-rerun.log` record the first bounded-stdin
+  attempt, in which one test failed (`test result: FAILED. 0 passed; 1 failed`,
+  `EXIT=101`). They are retained because a failed attempt is part of the record.
+- `round-r02-retest-packet-retests-s2-03a-test.log` records the repaired run:
+  `cargo test -p legion-platform --test bounded_process -j 1 --no-fail-fast`,
+  18 passed, 0 failed, `EXIT=0`.
+- `round-r02-test-packet-tests-s0-03e.log` records the register-validator tests,
+  33 passed and 18 passed, 0 failed, `EXIT=0`.
+
+Round gates, re-run by the coordinator with full command provenance after the
+first attempt was refuted for producing logs that did not show a command had
+run:
+
+| Log | Result |
+| --- | --- |
+| `round-r02-gates-fmt.log` | `cargo fmt --all --check`, EXIT=0 |
+| `round-r02-gates-check-deps.log` | dependency policy, EXIT=0 |
+| `round-r02-gates-docs-hygiene.log` | documentation hygiene, EXIT=0 |
+| `round-r02-gates-claim-audit.log` | claim audit, EXIT=0 |
+| `round-r02-gates-extract-before-modify.log` | no chokepoint growth, EXIT=0 |
+| `round-r02-gates-regress-app.log` | `legion-app` lib, 439 passed, 0 failed |
+| `round-r02-gates-regress-desktop.log` | `legion-desktop` lib, 243 passed, 0 failed |
+| `round-r02-gates-clippy.log` | workspace all-targets `-D warnings`, EXIT=0 |
+| `round-r02-gates-register-verify.log` | `verify-completion-register`, **EXIT=1**, 1579 structural issues |
+
+The register validator exiting 1 is the truthful current state, not a
+regression. It now runs for the first time, and it reports that the 419
+requirement rows still carry empty `scenario_ids` and `configuration_ids`, so
+required rows have no scenario or configuration coverage. Binding those rows is
+the next register task. No row was accepted, and no exemption was added to make
+the validator pass.
+
+The first gate attempt of this round was refuted and superseded. Its
+narration-only logs are retained in the local ledger and were deliberately not
+copied here, because they are not evidence of execution.
