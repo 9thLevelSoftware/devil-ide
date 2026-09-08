@@ -518,6 +518,20 @@ enum Commands {
         #[arg(long, default_value = ".")]
         root: std::path::PathBuf,
     },
+    /// Validate the canonical completion register structure only.
+    ///
+    /// Runs the register structure validator by itself, so the register can be
+    /// checked before a candidate SHA and an evidence set exist. It takes no
+    /// candidate SHA and no release switch, and reaches no evidence, defect or
+    /// release validator. It establishes no evidence run, no acceptance status
+    /// and no implementation status: a clean result is a structural lint, never
+    /// a completion or acceptance verdict. Status counts are informational.
+    #[command(name = "verify-completion-register")]
+    VerifyCompletionRegister {
+        /// Workspace root that contains `plans/completion`. Defaults to cwd.
+        #[arg(long, default_value = ".")]
+        root: std::path::PathBuf,
+    },
     /// Report which DAP adapter binaries this machine has (P2.F3.T2).
     ///
     /// The dogfood tests for policy-gated adapter resolution were reporting
@@ -1053,6 +1067,9 @@ fn main() {
             release,
             root,
         } => xtask::completion_command::run_verify_completion_command(&root, &candidate, release),
+        Commands::VerifyCompletionRegister { root } => {
+            xtask::completion_command::run_verify_completion_register_command(&root)
+        }
         Commands::DapAdapterProbe {
             provenance,
             require,
