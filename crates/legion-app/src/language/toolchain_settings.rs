@@ -1,4 +1,5 @@
-//! Local TypeScript toolchain settings: configure, read, inspect state, clear.
+//! Local TypeScript and Python toolchain settings: configure, read, inspect
+//! state, clear.
 //!
 //! Moved verbatim out of `lib.rs` for the chokepoint budget (cross-cutting
 //! rule 1). Nothing here changed in the move: the enum, the four inherent
@@ -6,6 +7,54 @@
 //! lived in `lib.rs`, and `LanguageToolchainConfigurationState` is re-exported
 //! from the crate root so `legion_app::LanguageToolchainConfigurationState`
 //! keeps resolving.
+//!
+//! # Why the Python interpreter path is explicit
+//!
+//! Nothing in this module resolves an executable through `PATH`, and
+//! [`AppComposition::configure_python_toolchain`] refuses a bare executable
+//! name before it touches the filesystem, the policy store, or any process.
+//! That refusal is the fix for a recorded defect, not a style preference: with
+//! no explicit interpreter a Pyright child inherits `PATH`, and on the Windows
+//! host in the ledger the first `python.exe` on `PATH` is the WindowsApps
+//! `AppExecLink` stub rather than an interpreter.
+//!
+//! Pyright itself will not accept a bare name either. In the pinned 1.1.400
+//! bundle (`.superpowers/sdd/2026-09-04-full-product-completion/`
+//! `python-lsp-probe/cache/pyright-1.1.400/package/dist/pyright-internal.js`)
+//! `isPythonBinary` is `(e) => "python" === e.trim() || "python3" === e.trim()`
+//! and a `pythonPath` matching it is discarded, after which Pyright falls back
+//! to spawning `python` itself.
+//!
+//! # Pyright configuration payload
+//!
+//! [`pyright_initialization_options`] is pure: settings in, JSON out, and
+//! [`AppComposition::pyright_configuration_payload`] is the reachable accessor
+//! that feeds it the configured settings (returning `None` when there are
+//! none). Neither starts a process or grants anything. The key set was read out
+//! of that same pinned Pyright 1.1.400 bundle, not guessed:
+//!
+//! - `diagnosticMode` and `disablePullDiagnostics` are the **only** two keys
+//!   Pyright 1.1.400 reads out of `initializationOptions`. `initializationOptions`
+//!   appears exactly once in the whole bundle, in `LanguageServerBase.initialize`,
+//!   and the object it binds is read only as `?.diagnosticMode` and
+//!   `?.disablePullDiagnostics`. `isOpenFilesOnly` treats every value other than
+//!   `"workspace"` as open-files-only, so `"openFilesOnly"` is the explicit form
+//!   of the default.
+//! - `settings.python.pythonPath` is the absolute canonical interpreter path.
+//!   Pyright resolves the interpreter through
+//!   `getConfiguration(workspaceRootUri, "python").pythonPath`, which is answered
+//!   either by a `workspace/configuration` response or, when the client declares
+//!   no configuration capability, out of `defaultClientConfig` — which Pyright
+//!   assigns from the `settings` member of `workspace/didChangeConfiguration`.
+//!   The nested `settings` object here is therefore exactly the payload a caller
+//!   replays on that notification, and `settings.python` is exactly the answer to
+//!   a `workspace/configuration` request for section `python`. Pyright 1.1.400
+//!   does **not** read `pythonPath` out of `initializationOptions`; carrying it
+//!   in this object is a convenience for the caller, and this comment says so
+//!   rather than implying the interpreter arrives at initialize time.
+//!
+//! No Pyright process is started from this module and none was started to
+//! produce this payload. The shape is source evidence against a pinned bundle.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -13,7 +62,7 @@ use std::path::{Path, PathBuf};
 use crate::{AppComposition, AppCompositionError, TypeScriptBundleStartup};
 use legion_protocol::{
     CanonicalPath, LanguageServerId, LanguageToolchainSettingsRecord, LanguageToolingStatusKind,
-    ProtocolError, TypeScriptToolchainSettings, WorkspaceTrustState,
+    ProtocolError, PythonToolchainSettings, TypeScriptToolchainSettings, WorkspaceTrustState,
 };
 
 #[cfg(test)]
@@ -274,5 +323,294 @@ impl AppComposition {
                 let _ = self.language_startup_authority.revoke_exact_binary(&node);
             }
         }
+    }
+
+    /// Configure the operator-selected local Python toolchain for the active
+    /// trusted workspace.
+    ///
+    /// Both arguments must be explicit paths. A bare executable name is
+    /// refused before any filesystem, policy-store, or process effect: this
+    /// method never performs `PATH` discovery, and there is no fallback that
+    /// reintroduces it.
+    ///
+    /// Like the TypeScript path, this records canonical input metadata and one
+    /// exact-binary allowance per executable. It is not a capability decision,
+    /// not a receipt, and not permission to spawn anything; nothing here starts
+    /// an interpreter, a formatter, or a language server.
+    pub fn configure_python_toolchain(
+        &mut self,
+        interpreter_executable: impl AsRef<Path>,
+        formatter_executable: impl AsRef<Path>,
+    ) -> Result<(), AppCompositionError> {
+        if self.active_documents.workspace_id().is_none() {
+            return Err(AppCompositionError::WorkspaceNotOpen);
+        }
+        if self.active_documents.active_workspace_trust != Some(WorkspaceTrustState::Trusted) {
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_workspace_untrusted".to_string(),
+                message: "Python toolchains require a trusted workspace".to_string(),
+            }));
+        }
+
+        // Validate every input before changing the policy store or replacing
+        // the existing configuration, so an invalid second path is atomic.
+        let interpreter = explicit_canonical_executable_path(
+            interpreter_executable.as_ref(),
+            "Python interpreter",
+        )?;
+        let formatter =
+            explicit_canonical_executable_path(formatter_executable.as_ref(), "Python formatter")?;
+
+        let previous = self.language_toolchain_settings.python.clone();
+        let interpreter_was_allowed = self.exact_binary_retained_elsewhere(&interpreter);
+        self.language_startup_authority
+            .allow_exact_binary(&interpreter)
+            .map_err(|error| {
+                AppCompositionError::Protocol(ProtocolError {
+                    code: "language_toolchain_python_interpreter_invalid".to_string(),
+                    message: error.to_string(),
+                })
+            })?;
+        if let Err(error) = self
+            .language_startup_authority
+            .allow_exact_binary(&formatter)
+        {
+            // The interpreter allowance is only rolled back when this call
+            // introduced it; a grant some other configuration already owned
+            // survives a failed formatter grant untouched.
+            if !interpreter_was_allowed {
+                let _ = self
+                    .language_startup_authority
+                    .revoke_exact_binary(&interpreter);
+            }
+            return Err(AppCompositionError::Protocol(ProtocolError {
+                code: "language_toolchain_python_formatter_invalid".to_string(),
+                message: error.to_string(),
+            }));
+        }
+
+        self.language_toolchain_settings.schema_version = 1;
+        self.language_toolchain_settings.python = Some(PythonToolchainSettings {
+            interpreter_executable: CanonicalPath(
+                interpreter
+                    .to_str()
+                    .expect("canonical interpreter path is UTF-8")
+                    .to_string(),
+            ),
+            formatter_executable: CanonicalPath(
+                formatter
+                    .to_str()
+                    .expect("canonical formatter path is UTF-8")
+                    .to_string(),
+            ),
+        });
+
+        if let Some(previous) = previous {
+            self.revoke_unshared_exact_binaries(&previous);
+        }
+        Ok(())
+    }
+
+    /// Clear the configured Python toolchain without deleting anything on disk
+    /// and without changing editor buffers or dirty state.
+    ///
+    /// Each replaced executable's allowance is revoked only when no other
+    /// configuration still holds that exact binary.
+    pub fn clear_python_toolchain(&mut self) {
+        let Some(previous) = self.language_toolchain_settings.python.take() else {
+            return;
+        };
+        self.revoke_unshared_exact_binaries(&previous);
+    }
+
+    /// Return the Pyright configuration payload built from the configured
+    /// Python toolchain, or `None` when no Python toolchain is configured.
+    ///
+    /// This is the reachable entry point a launch path reads;
+    /// [`pyright_initialization_options`] is the pure builder behind it. This
+    /// method only reads already recorded settings: it starts no process,
+    /// grants no allowance, and performs no `PATH` lookup, so calling it is not
+    /// a capability decision.
+    pub fn pyright_configuration_payload(&self) -> Option<serde_json::Value> {
+        let python = self.language_toolchain_settings.python.as_ref()?;
+        Some(pyright_initialization_options(python))
+    }
+
+    /// Revoke the allowances of a replaced Python configuration, skipping any
+    /// exact binary that a still-live configuration continues to hold.
+    ///
+    /// Call this only after `language_toolchain_settings.python` already holds
+    /// the replacement (or `None`), so the outgoing record cannot count as its
+    /// own retainer.
+    fn revoke_unshared_exact_binaries(&mut self, previous: &PythonToolchainSettings) {
+        for value in [
+            &previous.interpreter_executable,
+            &previous.formatter_executable,
+        ] {
+            let path = PathBuf::from(&value.0);
+            if !self.exact_binary_retained_elsewhere(&path) {
+                let _ = self.language_startup_authority.revoke_exact_binary(&path);
+            }
+        }
+    }
+
+    /// Whether any live language configuration still holds this exact binary.
+    fn exact_binary_retained_elsewhere(&self, path: &Path) -> bool {
+        let canonical = path.to_str().map(|value| CanonicalPath(value.to_string()));
+        if let Some(python) = self.language_toolchain_settings.python.as_ref()
+            && (canonical.as_ref() == Some(&python.interpreter_executable)
+                || canonical.as_ref() == Some(&python.formatter_executable))
+        {
+            return true;
+        }
+        if let Some(typescript) = self.language_toolchain_settings.typescript.as_ref()
+            && canonical.as_ref() == Some(&typescript.node_executable)
+        {
+            return true;
+        }
+        if self.typescript_node_approval.as_deref() == Some(path) {
+            return true;
+        }
+        self.language_server_configured_paths
+            .values()
+            .any(|value| value.as_path() == path)
+            || self
+                .language_server_local_downloads
+                .values()
+                .any(|config| config.node_path.as_path() == path)
+            || self
+                .language_server_downloaded
+                .values()
+                .any(|config| config.approved_node.canonical_path() == path)
+            || self
+                .typescript_bundles
+                .values()
+                .any(|config| config.node_path.as_path() == path)
+    }
+}
+
+/// Canonicalize one explicitly selected executable path.
+///
+/// A bare name with no directory component is refused first, with a distinct
+/// code, before `canonicalize` is called: `python` and `black` are exactly the
+/// inputs a `PATH` lookup would consume, and resolving them relative to the
+/// process working directory would be the same defect wearing a different hat.
+fn explicit_canonical_executable_path(
+    path: &Path,
+    label: &str,
+) -> Result<PathBuf, AppCompositionError> {
+    let bare_name = match path.parent() {
+        None => true,
+        Some(parent) => parent.as_os_str().is_empty(),
+    };
+    if bare_name {
+        let shown = path.display();
+        return Err(invalid_toolchain_input(
+            "language_toolchain_path_not_explicit",
+            format!("{label} is the bare name \"{shown}\"; give an explicit path"),
+        ));
+    }
+    let canonical = std::fs::canonicalize(path).map_err(|error| {
+        let shown = path.display();
+        invalid_toolchain_input(
+            "language_toolchain_input_invalid",
+            format!("{label} \"{shown}\" is invalid: {error}"),
+        )
+    })?;
+    if !canonical.is_file() {
+        let shown = canonical.display();
+        return Err(invalid_toolchain_input(
+            "language_toolchain_input_invalid",
+            format!("{label} \"{shown}\" must be a regular file"),
+        ));
+    }
+    if canonical.to_str().is_none() {
+        return Err(invalid_toolchain_input(
+            "language_toolchain_input_invalid",
+            format!("{label} path is not valid UTF-8"),
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Build one metadata-only refusal for a rejected toolchain input.
+fn invalid_toolchain_input(code: &str, message: String) -> AppCompositionError {
+    AppCompositionError::Protocol(ProtocolError {
+        code: code.to_string(),
+        message,
+    })
+}
+
+/// Build the Pyright `initializationOptions` object for a configured Python
+/// toolchain.
+///
+/// Pure: no filesystem, no process, no policy store. See the module docs for
+/// where each key comes from in the pinned Pyright 1.1.400 bundle and for why
+/// `pythonPath` is carried under `settings` rather than at the top level.
+pub fn pyright_initialization_options(python: &PythonToolchainSettings) -> serde_json::Value {
+    serde_json::json!({
+        "diagnosticMode": "openFilesOnly",
+        "disablePullDiagnostics": false,
+        "settings": {
+            "python": {
+                "pythonPath": python.interpreter_executable.0.as_str()
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pyright_initialization_options_carry_the_canonical_interpreter_path() {
+        let interpreter = if cfg!(windows) {
+            "C:\\python\\3.12\\python.exe"
+        } else {
+            "/opt/python/3.12/bin/python3.12"
+        };
+        let formatter = if cfg!(windows) {
+            "C:\\python\\3.12\\Scripts\\black.exe"
+        } else {
+            "/opt/python/3.12/bin/black"
+        };
+        let python = PythonToolchainSettings {
+            interpreter_executable: CanonicalPath(interpreter.to_string()),
+            formatter_executable: CanonicalPath(formatter.to_string()),
+        };
+
+        let options = pyright_initialization_options(&python);
+        let expected = serde_json::json!({
+            "diagnosticMode": "openFilesOnly",
+            "disablePullDiagnostics": false,
+            "settings": {
+                "python": {
+                    "pythonPath": interpreter
+                }
+            }
+        });
+        assert_eq!(
+            options, expected,
+            "the payload must be exactly the keys Pyright 1.1.400 reads, and the \
+             interpreter path must be the absolute canonical one"
+        );
+
+        let python_path = options["settings"]["python"]["pythonPath"]
+            .as_str()
+            .expect("pythonPath is a string");
+        assert!(
+            Path::new(python_path).is_absolute(),
+            "a relative or bare pythonPath would send Pyright back to PATH"
+        );
+        // Pyright's `isPythonBinary` discards exactly these two values and
+        // then spawns `python` itself, which is the recorded defect. A
+        // canonical path is never one of them; the assertions pin the reason
+        // the payload is shaped this way.
+        assert_ne!(python_path, "python");
+        assert_ne!(python_path, "python3");
+        // The formatter is deliberately absent: Pyright does not run one, and
+        // no key for it was found in the pinned bundle.
+        assert!(options["settings"]["python"].get("formatterPath").is_none());
     }
 }
