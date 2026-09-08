@@ -516,6 +516,115 @@ are component or crate-level integrated evidence and are recorded as such in
 packaged evidence, native GUI evidence, or product acceptance, and no acceptance
 value was set from any of them.
 
+### Round r05 additions (2026-09-08)
+
+Five prerequisites were added in round r05. `BLK-2026-09-08-01` and
+`BLK-2026-09-08-02` above are unchanged and are not re-numbered. The standing
+authority is unchanged: native GUI automation is resumed on this Windows host by
+owner instruction; macOS and Linux hosts remain unavailable and their rows stay
+blocked.
+
+#### BLK-2026-09-08-03 — external native input driver
+
+Prerequisite, exact: a Windows 11 x64 host with an interactive logged-in desktop
+session and the external native input driver installed at
+`tools/native-input-driver/legion-input-driver.exe`, able to inject OS-level
+keyboard, pointer, text, clipboard and IME/CJK input into another process and to
+read that process's UI Automation text and clipboard state from outside it.
+
+That string is quoted from `PREREQUISITE_DRIVER_MISSING` at
+`xtask/src/native_product_acceptance.rs:75-82` with its `concat!` parts joined.
+It is source text, not a harness observation: nothing reports that the harness
+emitted it, because the harness never ran.
+
+`tools/` does not exist in this worktree at all. Discovery gates before the
+harness's own session handshake, so `run_native_product_acceptance` never
+reached the `--probe-session` step that answers the interactive-session question
+by reading `interactive_session = true` out of `driver_session.toml`. No stub
+driver was written and no `run.json` was produced. Affects packet
+`s1-02b-native-acceptance-run`.
+
+#### BLK-2026-09-08-04 — packaged native product on this Windows host
+
+Prerequisite, exact: a Windows 11 x64 host with the packaged native Legion
+product installed into the package directory this command was given, containing
+the product executable, so the harness can launch the packaged product as a
+subprocess rather than a development build.
+
+`target/native-input-acceptance/package/legion-desktop.exe` is absent.
+`target/debug/legion-desktop.exe` exists and was deliberately not copied there:
+ADR-0056's subject is an owner-installed package the harness must not build, and
+staging a development build in the package directory would make a run blocked on
+a missing driver look as though it had a product to drive. Affects packet
+`s1-02b-native-acceptance-run`.
+
+#### BLK-2026-09-08-05 — native Node runtime and retained TypeScript fixtures
+
+Prerequisite, exact: a native Node runtime at or above 22.22.2 approved on this
+host plus the retained TypeScript fixtures, so that
+`cargo test -p legion-app --test typescript_app_startup -- --ignored` can
+execute.
+
+All six tests in `crates/legion-app/tests/typescript_app_startup.rs` carry
+`#[ignore = "opt-in native Node + retained TypeScript fixtures"]`, and the four
+in `python_app_startup.rs` are likewise ignored. `#[ignore]` is a compile-time
+attribute; both targets compiled and executed nothing in
+`plans/evidence/full-product-resume-2026-09-08/round-r05-test-s2-01b-blast-radius-app.log`.
+The TypeScript descriptor pinned by packet `s2-01b-typescript-registry-pin` has
+therefore launched no server, and the TypeScript/JavaScript live workflow has no
+execution evidence on this host. This is an absence of evidence, not a pass and
+not a skip. Affects `COMP-LANG-001`, `COMP-LANG-002` and `COMP-LANG-009`, whose
+`implementation` values stay `partial` and whose `acceptance` values stay
+`unassessed`.
+
+#### BLK-2026-09-08-06 — owner-selected TypeScript and JavaScript releases
+
+Prerequisite, exact: a real TypeScript and JavaScript language-server, browser
+and debug-adapter setup with owner-selected releases.
+
+The tier-two registry can now name a pinned artifact, but which releases are
+approved is an owner selection, not an agent one. Until the owner selects them,
+the TypeScript and JavaScript live workflow, browser session and debug-adapter
+rows have no configuration to run against. Affects packet
+`s2-01b-typescript-registry-pin`.
+
+#### BLK-2026-09-08-07 — approved tailwindcss-language-server artifact
+
+Prerequisite, exact: an approved `tailwindcss-language-server` release artifact
+with a published version and SHA-256, so registry entry 103 can be pinned
+instead of resolving by bare name from PATH.
+
+Entry 103 was left resolving by bare name because no approved release artifact
+with a published version and digest exists to pin it to. Inventing a version or
+a digest would be a fabricated pin, so the entry stays unpinned and visibly so.
+Affects packet `s2-01b-typescript-registry-pin`.
+
+### Round r05 register effect
+
+Round r05 applied three reviewer-proposed implementation transitions for the one
+passed packet `s2-01b-typescript-registry-pin`: `COMP-LANG-001`, `COMP-LANG-002`
+and `COMP-LANG-009` to `partial`. All three rows already read `partial`, so
+`plans/completion/requirements.json` is byte-identical before and after: 419
+rows, 143 implemented / 233 partial / 43 absent, all 419 `acceptance` values
+`unassessed`. No `owner_approval_ref` value exists anywhere in the register, so
+there is still no ratified cell on this date, provisional or otherwise.
+
+The round's nineteen logs are recorded in
+`plans/evidence/full-product-resume-2026-09-08/README.md` with one line each
+giving the exact command, the exit code and the classification. Eighteen exit 0.
+The one non-zero is `round-r05-test-s0-05c-verify-completion-register.log` at
+exit 1, which belongs to the rejected and reverted packet `s0-05c-residue-coverage`
+and describes a working tree that no longer exists; the committed tree's last
+measured value remains the 78 structural issues of round r04. The whole set is
+component evidence with four crate-level integrated test targets. None of it is
+packaged evidence, native GUI evidence, or product acceptance, and no
+`acceptance` value was set from any of it.
+
+`plans/completion/dependencies.json` still describes registry entry 104 as
+pointing at `registry.example.invalid`. That has been stale since packet
+`s2-01a`, was correctly reported by this round's reviewer and was not fixed. It
+is record-owned and is carried forward as an open repair, not as a resolved item.
+
 ## 2026-09-08 provisional register ratification
 
 ### What this section ratifies, and what it does not

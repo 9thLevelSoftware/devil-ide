@@ -412,3 +412,72 @@ The round's gate lane initially reported blocked, not failed, because an
 unrelated `cargo test --workspace --locked` from another project was running on
 this host. The gates above were re-run by the coordinator at `-j 1` with 10.7 GB
 free, which is the mitigation the serialized-Cargo ruling prescribes.
+
+## Round r05 — TypeScript registry pin; residue coverage rejected
+
+One packet passed independent review and was committed
+(`s2-01b-typescript-registry-pin`). One packet, `s0-05c-residue-coverage`, was
+rejected at review and reverted; its logs are retained below because they were
+produced, not because they support anything. A third packet,
+`s1-02b-native-acceptance-run`, produced no cargo log at all: it was blocked
+before any command could run.
+
+**Classification for every log in this section: component evidence, with four
+crate-level integrated test targets. Not packaged evidence, not native GUI
+evidence, not product acceptance.** No `acceptance` value in
+`plans/completion/requirements.json` was changed from any of these runs; all 419
+rows remain `acceptance: unassessed`.
+
+All nineteen logs were copied byte-identical from the gitignored ledger
+`.superpowers/sdd/2026-09-04-full-product-completion/`, SHA-256 verified after
+each copy.
+
+| Log | Command | Exit | Classification |
+| --- | --- | --- | --- |
+| `round-r05-check0-legion-lsp.log` | `cargo check -p legion-lsp --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r05-test-s2-01b-packet-tests.log` | `cargo test -p legion-lsp --test registry_contract -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 15 passed / 0 failed |
+| `round-r05-test-s2-01b-clippy.log` | `cargo clippy -p legion-lsp --all-targets -j 1 -- -D warnings` | 0 | component evidence — static lint only |
+| `round-r05-test-s2-01b-blast-radius-lsp.log` | `cargo test -p legion-lsp --test rust_analyzer_launch -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 1 passed / 0 failed |
+| `round-r05-test-s2-01b-blast-radius-app.log` | `cargo test -p legion-app --test javascript_adapter_selection --test typescript_app_startup --test python_app_startup -j 1 --no-fail-fast` | 0 | integrated evidence — 1 passed / 0 failed and **10 ignored, which did not run** (see below) |
+| `round-r05-test-round-fmt.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r05-test-s0-05c-packet-tests.log` | `cargo test -p xtask --test completion_command -j 1 --no-fail-fast` | 0 | integrated evidence for a **rejected and reverted** packet, 33 passed / 0 failed; supports nothing |
+| `round-r05-test-s0-05c-clippy.log` | `cargo clippy -p xtask --all-targets -j 1 -- -D warnings` | 0 | component evidence for a **rejected and reverted** packet |
+| `round-r05-test-s0-05c-verify-completion-register.log` | `cargo run -p xtask -j 1 -- verify-completion-register --root .` | **1** | register validator on the **reverted** tree, 35 structural issues; does not describe the committed tree (see below) |
+| `round-r05-fixtest1-fix1-tests-precondition.log` | `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='cargo.exe' or Name='rustc.exe'\" \| Select-Object ProcessId,Name,CreationDate,CommandLine \| Format-List; Get-Date"` | 0 | cargo-lane precondition observation — host state, not product evidence |
+| `round-r05-gates-01-revert-rejected.log` | `git status --porcelain -- plans/completion/scenarios.json plans/completion/requirements.json && ls -la .../s0-05c-residue-coverage-rejected.patch .../s0-05c-residue-coverage-rejected-newfiles/` | 0 | revert verification — housekeeping, not product evidence |
+| `round-r05-gates-02a-test-legion-app.log` | `cargo test -p legion-app --lib -j 1` | 0 | component evidence — regression guard, 447 passed / 0 failed |
+| `round-r05-gates-02b-test-legion-desktop.log` | `cargo test -p legion-desktop --lib -j 1` | 0 | component evidence — regression guard, 243 passed / 0 failed |
+| `round-r05-gates-03-clippy-workspace.log` | `cargo clippy --workspace --all-targets -j 1 -- -D warnings` | 0 | component evidence — workspace lint gate |
+| `round-r05-gates-04a-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r05-gates-04b-xtask-check-deps.log` | `cargo run -p xtask -- check-deps` | 0 | component evidence — fast gate, "dependency policy checks passed" |
+| `round-r05-gates-04c-xtask-docs-hygiene.log` | `cargo run -p xtask -- docs-hygiene` | 0 | component evidence — fast gate, "documentation hygiene checks passed" |
+| `round-r05-gates-04d-xtask-claim-audit.log` | `cargo run -p xtask -- claim-audit` | 0 | component evidence — fast gate, "claim audit passed" |
+| `round-r05-gates-04e-xtask-extract-before-modify.log` | `cargo run -p xtask -- extract-before-modify` | 0 | component evidence — fast gate, "no chokepoint file grew past its slack" |
+
+Every fast gate step exited 0. `round-r05-test-round-fmt.log` and
+`round-r05-gates-04a-fmt-check.log` are byte-identical
+(SHA-256 `8d1e140cf6ec861d9e2b3ba8410ce7d29b7abbe7cc16abc59a153f4597030a2a`)
+because `cargo fmt --all --check` prints nothing when it succeeds; both are kept
+so each lane's frame stands on its own.
+
+### The ten ignored tests in the blast-radius log did not run
+
+`round-r05-test-s2-01b-blast-radius-app.log` reports `0 passed; 0 failed; 6
+ignored` for `typescript_app_startup` and `0 passed; 0 failed; 4 ignored` for
+`python_app_startup`, each with the reason `opt-in native Node + retained
+TypeScript fixtures` / `opt-in native Node + retained Pyright fixture`. `#[ignore]`
+is a compile-time attribute; these targets compiled and executed nothing. The
+pinned TypeScript descriptor added this round has therefore launched no language
+server, and the TypeScript/JavaScript live workflow has no execution evidence
+here. This is an absence of evidence, not a pass and not a skip. Lifting it is
+recorded as an owner-blocked prerequisite in `plans/completion/decisions.md`.
+
+### The 35-issue register result is not the committed tree
+
+`round-r05-test-s0-05c-verify-completion-register.log` was produced while the
+rejected packet `s0-05c-residue-coverage` was still applied to the working tree.
+That work was reverted before any commit, so the 35 figure describes a tree that
+no longer exists. The committed tree's last measured value remains the 78
+structural issues recorded for round r04. No `verify-completion-register` run in
+this round measured the post-revert tree, and no register value was changed on
+the strength of the 35.
