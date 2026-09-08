@@ -1365,7 +1365,13 @@ impl AppComposition {
     /// The resulting proposal enters the `Previewed` state. Call
     /// [`approve_and_apply_rename_proposal`] to transition it through
     /// `Approved` → `Applied` (PKT-APPLY Task 2c).
-    fn ingest_lsp_write_side_result(
+    ///
+    /// `pub(crate)` because the external-formatter route in
+    /// `crate::language::external_formatter` lifts a whole-document
+    /// replacement into the same `{"changes": {uri: [TextEdit]}}` shape and
+    /// hands it here. That is the point: one translation, one preconditions
+    /// check, one proposal lifecycle, one `workspace/applyEdit` arbitration.
+    pub(crate) fn ingest_lsp_write_side_result(
         &mut self,
         buffer_id: BufferId,
         spec: LspWriteSideSpec,
@@ -2621,7 +2627,20 @@ impl AppComposition {
     ///
     /// The result becomes a reviewable proposal like every other write-side
     /// action; nothing here writes.
+    ///
+    /// # Precedence
+    ///
+    /// A buffer whose language has an explicitly configured external formatter
+    /// takes that route instead, because the operator selected that tool
+    /// deliberately and a language server's own formatting would silently
+    /// override the choice. `route_external_python_formatting` answers `false`
+    /// for every other buffer — a non-Python file, or a Python file with no
+    /// configured formatter — and the language-server request below then runs
+    /// exactly as it did before this route existed.
     pub fn issue_lsp_formatting_request(&mut self, buffer_id: BufferId) -> bool {
+        if self.route_external_python_formatting(buffer_id) {
+            return true;
+        }
         let event_context = self.next_event_context();
         self.issue_lsp_write_read(
             buffer_id,
@@ -3041,13 +3060,13 @@ impl AppComposition {
 /// proposal kind they are recorded as; the WorkspaceEdit → translate →
 /// validate → preview path is identical, and duplicating it once per action is
 /// how one of them quietly stops registering its proposal.
-struct LspWriteSideSpec {
-    proposal_kind: LanguageProposalKind,
-    source_kind: WorkspaceEditSourceKind,
-    title: String,
-    detail_tag: &'static str,
-    detail_extra: Vec<String>,
-    command: Option<(String, serde_json::Value)>,
+pub(crate) struct LspWriteSideSpec {
+    pub(crate) proposal_kind: LanguageProposalKind,
+    pub(crate) source_kind: WorkspaceEditSourceKind,
+    pub(crate) title: String,
+    pub(crate) detail_tag: &'static str,
+    pub(crate) detail_extra: Vec<String>,
+    pub(crate) command: Option<(String, serde_json::Value)>,
 }
 
 #[cfg(test)]

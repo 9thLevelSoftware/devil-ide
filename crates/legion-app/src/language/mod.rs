@@ -18,6 +18,15 @@ pub use formatter_approval::{
     FORMATTER_PROBE_TIMEOUT, FORMATTER_UNPROBEABLE_REASON_MAX_BYTES, FormatterApprovalError,
     FormatterApprovalRequest, FormatterProbe, FormatterProbeOutcome, approve_formatter_executable,
 };
+mod external_formatter;
+pub use external_formatter::{
+    EXTERNAL_FORMATTER_BROKER_PREREQUISITE, EXTERNAL_FORMATTER_DETAIL_TAG,
+    EXTERNAL_FORMATTER_UNPROBEABLE_REASON, ExternalFormatterBounds, ExternalFormatterError,
+    ExternalFormatterRun, ExternalFormattingAdmission, PYTHON_FORMATTER_EXPECTED_EXIT_CODE,
+    PYTHON_FORMATTER_MAX_DOCUMENT_BYTES, PYTHON_FORMATTER_STDERR_LIMIT,
+    PYTHON_FORMATTER_STDIN_ARGS, PYTHON_FORMATTER_STDOUT_LIMIT, PYTHON_FORMATTER_TIMEOUT,
+    run_external_formatter,
+};
 mod startup_authority;
 pub use startup_authority::{LanguageStartupAuthority, LanguageStartupContext};
 mod typescript_bundle;
