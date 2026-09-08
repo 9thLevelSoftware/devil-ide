@@ -2925,7 +2925,7 @@
           "identity": "P3.F1.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-APPLY-evidence.md",
           "identity": "evidence"
         },
         {
@@ -2969,7 +2969,7 @@
           "identity": "P3.F1.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-APPLY-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3013,7 +3013,7 @@
           "identity": "P3.F1.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-APPLY-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3057,7 +3057,7 @@
           "identity": "P3.F1.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-APPLY-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3101,7 +3101,7 @@
           "identity": "P3.F2.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-DIFF-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3145,7 +3145,7 @@
           "identity": "P3.F2.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-DIFF-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3189,7 +3189,7 @@
           "identity": "P3.F2.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-DIFF-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3233,7 +3233,7 @@
           "identity": "P3.F2.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-DIFF-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3277,7 +3277,7 @@
           "identity": "P3.F3.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CKPT-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3321,7 +3321,7 @@
           "identity": "P3.F3.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CKPT-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3365,7 +3365,7 @@
           "identity": "P3.F3.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CKPT-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3409,7 +3409,7 @@
           "identity": "P3.F3.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CKPT-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3453,7 +3453,7 @@
           "identity": "P3.F4.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RISK-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3490,7 +3490,7 @@
           "identity": "P3.F4.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RISK-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3534,7 +3534,7 @@
           "identity": "P3.F4.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RISK-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3578,7 +3578,7 @@
           "identity": "P3.F4.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RISK-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3622,7 +3622,7 @@
           "identity": "P4.F1.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-PROV-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3666,7 +3666,7 @@
           "identity": "P4.F1.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-PROV-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3710,7 +3710,7 @@
           "identity": "P4.F1.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-PROV-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3754,7 +3754,7 @@
           "identity": "P4.F1.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-PROV-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3791,7 +3791,7 @@
           "identity": "P4.F2.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CTX-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3835,7 +3835,7 @@
           "identity": "P4.F2.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CTX-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3879,7 +3879,7 @@
           "identity": "P4.F2.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CTX-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3923,7 +3923,7 @@
           "identity": "P4.F2.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-CTX-evidence.md",
           "identity": "evidence"
         },
         {
@@ -3967,7 +3967,7 @@
           "identity": "P4.F3.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RAIL-evidence.md",
           "identity": "evidence"
         },
         {
@@ -4011,7 +4011,7 @@
           "identity": "P4.F3.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RAIL-evidence.md",
           "identity": "evidence"
         },
         {
@@ -4055,7 +4055,7 @@
           "identity": "P4.F3.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RAIL-evidence.md",
           "identity": "evidence"
         },
         {
@@ -4099,7 +4099,7 @@
           "identity": "P4.F3.T4"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-RAIL-evidence.md",
           "identity": "evidence"
         },
         {
@@ -4143,7 +4143,7 @@
           "identity": "P4.F4.T1"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-INLINE-evidence.md",
           "identity": "evidence"
         },
         {
@@ -4187,7 +4187,7 @@
           "identity": "P4.F4.T2"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-INLINE-evidence.md",
           "identity": "evidence"
         },
         {
@@ -4231,7 +4231,7 @@
           "identity": "P4.F4.T3"
         },
         {
-          "path": "plans/evidence/production/M9/",
+          "path": "plans/evidence/production/M9/PKT-INLINE-evidence.md",
           "identity": "evidence"
         },
         {
@@ -13623,7 +13623,7 @@
         { "path": "crates/legion-platform/src/lib.rs", "identity": "OS-backed secret/keyring boundary" },
         { "path": "crates/legion-desktop/tests/provider_key_entry.rs", "identity": "credential entry and redacted state coverage" }
       ],
-      "legacy_ids": ["COMP-P4-F1-T2-1"], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-PROV-003",
@@ -13635,7 +13635,7 @@
         { "path": "crates/legion-ai/src/lib.rs", "identity": "ModelProvider capability and health contracts" },
         { "path": "crates/legion-ai-providers/tests/provider_activation.rs", "identity": "activation and capability declaration checks" }
       ],
-      "legacy_ids": ["COMP-P4-F1-T3-1"], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-PROV-004",
@@ -13659,7 +13659,7 @@
         { "path": "crates/legion-app/src/product_ai_policy.rs", "identity": "provider route and egress policy authority" },
         { "path": "crates/legion-security/src/lib.rs", "identity": "ai.provider.invoke capability gate" }
       ],
-      "legacy_ids": ["COMP-P4-F1-T1-1"], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-02", "owner_role": "luna_worker", "depends_on": [], "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-PROV-006",
@@ -14194,9 +14194,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P4-F3-T1-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14243,9 +14241,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P4-F3-T2-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14291,10 +14287,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P3-F2-T1-1",
-        "COMP-P3-F2-T2-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14339,9 +14332,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P3-F2-T1-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14386,9 +14377,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P4-F3-T3-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14435,12 +14424,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P3-F2-T1-1",
-        "COMP-P3-F2-T2-1",
-        "COMP-P3-F2-T3-1",
-        "COMP-P3-F2-T4-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14487,12 +14471,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-P3-F3-T1-1",
-        "COMP-P3-F3-T2-1",
-        "COMP-P3-F3-T3-1",
-        "COMP-P3-F3-T4-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14529,9 +14508,7 @@
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
-      "protected_product_ids": [
-        "COMP-P4-F3-T4-1"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14576,10 +14553,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": [
-        "COMP-PROV-011",
-        "COMP-CTX-010"
-      ],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -14614,7 +14588,7 @@
       "depends_on": ["COMP-P5-F2-T2-1", "COMP-P5-F2-T4-1"], "implementation": "partial", "acceptance": "unassessed",
       "scenario_ids": [
         "SC-AI-DELEGATE-SCOPED-TASK"
-      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": ["COMP-P5-F2-T2-1", "COMP-P5-F2-T4-1"], "defect_ids": []
+      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-13-03",
@@ -14631,7 +14605,7 @@
       "depends_on": ["COMP-PROV-004", "COMP-CTX-006", "COMP-P5-F3-T3-1"], "implementation": "partial", "acceptance": "unassessed",
       "scenario_ids": [
         "SC-AI-DELEGATE-SCOPED-TASK"
-      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": ["COMP-P5-F3-T3-1"], "defect_ids": []
+      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-13-04",
@@ -14682,7 +14656,7 @@
       "depends_on": ["COMP-P3-F2-T1-1", "COMP-P3-F2-T2-1", "COMP-P3-F2-T3-1", "COMP-P3-F2-T4-1", "COMP-SCOPE-FAMILY-13-05"], "implementation": "partial", "acceptance": "unassessed",
       "scenario_ids": [
         "SC-AI-DELEGATE-SCOPED-TASK"
-      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": ["COMP-P3-F2-T1-1", "COMP-P3-F2-T2-1", "COMP-P3-F2-T3-1", "COMP-P3-F2-T4-1"], "defect_ids": []
+      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-13-07",
@@ -14714,7 +14688,7 @@
       ],
       "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
       "depends_on": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T2-1", "COMP-P3-F3-T3-1", "COMP-P3-F3-T4-1", "COMP-SCOPE-FAMILY-13-06"], "implementation": "absent", "acceptance": "unassessed",
-      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T2-1", "COMP-P3-F3-T3-1", "COMP-P3-F3-T4-1"], "defect_ids": []
+      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-13-09",
@@ -14765,7 +14739,7 @@
       "depends_on": ["COMP-PROV-011", "COMP-CTX-010", "COMP-SCOPE-FAMILY-13-06", "COMP-SCOPE-FAMILY-13-08", "COMP-SCOPE-FAMILY-13-09"], "implementation": "absent", "acceptance": "unassessed",
       "scenario_ids": [
         "SC-AI-DELEGATE-CONTAINMENT-CLEANUP"
-      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": ["COMP-PROV-011", "COMP-CTX-010"], "defect_ids": []
+      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
 {
       "id": "COMP-SCOPE-FAMILY-14-01",
@@ -15673,7 +15647,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-P3-F1-T3-1", "COMP-P2-F2-T2-1", "COMP-P2-F3-T2-1"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15705,7 +15679,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T3-1", "COMP-PRES-001", "COMP-PRES-008"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15737,7 +15711,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-P3-F3-T4-1", "COMP-P5-F1-T2-1", "COMP-P5-F1-T4-1", "COMP-P9-F2-T2-1"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15770,7 +15744,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-PROV-005", "COMP-CTX-007", "COMP-CTX-008", "COMP-P1-F2-T1-1"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15782,9 +15756,7 @@
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "three-layer product acceptance and required failure classes" },
         { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "Stage 3 packaged native acceptance" },
         { "path": "docs/superpowers/plans/2026-09-04-completion-traceability.md", "identity": "P3 proposal acceptance and evidence rules" },
-        { "path": "plans/product-readiness-ledger.md", "identity": "readiness evidence and acceptance status" },
-        { "path": "crates/legion-app/tests", "identity": "app proposal and policy workflow tests" },
-        { "path": "crates/legion-desktop/tests", "identity": "desktop product workflow tests" }
+        { "path": "plans/product-readiness-ledger.md", "identity": "readiness evidence and acceptance status" }
       ],
       "legacy_ids": [],
       "stage": "S3",
@@ -15802,7 +15774,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-PROV-011", "COMP-CTX-010"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15859,7 +15831,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-005"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15889,7 +15861,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-005"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15919,7 +15891,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-TRUST-001", "COMP-SCOPE-GAP-02"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15950,7 +15922,7 @@
         "CFG-MAC15-X64-PRODUCT-JOURNEY",
         "CFG-WIN11-X64-PRODUCT-JOURNEY"
       ],
-      "protected_product_ids": ["COMP-TRUST-005", "COMP-P9-F2-T3-1"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -15972,7 +15944,7 @@
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
-      "protected_product_ids": ["COMP-TRUST-004", "COMP-TRUST-005"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -16017,7 +15989,7 @@
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
-      "protected_product_ids": ["COMP-TRUST-005"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -16039,7 +16011,7 @@
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
-      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-005"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -16061,7 +16033,7 @@
       "acceptance": "unassessed",
       "scenario_ids": [],
       "configuration_ids": [],
-      "protected_product_ids": ["COMP-TRUST-001", "COMP-TRUST-003", "COMP-PRES-008"],
+      "protected_product_ids": [],
       "defect_ids": []
     },
     {
@@ -16606,7 +16578,7 @@
         { "path": "crates/legion-desktop/tests/ime_smoke.rs", "identity": "IME smoke substrate" }
       ],
       "legacy_ids": [], "stage": "S1", "package_id": "S1-02", "owner_role": "luna_worker", "depends_on": ["COMP-PLAT-001", "COMP-EDIT-002", "COMP-EDIT-006", "COMP-EDIT-007", "COMP-EDIT-008"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-MANUAL-EDIT-INPUT-RECOVERY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-MANUAL-EDIT-INPUT-RECOVERY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": ["DEF-2026-09-05-01", "DEF-2026-09-05-02"]
     },
     {
       "id": "COMP-PLAT-003",
