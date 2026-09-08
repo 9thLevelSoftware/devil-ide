@@ -11,6 +11,13 @@ pub use runtime::{
     NODE_RUNTIME_PROBE_STREAM_LIMIT, NODE_RUNTIME_PROBE_TIMEOUT, NodeRuntimeApprovalError,
     NodeRuntimeApprovalRequest, approve_node_runtime,
 };
+mod formatter_approval;
+pub use formatter_approval::{
+    ApprovedFormatterExecutable, FORMATTER_FINGERPRINT_MAX_BYTES, FORMATTER_PROBE_ARG_MAX_BYTES,
+    FORMATTER_PROBE_CAPABILITY, FORMATTER_PROBE_MAX_ARGS, FORMATTER_PROBE_STREAM_LIMIT,
+    FORMATTER_PROBE_TIMEOUT, FORMATTER_UNPROBEABLE_REASON_MAX_BYTES, FormatterApprovalError,
+    FormatterApprovalRequest, FormatterProbe, FormatterProbeOutcome, approve_formatter_executable,
+};
 mod startup_authority;
 pub use startup_authority::{LanguageStartupAuthority, LanguageStartupContext};
 mod typescript_bundle;
