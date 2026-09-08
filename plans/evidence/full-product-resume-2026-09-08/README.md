@@ -377,3 +377,38 @@ The round's first formatting gate failed with 13 mechanical rustfmt hunks in
 two files of the formatter-approval packet. `round-r03-fix-fmt.log` records the
 `cargo fmt --all` that repaired it, and every gate above is the re-run after
 that fix. The failed gate attempt is part of the record.
+
+## Round r04 — register defect repair, Python formatter route, native harness
+
+Three packets passed independent review. Component evidence only; all 419 rows
+remain `acceptance: unassessed`.
+
+| Log | Result |
+| --- | --- |
+| `round-r04-retest-packet-retests-s0-01d-register-defect-repair.log` | xtask completion tests, 33 and 18 passed, 0 failed |
+| `round-r04-retest-packet-retests-s2-03d-python-formatter-proposal.log` | 12 passed, 0 failed |
+| `round-r04-retest-packet-retests-s1-02a-native-acceptance-harness.log` | 8 passed, 0 failed |
+| `round-r04-gates-fmt.log` | `cargo fmt --all --check`, EXIT=0 |
+| `round-r04-gates-check-deps.log` | dependency policy, EXIT=0 |
+| `round-r04-gates-docs-hygiene.log` | documentation hygiene, EXIT=0 |
+| `round-r04-gates-claim-audit.log` | claim audit, EXIT=0 |
+| `round-r04-gates-extract-before-modify.log` | no chokepoint growth, EXIT=0 |
+| `round-r04-gates-regress-app.log` | `legion-app` lib, 447 passed, 0 failed |
+| `round-r04-gates-regress-desktop.log` | `legion-desktop` lib, 243 passed, 0 failed |
+| `round-r04-gates-clippy.log` | workspace all-targets `-D warnings`, EXIT=0 |
+| `round-r04-gates-register-verify.log` | `verify-completion-register`, **EXIT=1**, 78 structural issues |
+
+The clippy log records two successive failures before the recorded pass: an
+`ok_or_else` holding a constant, then a constant assertion clippy wants as a
+`const` block. Both were repaired and the compile-time check that the Python
+formatter document bound stays inside the transport limit is preserved.
+
+`verify-completion-register` improves from 144 issues to 78 and still exits 1.
+The remainder is the 77 rows that cannot be bound to a scenario honestly and one
+product requirement owned by S6, which is a question about that row's `kind` and
+is left as an owner decision. No row was accepted and no exemption was added.
+
+The round's gate lane initially reported blocked, not failed, because an
+unrelated `cargo test --workspace --locked` from another project was running on
+this host. The gates above were re-run by the coordinator at `-j 1` with 10.7 GB
+free, which is the mitigation the serialized-Cargo ruling prescribes.
