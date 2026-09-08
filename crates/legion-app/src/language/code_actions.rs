@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::io;
 
-use crate::AppComposition;
+use crate::{AppComposition, language_id_for_path};
 use legion_protocol::{
     BufferId, BufferVersion, FileContentVersion, FileFingerprint, LanguageCodeActionProjection,
     LspCodeActionCandidate, LspCodeActionPayload, ProtocolTextRange, SnapshotId,
@@ -411,6 +411,43 @@ impl AppComposition {
                 character: range.end.character,
             },
         };
+        if organize_imports
+            && matches!(
+                language_id_for_path(&metadata.identity.canonical_path)
+                    .0
+                    .as_str(),
+                "typescript" | "typescriptreact" | "javascript" | "javascriptreact"
+            )
+            && self
+                .lsp_session
+                .supports_execute_command("_typescript.organizeImports")
+        {
+            let response_id = format!("app-organize:{}", uuid::Uuid::now_v7());
+            let action_id = format!("app-organize:{}", uuid::Uuid::now_v7());
+            let file = crate::uri_to_canonical_path(&crate::canonical_path_to_uri(
+                &metadata.identity.canonical_path.0,
+            ));
+            let raw_action = serde_json::json!({
+                "command": {
+                    "command": "_typescript.organizeImports",
+                    "arguments": [
+                        file,
+                        { "mode": "All", "skipDestructiveCodeActions": false }
+                    ]
+                }
+            });
+            return self
+                .issue_code_action_command(
+                    buffer_id,
+                    &response_id,
+                    &action_id,
+                    &raw_action,
+                    snapshot_id,
+                    workspace_id,
+                    legion_protocol::LanguageToolingOperationKind::OrganizeImportsProposal,
+                )
+                .is_ok();
+        }
         let old_operations: std::collections::HashSet<String> =
             self.pending_lsp_writes.keys().cloned().collect();
         if !self.issue_lsp_code_action_request(buffer_id, wire_range, organize_imports) {

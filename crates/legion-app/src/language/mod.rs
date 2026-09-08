@@ -46,12 +46,19 @@ pub use translate::{
 };
 
 mod code_action_commands;
+pub(crate) use code_action_commands::PendingLspCommandContext;
 mod code_action_diagnostics;
 mod code_actions;
+#[cfg(test)]
+#[path = "formatting_dispatch_tests.rs"]
+mod formatting_dispatch_tests;
 #[cfg(test)]
 #[path = "server_apply_edit_tests.rs"]
 mod server_apply_edit_tests;
 mod server_apply_edits;
+#[cfg(test)]
+#[path = "typescript_organize_tests.rs"]
+mod typescript_organize_tests;
 pub(crate) use server_apply_edits::ServerApplyEditAuthority;
 mod apply_edit_decision;
 pub(crate) use apply_edit_decision::{

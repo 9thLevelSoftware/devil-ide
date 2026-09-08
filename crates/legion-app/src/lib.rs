@@ -4484,6 +4484,35 @@ impl AppProposalCoordinator {
     fn preview_warnings(payload: &ProposalPayload) -> Vec<ProposalPreviewWarning> {
         match payload {
             ProposalPayload::Batch(payload) => payload.preview_warnings.clone(),
+            ProposalPayload::WorkspaceEdit(payload) => payload
+                .change_annotations
+                .iter()
+                .map(|annotation| {
+                    let description = annotation
+                        .description
+                        .as_deref()
+                        .filter(|description| !description.trim().is_empty())
+                        .unwrap_or("No additional description");
+                    let confirmation = if annotation.needs_confirmation {
+                        "Confirmation required."
+                    } else {
+                        "Confirmation not requested by the language server."
+                    };
+                    ProposalPreviewWarning {
+                        code: format!("lsp.change_annotation:{}", annotation.id),
+                        kind: ProposalPreviewWarningKind::ChangeAnnotation,
+                        message: format!(
+                            "{}: {} {} Affects {} target(s).",
+                            annotation.label,
+                            description,
+                            confirmation,
+                            annotation.targets.len()
+                        ),
+                        target_id: Some(annotation.id.clone()),
+                        redaction_hints: vec![RedactionHint::MetadataOnly],
+                    }
+                })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -14940,7 +14969,7 @@ pub struct AppComposition {
     /// Full contexts for command actions currently awaiting a server response.
     /// Keeping the complete context prevents an inbound applyEdit from being
     /// authorized solely by a recycled request-id string.
-    pending_code_action_contexts: HashMap<String, legion_protocol::LspOperationContext>,
+    pending_code_action_contexts: HashMap<String, crate::language::PendingLspCommandContext>,
     /// Arming instant, buffer, and position for the completion debounce (I1).
     lsp_ui_completion_debounce: Option<(Instant, BufferId, TextCoordinate)>,
     /// Count of completions seen at the last pre-sync; used for new-arrival detection (I1).
@@ -21024,19 +21053,23 @@ impl AppComposition {
                 ))
             }
             AppCommandRequest::RequestFormattingProposal { buffer_id } => {
-                self.issue_lsp_formatting_request(buffer_id);
+                if self.issue_lsp_formatting_request(buffer_id) {
+                    return Ok(AppCommandOutcome::language_tooling(
+                        self.language_tooling.projection(),
+                    ));
+                }
+                let Some(input) = self.language_request_input_for_failure(buffer_id) else {
+                    return Ok(AppCommandOutcome::language_tooling(
+                        self.language_tooling.projection(),
+                    ));
+                };
                 Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
+                    self.language_tooling.record_proposal_failure(
+                        &input,
                         LanguageProposalKind::Formatting,
-                        TextCoordinate {
-                            line: 0,
-                            character: 0,
-                            byte_offset: Some(0),
-                            utf16_offset: Some(0),
-                        },
-                        "format".to_string(),
-                    )?,
+                        "formatting unavailable until a live capable language server is ready"
+                            .to_string(),
+                    ),
                 ))
             }
             AppCommandRequest::RequestRenameProposal {
@@ -21044,18 +21077,22 @@ impl AppComposition {
                 position,
                 new_name,
             } => {
-                // Ask the language server too. Its answer arrives on a later
-                // drain as its own proposal; the index-backed one below returns
-                // now so the surface is never blank. Neither writes anything —
-                // both stop at Previewed.
-                self.issue_lsp_rename_request(buffer_id, position, new_name.clone());
+                if self.issue_lsp_rename_request(buffer_id, position, new_name.clone()) {
+                    return Ok(AppCommandOutcome::language_tooling(
+                        self.language_tooling.projection(),
+                    ));
+                }
+                let Some(input) = self.language_request_input_for_failure(buffer_id) else {
+                    return Ok(AppCommandOutcome::language_tooling(
+                        self.language_tooling.projection(),
+                    ));
+                };
                 Ok(AppCommandOutcome::language_tooling(
-                    self.run_language_proposal(
-                        buffer_id,
+                    self.language_tooling.record_proposal_failure(
+                        &input,
                         LanguageProposalKind::Rename,
-                        position,
-                        new_name,
-                    )?,
+                        self.lsp_rename_unavailable_message(buffer_id).to_string(),
+                    ),
                 ))
             }
             AppCommandRequest::RequestOrganizeImportsProposal { buffer_id } => Ok(
@@ -21063,18 +21100,11 @@ impl AppComposition {
             ),
             AppCommandRequest::RequestCodeActionProposal {
                 buffer_id,
-                action_id,
+                action_id: _,
             } => Ok(AppCommandOutcome::language_tooling(
-                self.run_language_proposal(
+                self.record_language_proposal_unavailable(
                     buffer_id,
                     LanguageProposalKind::CodeAction,
-                    TextCoordinate {
-                        line: 0,
-                        character: 0,
-                        byte_offset: Some(0),
-                        utf16_offset: Some(0),
-                    },
-                    action_id,
                 )?,
             )),
             AppCommandRequest::RequestCodeActions { buffer_id, range } => {

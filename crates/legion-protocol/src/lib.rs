@@ -4148,6 +4148,41 @@ pub struct WorkspaceTextEdit {
     pub preconditions: ProposalVersionPreconditions,
 }
 
+/// Review metadata associated with one or more entries in a workspace edit.
+///
+/// The identifier and text are untrusted human-review metadata. They do not
+/// authorize mutation or carry executable instructions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceEditChangeAnnotation {
+    /// LSP annotation identifier referenced by translated edit entries.
+    pub id: String,
+    /// Short reviewer-facing label.
+    pub label: String,
+    /// Optional reviewer-facing explanation.
+    pub description: Option<String>,
+    /// Whether the source requested explicit confirmation for this annotation.
+    pub needs_confirmation: bool,
+    /// Immutable indices into the containing payload's edit and operation arrays.
+    pub targets: Vec<WorkspaceEditAnnotationTarget>,
+}
+
+/// A workspace-edit entry associated with a change annotation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkspaceEditAnnotationTarget {
+    /// A text edit within a file edit, using payload-local indices.
+    TextEdit {
+        /// Index into [`WorkspaceEditProposalPayload::file_edits`].
+        file_edit_index: u32,
+        /// Index into the selected file edit's `EditBatch`.
+        edit_index: u32,
+    },
+    /// A file operation, using a payload-local index.
+    FileOperation {
+        /// Index into [`WorkspaceEditProposalPayload::file_operations`].
+        operation_index: u32,
+    },
+}
+
 /// File operation inside a proposal-ready workspace edit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkspaceFileOperation {
@@ -4189,6 +4224,9 @@ pub struct WorkspaceEditProposalPayload {
     pub file_edits: Vec<WorkspaceTextEdit>,
     /// File create/delete/rename operations.
     pub file_operations: Vec<WorkspaceFileOperation>,
+    /// LSP change annotations retained for reviewer-facing semantics.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub change_annotations: Vec<WorkspaceEditChangeAnnotation>,
     /// Capability required before any mutation may apply.
     pub required_capability: CapabilityId,
     /// Diagnostics explaining proposal translation decisions.
@@ -4623,6 +4661,8 @@ pub enum ProposalPreviewWarningKind {
     RawSourceRedacted,
     /// Runtime implementation is intentionally unsupported in this phase.
     UnsupportedRuntime,
+    /// LSP supplied change annotation requires reviewer attention.
+    ChangeAnnotation,
 }
 
 /// Bounded warning emitted during proposal preview.
@@ -17584,6 +17624,8 @@ pub enum LspContractValidationError {
     MissingPrecondition,
     /// Workspace edit did not include complete target coverage.
     IncompleteTargetCoverage,
+    /// Change annotation metadata or target associations were invalid.
+    InvalidChangeAnnotations,
     /// Workspace edit source was not an LSP edit-producing source.
     UnsupportedEditSource,
 }
@@ -17655,6 +17697,51 @@ pub fn convert_lsp_edit_to_workspace_proposal(
 pub fn validate_lsp_edit_proposal_contract(
     input: &LspEditProposalConversionInput,
 ) -> Result<(), LspContractValidationError> {
+    let mut annotation_ids = std::collections::HashSet::new();
+    let mut annotated_targets = std::collections::HashSet::new();
+    let mut annotation_bytes = 0usize;
+    if input.workspace_edit.change_annotations.len() > 256 {
+        return Err(LspContractValidationError::InvalidChangeAnnotations);
+    }
+    for annotation in &input.workspace_edit.change_annotations {
+        annotation_bytes = annotation_bytes
+            .saturating_add(annotation.id.len())
+            .saturating_add(annotation.label.len())
+            .saturating_add(annotation.description.as_ref().map_or(0, String::len));
+        if !annotation_ids.insert(&annotation.id)
+            || annotation.id.len() > 256
+            || annotation.label.len() > 1024
+            || annotation
+                .description
+                .as_ref()
+                .is_some_and(|text| text.len() > 8192)
+            || annotation_bytes > 64 * 1024
+        {
+            return Err(LspContractValidationError::InvalidChangeAnnotations);
+        }
+        for target in &annotation.targets {
+            let (identity, valid) = match target {
+                WorkspaceEditAnnotationTarget::TextEdit {
+                    file_edit_index,
+                    edit_index,
+                } => (
+                    (0, *file_edit_index, *edit_index),
+                    input
+                        .workspace_edit
+                        .file_edits
+                        .get(*file_edit_index as usize)
+                        .is_some_and(|file| (*edit_index as usize) < file.edits.edits.len()),
+                ),
+                WorkspaceEditAnnotationTarget::FileOperation { operation_index } => (
+                    (1, *operation_index, 0),
+                    (*operation_index as usize) < input.workspace_edit.file_operations.len(),
+                ),
+            };
+            if !valid || !annotated_targets.insert(identity) || annotated_targets.len() > 4096 {
+                return Err(LspContractValidationError::InvalidChangeAnnotations);
+            }
+        }
+    }
     if input.request.correlation_id.0 == 0 {
         return Err(LspContractValidationError::ZeroCorrelationId);
     }
