@@ -619,3 +619,165 @@ driver's blocked exit into a blocked harness status, **no `conformance-failed`
 artifact from this command may be entered into `plans/completion/defects.json`
 or into any requirement row**, because it would be blaming the product for a
 missing host prerequisite.
+
+## Round r07 — blocked-outcome propagation; final register closure; package staging instrument
+
+Three packets passed independent review with green tests:
+`s1-02d-blocked-outcome-propagation`, `s0-05e-final-register-closure` and
+`s1-02e-package-the-product` (the last after one fix pass). No packet was
+rejected and no packet's tests failed.
+
+**Classification for every log in this section: component evidence, with three
+crate-level integrated test targets and one PowerShell contract suite. Not
+packaged evidence, not native GUI evidence, not product acceptance.** No
+`acceptance` value in `plans/completion/requirements.json` was changed from any
+of these runs; all 419 rows remain `acceptance: unassessed`.
+
+The three integrated targets are `xtask --test native_product_acceptance`,
+`legion-input-driver --test driver_contract` and
+`xtask --test completion_command`. Each runs entirely in-process against
+fixtures and temp directories. The PowerShell suite
+`scripts/test-native-package-verifiers.ps1` runs against synthetic fixtures with
+no real installer, no `msiexec` and no product build. **No product window was
+opened, no OS-level input was injected into any process, `xtask
+native-product-acceptance` was not invoked, no MSI was built, and nothing was
+staged into `target/native-input-acceptance/package/`.**
+
+All nineteen logs were copied byte-identical from the gitignored ledger
+`.superpowers/sdd/2026-09-04-full-product-completion/`, SHA-256 verified after
+each copy.
+
+| Log | Command | Exit | Classification |
+| --- | --- | --- | --- |
+| `round-r07-check0-legion-input-driver.log` | `cargo check -p legion-input-driver --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r07-check0-xtask.log` | `cargo check -p xtask --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r07-test-s1-02d-xtask-native-product-acceptance.log` | `cargo test -p xtask --test native_product_acceptance -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 19 passed / 0 failed (10 in r06); harness outcome mapping against fixture driver results, no product launched |
+| `round-r07-test-s1-02d-legion-input-driver-driver-contract.log` | `cargo test -p legion-input-driver --test driver_contract -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 11 passed / 0 failed (8 in r06); asserts the driver's own exit and report contract, injects nothing |
+| `round-r07-test-s1-02d-clippy-legion-input-driver.log` | `cargo clippy -p legion-input-driver --all-targets -j 1 -- -D warnings` | 0 | component evidence — static lint only |
+| `round-r07-test-s1-02d-clippy-xtask.log` | `cargo clippy -p xtask --all-targets -j 1 -- -D warnings` | 0 | component evidence — static lint only |
+| `round-r07-test-s0-05e-xtask-completion-command.log` | `cargo test -p xtask --test completion_command -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 33 passed / 0 failed; synthetic registers in temp directories, **not** the repository register |
+| `round-r07-test-s1-02e-native-package-verifier-tests.log` | `pwsh -NoProfile -File scripts/test-native-package-verifiers.ps1` | 0 | integrated evidence — PowerShell contract suite, `passed=21 failed=0 skipped=0`; synthetic fixtures only, no installer, no `msiexec`, no product build |
+| `round-r07-test-round-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r07-fixtest1-stage-script-contract-tests.log` | `pwsh -NoProfile -File scripts/test-native-package-verifiers.ps1` | 0 | integrated evidence — fix-pass retest, `passed=21 failed=0 skipped=0` |
+| `round-r07-fixtest1-cargo-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fix-pass retest, silent on success |
+| `round-r07-gates-02a-test-legion-app.log` | `cargo test -p legion-app --lib -j 1` | 0 | component evidence — regression guard, 447 passed / 0 failed |
+| `round-r07-gates-02b-test-legion-desktop.log` | `cargo test -p legion-desktop --lib -j 1` | 0 | component evidence — regression guard, 243 passed / 0 failed |
+| `round-r07-gates-03-clippy-workspace.log` | `cargo clippy --workspace --all-targets -j 1 -- -D warnings` | 0 | component evidence — workspace lint gate |
+| `round-r07-gates-04a-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r07-gates-04b-xtask-check-deps.log` | `cargo run -p xtask -- check-deps` | 0 | component evidence — fast gate, "dependency policy checks passed" |
+| `round-r07-gates-04c-xtask-docs-hygiene.log` | `cargo run -p xtask -- docs-hygiene` | 0 | component evidence — fast gate, "documentation hygiene checks passed" |
+| `round-r07-gates-04d-xtask-claim-audit.log` | `cargo run -p xtask -- claim-audit` | 0 | component evidence — fast gate, "claim audit passed" |
+| `round-r07-gates-04e-xtask-extract-before-modify.log` | `cargo run -p xtask -- extract-before-modify` | 0 | component evidence — fast gate, "no chokepoint file grew past its slack" |
+
+**Every one of the nineteen logs ends `EXIT=0`.** Every fast gate step exited 0,
+read from the logs' own `EXIT=` frames: `cargo fmt --all --check` silent,
+`check-deps`, `docs-hygiene`, `claim-audit` and `extract-before-modify` each
+printing their pass line, and workspace `clippy` under `-D warnings` at 0. The
+workspace clippy log's only warning is the vendored `epaint` "falling back to
+f32" future-incompatibility, which is outside the workspace lint failure and
+unchanged from earlier rounds. Regression guards hold at 447 and 243 passed with
+0 failed, the same figures as r05 and r06.
+
+Three logs share SHA-256
+`8d1e140cf6ec861d9e2b3ba8410ce7d29b7abbe7cc16abc59a153f4597030a2a`
+(`round-r07-test-round-fmt-check.log`, `round-r07-fixtest1-cargo-fmt-check.log`,
+`round-r07-gates-04a-fmt-check.log`) because `cargo fmt --all --check` prints
+nothing when it succeeds. Each is kept so that every lane's frame stands on its
+own, and each carries the same hash the r05 and r06 fmt logs carry for the same
+reason.
+
+### The two stage-script suite logs are indistinguishable apart from a temp path
+
+`round-r07-test-s1-02e-native-package-verifier-tests.log` and
+`round-r07-fixtest1-stage-script-contract-tests.log` differ on exactly one line:
+the `fixtures:` temp directory name. Same twenty-one test names, same
+`passed=21 failed=0 skipped=0`. The fix pass strengthened assertions **inside**
+three existing tests — making their "no destination was created" oracles real by
+dropping `-DryRun` — and added no test and renamed none, so the retest log is
+not by itself evidence of what the fix changed. It is evidence that the suite
+still passes after it. Five of the eight staging tests still assert
+`-not (Test-Path $destination)` after a `-DryRun` run, where a successful run
+would not have created the destination either; those particular oracles remain
+vacuous and are carried forward as coverage debt.
+
+### No package was built and nothing was staged
+
+`s1-02e-package-the-product` is titled for a package build, and no package was
+built. `scripts/package-native.ps1` runs `cargo build --release -p legion-desktop`
+and `cargo packager`, so it is a cargo command, and the implementer role may not
+run one; the lane was occupied when the packet ran. What the packet produced is
+the **staging instrument** — `scripts/stage-native-acceptance-package.ps1`, its
+eight contract tests, and a runbook paragraph — plus
+`plans/evidence/native-input-acceptance/2026-09-08-unsigned-local-package.md`,
+which states in its own opening that no MSI was built and nothing was staged.
+
+`BLK-2026-09-08-04` is therefore **not retired**:
+`target/native-input-acceptance/package/legion-desktop.exe` is still absent and
+still blocks every harness run. `COMP-PLAT-002` stays
+`implementation: partial`, `acceptance: unassessed`.
+
+Two guarantees the staging script does *not* provide, both carried forward: it
+never reads `VALIDATION-SUMMARY.toml`, so "nothing may be staged from an
+unverified MSI" remains procedural text in the runbook rather than a mechanical
+precondition; and `STAGING-EVIDENCE.toml` records `source_msi` and
+`source_msi_sha256` beside a payload the script never proves came from that MSI,
+because the MSI-to-payload link is operator-asserted through `-StagingSource`.
+The `msiexec /a` extraction layout is itself unexercised — whether it yields
+exactly one `legion-desktop.exe` is unknown until an MSI exists.
+
+### The harness still has not been run
+
+`s1-02d-blocked-outcome-propagation` changes what
+`xtask native-product-acceptance` would publish for a driver that exits blocked:
+`status = "blocked"`, `exit_code = 3`, carrying the driver's own composed
+prerequisite, instead of `status = "conformance-failed"`, `exit_code = 1`. It
+also adds `input_classes_blocked` and `input_classes_deviating` to the artifact.
+Nineteen harness tests and eleven driver tests assert that mapping against
+fixture driver results. **None of them ran the harness against a product.** The
+standing constraint recorded in round r06 is what this packet was built to
+retire, and it is retired *in the code*, not by any run: no
+`native-product-acceptance` artifact of any status exists on this host.
+
+Two asymmetries in that mapping survive the packet and are carried forward. The
+pass arm does not consult the two new fields, so a driver result emitting both
+`conforms` and `blocked` for one class would still satisfy
+`every_class_observed` and publish `passed` beside a non-empty
+`input_classes_blocked`. And the conformance-failed arm has no `stated_status`
+guard to match the pass arm's `stated_status_denies_pass`, so a driver exiting 1
+while its own result says `status = "blocked"` would be published as a product
+deviation. Both are unreachable from today's driver, which pushes one
+observation per class and renders `conformance_status` and
+`conformance_exit_code` from the same report.
+
+### `verify-completion-register` was not measured on this tree
+
+There is no `round-r07-*verify-completion-register*` log. `s0-05e`'s success
+criterion — exit 0 with zero structural issues — is therefore **predicted, not
+measured**. The last measured figure is **3 structural issues, exit 1**, from
+`round-r06-post-register-verify.log`, which lives only in the gitignored ledger
+and was never committed; its three issues are exactly the three `s0-05e`
+addresses (`COMP-DIST-010` product row owned by S6, `COMP-P1-F1-T3-1` and
+`COMP-TRAIN-009` empty coverage). Two independent Node ports of
+`validate_register_structure`, written separately by the implementer and the
+reviewer, both calibrate to 3 at that commit and report 0 on this tree. Neither
+is an exit code. Exact prerequisite to close it: the cargo lane runs
+`cargo run -p xtask -- verify-completion-register --root .` from
+`D:/legion-ide-completion` with
+`.superpowers/sdd/2026-09-04-full-product-completion/cargo.lock-owner` absent and
+no `cargo.exe`/`rustc.exe` running, logs it with a CMD/CWD/BEGIN/END/EXIT frame,
+and a later record cites the measured issue list and exit code in place of this
+prediction.
+
+### Register effect of round r07: none in `implementation` or `acceptance`
+
+All eight reviewer-proposed implementation transitions were applied as written
+and **all eight were verified no-ops** — each row already held the proposed
+value. Measured against `HEAD` (`21dfc0b`), `plans/completion/requirements.json`
+changed on 11 fields across 6 rows, none of them `implementation` and none of
+them `acceptance`: `kind`, `scenario_ids`, `configuration_ids` and
+`protected_product_ids` on `COMP-P1-F1-T3-1`; `protected_product_ids` on
+`COMP-P0-F3-T1-1`, `-T2-1` and `-T3-1`; `scenario_ids` and `configuration_ids`
+on `COMP-TRAIN-009`; and `stage`/`package_id` on `COMP-DIST-010`. 419 rows
+before and after, 143 implemented / 233 partial / 43 absent, all 419
+`acceptance: unassessed`. The product-row count moves 357 to 356 because
+`COMP-P1-F1-T3-1` is re-kinded to `internal`.

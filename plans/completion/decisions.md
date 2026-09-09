@@ -1131,3 +1131,220 @@ acceptance**, and no `acceptance` value was set from any of it. In particular
 the `native_product_acceptance` and `driver_contract` targets exercise the
 harness and the driver's own contract against fixtures and temp directories;
 they opened no window and injected no input.
+
+## Owner-blocked prerequisites — round r07 additions (2026-09-08)
+
+Ten owner-blocked prerequisites were surfaced in round r07. **Four are
+restatements** of prerequisites already recorded above; **six are new** and are
+recorded here and in `blockers.json` as `BLK-2026-09-08-08` through
+`BLK-2026-09-08-13`. Every new prerequisite string is quoted or paraphrased from
+a package's `external_prerequisites` list in
+[`plans/completion/dependencies.json`](dependencies.json) or from source text
+named in the blocker's `prerequisite_source`. **None was invented.**
+
+### The four restatements
+
+- `BLK-2026-09-08-02` — a macOS host and a Linux host with the packaged native
+  product installed and a real display session, able to run the windowed GUI
+  e2e suite. Restated this round with a **wider scope** than the r01 entry
+  recorded: besides `COMP-LANG-013`, `COMP-BTD-009`, `COMP-SCM-010`,
+  `COMP-PRES-011` and packages `S3-07` and `S4-06`, it blocks package `XQ-02`
+  and the macOS/Linux halves of every packaged journey row, and packet `s0-05e`
+  added it to `XQ-07`'s `external_prerequisites`. The blocker's prerequisite
+  string is unchanged; the widened scope is recorded in its `scope_note_r07`
+  field rather than by rewriting the r01 entry.
+- `BLK-2026-09-08-01` — a Linux or macOS host with this workspace checked out
+  and a Rust toolchain able to run
+  `cargo test -p legion-platform --test bounded_process`. The Unix nonblocking
+  `fcntl` stdin branch is compiled out on this Windows host and stays
+  unassessed; it is never passed by substitution from the Windows
+  `PIPE_NOWAIT` branch.
+- `BLK-2026-09-08-06` — a real TypeScript and JavaScript language-server,
+  browser and debug-adapter setup with owner-selected releases.
+- `BLK-2026-09-08-07` — an approved `tailwindcss-language-server` release
+  artifact with a published version and SHA-256.
+
+`BLK-2026-09-08-04` also still stands, unretired: no MSI was built in round r07
+and nothing was staged, so
+`target/native-input-acceptance/package/legion-desktop.exe` is still absent and
+still blocks every harness run. **No blocker changed status this round.**
+
+### BLK-2026-09-08-08 — signing, notarization and update-feed infrastructure
+
+> Owner-supplied signing, notarization and update-feed infrastructure; no
+> signing credential, certificate, key, notarization tool, provider or feed is
+> available in the retained facts.
+
+Quoted verbatim from the `external_prerequisites` of packages `S6-01`, `XQ-04`
+and `XQ-07`. Blocks `COMP-DIST-003`, `COMP-DIST-005`, `COMP-DIST-006`,
+`COMP-DIST-007` and the signed half of `COMP-DIST-010`. The r07 package work is
+deliberately unsigned and does not touch it: `scripts/package-native.ps1` writes
+`signer_status = "unsigned-beta/no-os-code-signing"` into
+`RELEASE-METADATA.toml`, and `scripts/stage-native-acceptance-package.ps1`
+copies that value verbatim into `STAGING-EVIDENCE.toml` beside an explicit
+`signed = false`, so an unsigned artifact cannot be staged as anything else. No
+signature, notarisation or publisher identity was produced.
+
+### BLK-2026-09-08-09 — a clean virtual machine per supported OS
+
+> A clean virtual machine for each supported OS with no prior Legion
+> installation.
+
+Quoted verbatim from the `external_prerequisites` of `S6-01` and `XQ-07`. Blocks
+`COMP-DIST-007` clean-machine install and trust qualification. Any package the
+r07 sequence would produce is built and extracted on a developer host, and an
+`msiexec /a` administrative extraction is not an installation.
+
+### BLK-2026-09-08-10 — an OS-level per-process network capture
+
+> An OS-level per-process DNS, TCP and UDP network capture on each supported
+> OS, applied to the packaged Manual/offline artifact process tree.
+
+Quoted from `XQ-06`'s `external_prerequisites`. Blocks `COMP-DIST-004`
+zero-egress verification. It also constrains
+`SC-TRAIN-PACKAGED-STAGE5-MANUAL-OFFLINE`, the scenario packet `s0-05e`
+authored for `COMP-TRAIN-009`: its `OR-NO-EGRESS` oracle cannot be answered
+without such a capture, and its `RC-NO-CAPTURE-TOOL` recovery case records
+blocked with this exact prerequisite rather than passing.
+
+### BLK-2026-09-08-11 — an independent external security and privacy auditor
+
+> An engaged independent external security and privacy auditor and the archived
+> audit report; the register currently records that report as missing.
+
+Quoted from `XQ-08`'s `external_prerequisites`. Blocks `COMP-P9-F2-T4-1`. No
+agent may stand in for an independent external auditor, and no report exists to
+archive.
+
+### BLK-2026-09-08-12 — named external endpoints and their credentials
+
+> Named external endpoints and their credentials for the remote, provider,
+> collaboration and enterprise claims; none is available in the retained facts.
+
+Quoted from `S5-14`'s `external_prerequisites`. Blocks `COMP-ENT-005`, and
+constrains what `COMP-TRAIN-009`'s new qualification scenario can ever be run
+against: a host-controlled collection endpoint is one of the things
+`SC-TRAIN-PACKAGED-STAGE5-QUALIFICATION` needs, and its
+`RC-NO-HOST-CONTROLLED-DESTINATION` recovery case exists for exactly that
+absence.
+
+### BLK-2026-09-08-13 — a CJK IME active on the packaged product's window
+
+> A Windows 11 x64 host with a CJK IME installed (for example Microsoft IME for
+> Japanese) and active as the input layout of the packaged product's window, so
+> the driver can drive a real composition by key injection rather than
+> synthesizing a commit.
+
+Quoted verbatim from `IME_PREREQUISITE` at
+`crates/legion-input-driver/src/main.rs:513-518` with the `concat!` parts
+joined — source text, not a harness observation. (The round brief cited lines
+507-512, the constant's position before this round's `main.rs` edit; the text is
+unchanged.) `observe_ime_cjk` blocks whenever the product window's keyboard
+layout is not CJK, so the `ime-cjk` class will report blocked on the first real
+conformance run on this host. Packet `s1-02d` landed first precisely so that
+outcome is published as `status = "blocked"`, `exit_code = 3` carrying this
+prerequisite, rather than as `status = "conformance-failed"`, `exit_code = 1`
+against the product. **It has never been observed:**
+`xtask native-product-acceptance` has not been invoked and no `run.json` exists.
+
+### The r06 standing constraint is retired in code only
+
+Round r06 recorded a standing constraint: until the driver's blocked exit was
+propagated into a blocked harness status, no `conformance-failed` artifact from
+`xtask native-product-acceptance` could be entered anywhere in the register.
+Packet `s1-02d` propagates it. A driver that exits `3`/blocked now yields
+`status = "blocked"`, `exit_code = 3`, carrying the driver's own composed
+prerequisite, and the artifact gains `input_classes_blocked` and
+`input_classes_deviating` so a blocked run names which oracles had no answer.
+
+**That retirement is in the code and nowhere else.** No
+`native-product-acceptance` artifact of any status exists on this host, nothing
+was transcribed into `defects.json` or any requirement row, and no run was
+unblocked. Two asymmetries in the new mapping survive and are recorded in
+`packets.json` under the packet's `review_follow_ups`: the pass arm does not
+consult the two new fields, and the conformance-failed arm has no
+`stated_status` guard matching the pass arm's `stated_status_denies_pass`. Both
+are unreachable from today's driver. `COMP-PLAT-002` stays
+`implementation: partial`, `acceptance: unassessed`.
+
+### Round r07 register effect
+
+Round r07 applied eight reviewer-proposed implementation transitions across
+three passed packets: `COMP-PLAT-002` to `partial` and `COMP-P1-F1-T1-1` to
+`implemented` for `s1-02d`; `COMP-P1-F1-T3-1`, `COMP-P0-F3-T1-1`, `-T2-1` and
+`-T3-1` to `implemented` and `COMP-DIST-010` and `COMP-TRAIN-009` to `absent`
+for `s0-05e`; and `COMP-PLAT-002` to `partial` again for `s1-02e`. **All eight
+were verified no-ops** — every row already held the value proposed for it.
+
+`plans/completion/requirements.json` holds 419 rows before and after,
+143 `implemented` / 233 `partial` / 43 `absent`, and all 419 `acceptance` values
+`unassessed`. The `implementation` and `acceptance` columns are byte-identical
+to `HEAD` as well. The file *is* modified against `HEAD` (`21dfc0b`), on 11
+fields across 6 rows, all authored by `s0-05e` and all of them structural:
+
+- `COMP-P1-F1-T3-1` — `kind` `product` to `internal`; `scenario_ids` to
+  `[SC-REPO-GUI-HARNESS-SOURCE-GATES]`; `configuration_ids` to the four
+  `CFG-*-RUST-WORKSPACE` rows; `protected_product_ids` to
+  `[COMP-P1-F1-T1-1, COMP-PLAT-002]`.
+- `COMP-P0-F3-T1-1`, `-T2-1`, `-T3-1` — `protected_product_ids` from
+  `[COMP-P1-F1-T3-1]` to `[COMP-SCOPE-GAP-01, COMP-SCOPE-GAP-02]`, because the
+  row they protected is no longer a product row.
+- `COMP-TRAIN-009` — `scenario_ids` to the two newly authored
+  `SC-TRAIN-PACKAGED-STAGE5-*` scenarios; `configuration_ids` to seven
+  `MANUAL-OFFLINE` / `PRODUCT-JOURNEY` configurations.
+- `COMP-DIST-010` — `stage` `S6` to `S1`, `package_id` `S6-01` to `XQ-07`,
+  keeping `kind: product` so its distribution journeys must still be truly
+  earned.
+
+The product-row count moves 357 to 356 with `COMP-P1-F1-T3-1`'s re-kinding,
+replaced by a protection edge to two product rows, so release gating is not
+loosened. No `owner_approval_ref` value exists anywhere in the register, so
+there is still **no ratified cell, provisional or otherwise**.
+
+Two register judgements in that set want owner ratification rather than agent
+confidence. `XQ-07` as `COMP-DIST-010`'s home is argued from declared scope and
+the argument holds, but
+`docs/superpowers/plans/2026-09-04-production-qualification.md:325` still names
+`S6-01` as the consumer that performs this row's update/rollback and
+uninstall/deletion outcomes; either ratify `XQ-07`/`S1` or amend the plan prose,
+because the row cannot return to `S6-01` while the validator rejects a product
+row owned by S6. And all three `COMP-P0-F3-*` rows received the identical
+protection pair, defensible as one guarantee at three layers but disclosed as a
+judgement, not a ruling: if the owner reads the backlog as safeguarding
+something narrower, all three edges move together.
+
+`plans/completion/requirements.json` is committed in round r07's **record**
+commit rather than in `s0-05e`'s, even though `s0-05e` authored its content,
+because the round rule reserves that file to the record role. `scenarios.json`
+(120 scenarios to 122) and `dependencies.json` ride in `s0-05e`'s own commit.
+
+### The register's structural-issue count was not measured this round either
+
+There is no r07 `verify-completion-register` log. `s0-05e`'s success criterion —
+exit 0 with zero structural issues — is **predicted, not measured**. The last
+measured figure remains 3 structural issues at exit 1, from round r06's
+post-round run, and its three issues are exactly the three this packet
+addresses. Two independently written Node ports of `validate_register_structure`
+both calibrate to 3 at that commit and report 0 on this tree; that is
+corroboration by reimplementation, not an exit code. Exact prerequisite to close
+it: the cargo lane runs `cargo run -p xtask -- verify-completion-register
+--root .` from `D:/legion-ide-completion`, logs it with a
+CMD/CWD/BEGIN/END/EXIT frame, and a later record cites the measured issue list
+and exit code in place of this prediction.
+
+### Round r07 evidence classification
+
+Nineteen raw logs, **all nineteen ending `EXIT=0`** — the first round in this
+effort with no non-zero log at all. Every one is **component evidence, with
+three crate-level integrated test targets
+(`xtask --test native_product_acceptance`,
+`legion-input-driver --test driver_contract`,
+`xtask --test completion_command`) and one PowerShell contract suite
+(`scripts/test-native-package-verifiers.ps1`). Not packaged evidence, not native
+GUI evidence, not product acceptance.** No product window was opened, no
+OS-level input was injected into any process, `xtask native-product-acceptance`
+was not invoked, no MSI was built, and nothing was staged. All nineteen were
+copied byte-identical, SHA-256 verified after each copy, into
+[`plans/evidence/full-product-resume-2026-09-08/`](../evidence/full-product-resume-2026-09-08/README.md),
+whose README carries one line per log with its exact command, exit code and
+classification.
