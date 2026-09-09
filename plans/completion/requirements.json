@@ -10748,7 +10748,9 @@
         "CFG-WIN11-X64-PY-PKG"
       ],
       "protected_product_ids": [],
-      "defect_ids": []
+      "defect_ids": [
+        "DEF-0003"
+      ]
     },
     {
       "id": "COMP-LANG-011",
