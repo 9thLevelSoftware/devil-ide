@@ -124,11 +124,22 @@ developer's machine is not evidence that a desktop session exists. A Windows CI
 runner with no interactive session must report blocked, and under this decision
 it does.
 
-- **Windows.** Discovery requires the owner-installed external input driver to
-  exist as a file on disk at the configured path (default
-  `tools/native-input-driver/legion-input-driver.exe`). If it does not, the run
-  is blocked and **no child process is started** — a harness that spawns a
-  windowed binary on a headless machine hangs CI. If it does, the harness next
+- **Windows.** The driver is a workspace crate,
+  [`crates/legion-input-driver`](../../crates/legion-input-driver/src/main.rs) —
+  a leaf binary with no internal dependencies, which nothing else in the
+  workspace may depend on. Discovery requires a built driver to exist as a file
+  on disk, probing these paths in order and taking the first that exists:
+  `target/release/legion-input-driver.exe`,
+  `target/debug/legion-input-driver.exe`, then
+  `tools/native-input-driver/legion-input-driver.exe`. The third is retained so
+  a binary an owner staged by hand still works; a freshly built driver outranks
+  a stale staged one. Discovery reads the **filesystem** and nothing else:
+  `xtask` never builds the driver, because a harness that builds its own
+  instrument mid-run cannot report a clean blocked result, and the driver crate
+  being a workspace member is not evidence that a driver binary exists. If none
+  of the candidates exists, the run is blocked and **no child process is
+  started** — a harness that spawns a windowed binary on a headless machine
+  hangs CI. If one does, the harness next
   requires the packaged product executable to be present in the package
   directory; an absent package is blocked, not failed, because the product is
   not implicated. Only then does the harness ask the driver itself, as a
@@ -190,10 +201,20 @@ to be a deliberate act that edits that test.
 
 The blocked path is specified and enforced before any real run exists, which is
 the only time it gets examined honestly: once green runs start arriving, nobody
-re-reads the exit-code semantics. The cost is that the harness is inert until
-the owner supplies a driver — it will report blocked on every host today,
-including this one — and that the external driver is a real piece of work with
-its own OS-specific injection and oracle code.
+re-reads the exit-code semantics. The cost is that the driver is a real piece of
+work with its own OS-specific injection and oracle code, carried in this
+repository rather than sourced from outside it — and that until it has been
+built **and** a packaged product has been staged, the harness still reports
+blocked on every host, including this one. Building the driver removes one of
+those two prerequisites and not the other.
+
+Keeping the driver in the workspace has a second cost worth naming: the
+workspace now contains a binary whose whole purpose is to inject OS input into
+another process. It is a leaf with no internal dependencies, nothing may depend
+on it, it is never linked by the product, and
+[`plans/dependency-policy.md`](../dependency-policy.md) admits its `windows`
+features for OS input injection and UI Automation observation only. It gains no
+product runtime edge, no PTY and no job-object ownership.
 
 Driver discovery and child-process launching are injected boundaries, so the
 command's outcome logic is testable headlessly, with no display session, no
@@ -218,6 +239,17 @@ unavailable driver starts no child process.
   a hang or a false result.
 - **One nonzero code for every failure.** Rejected: it destroys the only signal
   that separates a product defect from an unavailable host.
+- **Keeping the driver an owner-installed external binary.** Rejected by the
+  amendment below. It made `BLK-2026-09-08-03` an owner prerequisite that no
+  owner could discharge without writing the same code, and left the harness
+  permanently inert for a reason inside this repository's control.
+- **Letting `xtask` build the driver when it is missing.** Rejected: a harness
+  that builds its own instrument mid-run has no clean blocked result to report,
+  and a build failure would arrive dressed as a product outcome.
+- **Adding a product-side hook, feature flag, environment variable or IPC
+  channel so the driver can see inside the product.** Rejected — it is the
+  in-process oracle again under another name. The driver observes only through
+  UI Automation, the system clipboard, and bytes on disk.
 
 ## Acceptance gates for implementation
 
@@ -227,8 +259,10 @@ Ordered increments, each of which must preserve the blocked-path tests:
    four distinct exit codes, injected discovery and launch boundaries, a written
    report on the blocked path, and the eight tests. Produces no acceptance
    evidence.
-2. The external Windows driver: OS injection plus the UIA, clipboard and on-disk
-   oracles, and an honest interactive-session handshake.
+2. The Windows driver, built in this repository: OS injection plus the UIA,
+   clipboard and on-disk oracles, and an honest interactive-session handshake.
+   Delivered by the amendment below. Producing no acceptance evidence either:
+   an instrument that exists has still observed nothing.
 3. A first real run against an owner-installed package, whose result — whatever
    it is — is recorded as a Windows-only observation.
 4. Only after (3), a defect-verification pass that could move
@@ -237,3 +271,55 @@ Ordered increments, each of which must preserve the blocked-path tests:
 
 No increment may claim a macOS or Linux result, and no increment may promote
 this command into a PR gate without the owner deciding to.
+
+## Amendment 2026-09-08 — the driver is built in this repository
+
+Owner ruling: the native input driver is **not** an external prerequisite. It is
+[`crates/legion-input-driver`](../../crates/legion-input-driver/src/main.rs), a
+workspace member built with `cargo build -p legion-input-driver --release`.
+
+**What changed.**
+
+- The external-binary assumption is gone. "What *the driver is available* means"
+  above now describes an in-repo workspace crate and an ordered candidate list
+  (`target/release`, `target/debug`, then the retained
+  `tools/native-input-driver/` path), probed on the filesystem, first existing
+  file wins.
+- `PREREQUISITE_DRIVER_MISSING` in
+  [`xtask/src/native_product_acceptance.rs`](../../xtask/src/native_product_acceptance.rs)
+  names that build command instead of an installation, and the retained staged
+  path is documented after it as the fallback discovery still probes.
+- `BLK-2026-09-08-03` — *"the external native input driver installed at
+  `tools/native-input-driver/legion-input-driver.exe`"* — is **retired by
+  construction**: the thing it asked an owner to supply is now built from
+  source in this repository. `BLK-2026-09-08-04` (a packaged native product
+  staged into the package directory) is **not** retired and still blocks every
+  run.
+- The Consequences section no longer says the harness is inert until the owner
+  supplies a driver, and names the second cost of carrying an input-injection
+  binary in the workspace.
+
+**What did not change, and is not weakened by the driver existing.**
+
+- **Out-of-process observation.** The driver reads the product only through UI
+  Automation, the system clipboard and bytes on disk. No product-side test hook,
+  feature flag, environment variable or IPC channel exists or may be added, and
+  no assertion inside the product counts.
+- **The four-outcome exit contract.** `0` passed, `1` conformance-failed, `2`
+  operational-error, `3` blocked, pairwise distinct.
+- **Blocked is nonzero, always** — never `passed`, never `skipped`, never `0` —
+  and always carries an exact prerequisite. The report is written even when the
+  run is blocked.
+- **A class the driver did not observe is never reported as conforming.** The
+  driver emits no line at all for such a class.
+- **`xtask` never links `legion-desktop`,** and never builds the driver.
+- **Not a gate.** No workflow under `.github/workflows/` references this
+  command, and the test asserting that stands unchanged.
+- **macOS and Linux stay blocked on `BLK-2026-09-08-02`,** and *a Windows result
+  never substitutes for a macOS or Linux row.* The driver's non-Windows build
+  writes a blocked report naming that blocker and exits nonzero.
+
+**This amendment produces no acceptance evidence.** No run happened, no window
+opened, no input class was observed. `COMP-PLAT-002` remains
+`implementation: partial`, `acceptance: unassessed`, and `DEF-2026-09-05-01` and
+`DEF-2026-09-05-02` stay exactly where the register has them.

@@ -92,6 +92,16 @@ fn available_probe() -> FixtureProbe {
     }
 }
 
+/// Create an empty file at `path`, parents included. Used to stand in for a
+/// built or staged driver binary without building one.
+fn touch(path: &Path) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|err| panic!("create {}: {err}", parent.display()));
+    }
+    fs::write(path, b"").unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
+}
+
 fn report_text(workspace: &Path) -> String {
     let path = workspace.join("out").join(REPORT_FILE_NAME);
     fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
@@ -110,6 +120,138 @@ fn toml_string_field(text: &str, key: &str) -> String {
         .strip_suffix('"')
         .unwrap_or_else(|| panic!("unterminated `{key}` field: {line}"));
     body.replace("\\\\", "\\").replace("\\\"", "\"")
+}
+
+#[test]
+fn driver_discovery_prefers_the_built_in_repo_driver_over_the_staged_path() {
+    // The driver is a workspace crate now, so discovery looks first where cargo
+    // puts it. The staged `tools/` path is retained, last, so a binary an owner
+    // put there by hand still works — but a freshly built one must win over a
+    // stale staged one, or a rebuild would silently not be what ran.
+    let candidates = npa::default_driver_candidates();
+    assert_eq!(
+        candidates.len(),
+        3,
+        "discovery probes release, then debug, then the retained staged path: {candidates:?}"
+    );
+    assert!(
+        candidates[0].starts_with("target/release/"),
+        "the release build is probed first: {candidates:?}"
+    );
+    assert!(
+        candidates[1].starts_with("target/debug/"),
+        "the debug build is probed second: {candidates:?}"
+    );
+    assert!(
+        candidates[2].starts_with("tools/native-input-driver/"),
+        "the owner-staged path is retained, last: {candidates:?}"
+    );
+    for candidate in &candidates {
+        assert!(
+            candidate.ends_with(npa::driver_executable_name()),
+            "every candidate names this host's driver binary: {candidate}"
+        );
+    }
+
+    let workspace = temp_workspace("discovery");
+    let resolved = candidates
+        .iter()
+        .map(|candidate| workspace.join(candidate))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        npa::first_existing_driver(&resolved),
+        None,
+        "with nothing built and nothing staged, discovery must find nothing rather than \
+         invent a path"
+    );
+
+    touch(&resolved[2]);
+    assert_eq!(
+        npa::first_existing_driver(&resolved).as_deref(),
+        Some(resolved[2].as_path()),
+        "a staged binary is still discovered when nothing has been built"
+    );
+
+    touch(&resolved[1]);
+    assert_eq!(
+        npa::first_existing_driver(&resolved).as_deref(),
+        Some(resolved[1].as_path()),
+        "a debug build outranks the staged path"
+    );
+
+    touch(&resolved[0]);
+    assert_eq!(
+        npa::first_existing_driver(&resolved).as_deref(),
+        Some(resolved[0].as_path()),
+        "the release build outranks both"
+    );
+
+    // The host probe answers from that same ordered list, and never builds
+    // anything to make an answer come out.
+    match npa::HostInputDriverProbe::new(resolved.clone()).probe() {
+        DriverAvailability::Available { driver_path } => {
+            assert_eq!(driver_path, resolved[0].display().to_string());
+        }
+        DriverAvailability::Unavailable { prerequisite } => {
+            // A driver file exists at `resolved[0]`, so the only build that may
+            // still answer unavailable is one ADR-0056 does not enable at all.
+            assert_ne!(
+                std::env::consts::OS,
+                "windows",
+                "on Windows a driver that exists on disk must be discovered; got {prerequisite:?}"
+            );
+            assert_eq!(
+                prerequisite,
+                npa::PREREQUISITE_UNSUPPORTED_HOST,
+                "macOS and Linux stay blocked on BLK-2026-09-08-02 whatever is on disk"
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn driver_missing_prerequisite_names_the_in_repo_build_command() {
+    let prerequisite = npa::PREREQUISITE_DRIVER_MISSING;
+    assert!(
+        prerequisite.contains("cargo build -p legion-input-driver --release"),
+        "the driver is built from this repository, so the prerequisite must name the build \
+         command, not an installation the owner has to source: {prerequisite:?}"
+    );
+    assert!(
+        prerequisite.contains("target/release/legion-input-driver.exe"),
+        "the prerequisite must say where that build lands: {prerequisite:?}"
+    );
+
+    let build_at = prerequisite
+        .find("cargo build -p legion-input-driver --release")
+        .expect("build command present");
+    let staged_at = prerequisite
+        .find("tools/native-input-driver/")
+        .expect("the retained staged path stays documented, because discovery still probes it");
+    assert!(
+        build_at < staged_at,
+        "the in-repo build is the action to take; the staged path is the retained fallback \
+         mentioned after it: {prerequisite:?}"
+    );
+
+    // And the blocked report carries that exact string, not a paraphrase.
+    let workspace = temp_workspace("build-command");
+    let launcher = RecordingLauncher::default();
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &unavailable_probe(), &launcher);
+    assert_eq!(code, EXIT_BLOCKED);
+    let text = report_text(&workspace);
+    assert_eq!(toml_string_field(&text, "prerequisite"), prerequisite);
+    assert_eq!(
+        launcher.launch_count(),
+        0,
+        "naming a build command must not make the harness run one"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
 }
 
 #[test]

@@ -4105,6 +4105,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "legion-input-driver"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "legion-lsp"
 version = "0.1.0"
 dependencies = [

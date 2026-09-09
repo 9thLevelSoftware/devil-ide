@@ -69,16 +69,24 @@ pub const STATUS_OPERATIONAL_ERROR: &str = "operational-error";
 /// Status string for a host that cannot answer the question.
 pub const STATUS_BLOCKED: &str = "blocked";
 
-/// Exact, actionable prerequisite for a Windows host that has no external
-/// native input driver installed. Shaped like the prerequisite strings in
+/// Exact, actionable prerequisite for a Windows host on which no native input
+/// driver has been built. Shaped like the prerequisite strings in
 /// `plans/completion/decisions.md`: it names what the owner must supply.
+///
+/// The driver is a workspace crate (`crates/legion-input-driver`), so the
+/// action is a build, not an install. The staged path stays in the sentence
+/// because [`default_driver_candidates`] still probes it last, and an
+/// owner-staged binary therefore still works.
 pub const PREREQUISITE_DRIVER_MISSING: &str = concat!(
     "A Windows 11 x64 host with an interactive logged-in desktop session and ",
-    "the external native input driver installed at ",
-    "`tools/native-input-driver/legion-input-driver.exe`, able to inject ",
-    "OS-level keyboard, pointer, text, clipboard and IME/CJK input into ",
-    "another process and to read that process's UI Automation text and ",
-    "clipboard state from outside it."
+    "the in-repo native input driver built with ",
+    "`cargo build -p legion-input-driver --release`, present at ",
+    "`target/release/legion-input-driver.exe` (a debug build at ",
+    "`target/debug/legion-input-driver.exe`, or a binary installed at ",
+    "`tools/native-input-driver/legion-input-driver.exe`, is also accepted), ",
+    "able to inject OS-level keyboard, pointer, text, clipboard and IME/CJK ",
+    "input into another process and to read that process's UI Automation text ",
+    "and clipboard state from outside it."
 );
 
 /// Exact, actionable prerequisite when the driver exists but the host has no
@@ -114,8 +122,8 @@ pub struct NativeProductAcceptanceOptions {
     pub out_dir: String,
     /// Directory holding the packaged product, relative to the workspace root.
     pub package_dir: String,
-    /// Path to the external input driver, relative to the workspace root.
-    /// `None` uses [`default_driver_path`].
+    /// Path to the input driver, relative to the workspace root. `None` probes
+    /// [`default_driver_candidates`] in order.
     pub driver_path: Option<String>,
 }
 
@@ -130,21 +138,59 @@ impl Default for NativeProductAcceptanceOptions {
 }
 
 impl NativeProductAcceptanceOptions {
-    /// The driver path this run will use.
+    /// The driver paths this run will probe, in order.
+    pub fn driver_candidates(&self) -> Vec<String> {
+        match &self.driver_path {
+            Some(path) => vec![path.clone()],
+            None => default_driver_candidates(),
+        }
+    }
+
+    /// The driver path this run names in its report before discovery has run.
+    /// Discovery reports the candidate it actually found.
     pub fn resolved_driver_path(&self) -> String {
-        self.driver_path
-            .clone()
-            .unwrap_or_else(|| default_driver_path().to_string())
+        self.driver_candidates()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| default_driver_candidates()[0].clone())
     }
 }
 
-/// Default location of the owner-installed external input driver.
-pub fn default_driver_path() -> &'static str {
+/// File name of the driver binary cargo produces for this host.
+pub fn driver_executable_name() -> &'static str {
     if cfg!(windows) {
-        "tools/native-input-driver/legion-input-driver.exe"
+        "legion-input-driver.exe"
     } else {
-        "tools/native-input-driver/legion-input-driver"
+        "legion-input-driver"
     }
+}
+
+/// Where the harness looks for the native input driver, in order, first
+/// existing file wins.
+///
+/// The driver is a workspace crate, so the first two entries are simply where
+/// cargo puts it. The third is retained so a binary an owner staged by hand
+/// still works. Discovery probes the **filesystem** and nothing else: `xtask`
+/// must never build the driver mid-run, because a harness that builds its own
+/// instrument cannot report a clean blocked result.
+pub fn default_driver_candidates() -> Vec<String> {
+    let name = driver_executable_name();
+    vec![
+        format!("target/release/{name}"),
+        format!("target/debug/{name}"),
+        format!("tools/native-input-driver/{name}"),
+    ]
+}
+
+/// The first candidate that exists as a file on disk.
+///
+/// Pure and injectable: `candidates` are already resolved against a root, so
+/// this is testable without a host driver and without a display session.
+pub fn first_existing_driver(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
 }
 
 /// Name of the packaged product executable inside the package directory.
@@ -186,21 +232,26 @@ pub trait InputDriverProbe {
 /// Real host discovery.
 ///
 /// Availability is **probed**, not inferred. macOS and Linux are refused by
-/// decision (`BLK-2026-09-08-02`), and on Windows the driver must actually
-/// exist as a file on disk — a `cfg!(windows)` build or an environment
-/// variable that happens to be set is not evidence that a driver is present.
+/// decision (`BLK-2026-09-08-02`), and on Windows a driver must actually exist
+/// as a file on disk at one of the ordered candidates — a `cfg!(windows)`
+/// build or an environment variable that happens to be set is not evidence
+/// that a driver is present, and neither is the driver crate being a workspace
+/// member. This probe reads the filesystem and does nothing else: it cannot
+/// build the driver, and it starts no process, so an unavailable driver can
+/// never spawn a child.
+///
 /// The interactive-session question is answered separately, by the driver
-/// itself, in [`run_native_product_acceptance`]; that keeps discovery free of
-/// side effects so an unavailable driver can never start a child process.
+/// itself, in [`run_native_product_acceptance`].
 #[derive(Debug, Clone)]
 pub struct HostInputDriverProbe {
-    driver_path: PathBuf,
+    candidates: Vec<PathBuf>,
 }
 
 impl HostInputDriverProbe {
-    /// Probe for `driver_path` (already resolved against the workspace root).
-    pub fn new(driver_path: PathBuf) -> Self {
-        Self { driver_path }
+    /// Probe `candidates` in order (each already resolved against the
+    /// workspace root); the first existing file wins.
+    pub fn new(candidates: Vec<PathBuf>) -> Self {
+        Self { candidates }
     }
 }
 
@@ -211,14 +262,13 @@ impl InputDriverProbe for HostInputDriverProbe {
                 prerequisite: PREREQUISITE_UNSUPPORTED_HOST.to_string(),
             };
         }
-        if self.driver_path.is_file() {
-            DriverAvailability::Available {
-                driver_path: self.driver_path.display().to_string(),
-            }
-        } else {
-            DriverAvailability::Unavailable {
+        match first_existing_driver(&self.candidates) {
+            Some(driver_path) => DriverAvailability::Available {
+                driver_path: driver_path.display().to_string(),
+            },
+            None => DriverAvailability::Unavailable {
                 prerequisite: PREREQUISITE_DRIVER_MISSING.to_string(),
-            }
+            },
         }
     }
 }
@@ -415,7 +465,12 @@ pub fn run_native_product_acceptance_command(opts: &NativeProductAcceptanceOptio
             return EXIT_OPERATIONAL_ERROR;
         }
     };
-    let probe = HostInputDriverProbe::new(workspace_root.join(opts.resolved_driver_path()));
+    let candidates = opts
+        .driver_candidates()
+        .iter()
+        .map(|candidate| workspace_root.join(candidate))
+        .collect::<Vec<_>>();
+    let probe = HostInputDriverProbe::new(candidates);
     let launcher = HostSubprocessLauncher;
     run_native_product_acceptance(&workspace_root, opts, &probe, &launcher)
 }
