@@ -1348,3 +1348,144 @@ copied byte-identical, SHA-256 verified after each copy, into
 [`plans/evidence/full-product-resume-2026-09-08/`](../evidence/full-product-resume-2026-09-08/README.md),
 whose README carries one line per log with its exact command, exit code and
 classification.
+
+## Owner-blocked prerequisites — round r10 additions (2026-09-09)
+
+Eleven owner-blocked prerequisites were surfaced in round r10. **Ten are
+restatements** of prerequisites already recorded above; **one is new** and is
+recorded here and in `blockers.json` as `BLK-2026-09-09-14`. No prerequisite
+string was invented, and **no blocker changed status this round**.
+
+### The ten restatements
+
+`BLK-2026-09-08-02` (macOS and Linux hosts with the packaged product and a real
+display), `BLK-2026-09-08-05` (an approved native Node >= 22.22.2 plus retained
+TypeScript fixtures), `BLK-2026-09-08-06` (owner-selected TypeScript/JavaScript
+server, browser and debug-adapter releases), `BLK-2026-09-08-07` (an approved
+`tailwindcss-language-server` artifact with version and SHA-256),
+`BLK-2026-09-08-08` (signing, notarization and update-feed infrastructure),
+`BLK-2026-09-08-09` (a clean VM per supported OS), `BLK-2026-09-08-10` (an
+OS-level per-process DNS/TCP/UDP capture on the packaged process tree),
+`BLK-2026-09-08-11` (an engaged external security and privacy auditor with an
+archived report), `BLK-2026-09-08-12` (named external endpoints and credentials
+for remote/provider/collaboration/enterprise claims) and `BLK-2026-09-08-13` (a
+Windows 11 x64 host with a CJK IME active as the packaged window's input
+layout). None of them was touched by round r10, which shipped three test-side
+repairs and nothing else.
+
+`BLK-2026-09-08-05` carries a re-measurement note rather than a status change.
+Round r08 measured node `v24.19.0` on this host with the retained archives
+present, and `round-r08-test-s2-02a-live-language-servers.log` records
+`typescript_app_startup` at 6 passed / 0 failed, `EXIT=0` — which is exactly the
+command the blocker names. The record role does not retire an owner-blocked
+prerequisite on its own reading of a prior round's log; the coordinator is asked
+to rule on it. It stays `blocked` until then, and this note is the reason it
+should not stay there quietly.
+
+### BLK-2026-09-09-14 — macOS 15 and Ubuntu 24.04 hosts for local reproduction of hosted test failures
+
+> A macOS 15 host and an Ubuntu 24.04 host with this workspace checked out and
+> the workspace Rust toolchain, able to run `cargo test -p legion-app --lib`,
+> `cargo test -p legion-desktop --lib` and `cargo test -p legion-editor --lib`
+> locally, so that the failures observed in hosted `Legion Gates` run
+> `34322199039` can be reproduced and a candidate repair falsified before it is
+> pushed.
+
+This is distinct from `BLK-2026-09-08-01`, which names a Linux or macOS host for
+one specific test (`legion-platform --test bounded_process`), and from
+`BLK-2026-09-08-02`, which needs the **packaged** product and a real display.
+This one needs only a source checkout and a toolchain, and it exists because all
+three r10 repairs are reasoned from hosted logs and validated on a host where
+none of the three target failures reproduces.
+
+**Measured this round, and it changes the shape of the request.** The record
+role ran `gh run list --branch codex/full-product-resume --workflow
+"Legion Gates" --limit 30` and `gh run view 34322199039 --job <id> --log-failed`
+for each failing job. Nine runs on this branch, all nine `completed / failure`.
+Run `34322199039` failed on **all three** `Standing gates` jobs, not two:
+
+| Job | Failing test | Packet |
+| --- | --- | --- |
+| `windows-latest` (`102371151604`) | `language::typescript_organize_tests::typescript_organize_uses_file_and_all_mode_without_candidates`, panic at `typescript_organize_tests.rs:112:5`; 446 passed / 1 failed | `s2-03e` |
+| `macos-latest` (`102371151801`) | the same test, same panic site; 450 passed / 1 failed | `s2-03e` |
+| `ubuntu-latest` (`102371151608`) | `view::streamed_layout::worker::tests::worker_admission_is_bounded_and_cancel_rejects_late_output`, panic at `worker.rs:659:18`; 241 passed / 1 failed | `s1-08a` |
+| `ubuntu-latest` (`102371151608`) | `tests::retention_drained_prefix_releases_each_unpinned_descriptor_and_preserves_lease`, panic at `legion-editor/src/lib.rs:4573:9`; 56 passed / 1 failed | `s1-04m` |
+
+So the round brief's framing — three repairs to `macos-latest` and
+`ubuntu-latest` failures — is wrong in two ways. The TypeScript failure is on
+`windows-latest` and `macos-latest`, not on `ubuntu-latest` (`ubuntu-latest` ran
+`legion-app --lib` clean at 451 passed / 0 failed), and the branch is red on
+three operating systems rather than two.
+
+**The `s2-03e` half of this blocker is not owner-blocked at all**, and that is
+recorded here rather than filed as a host request the owner cannot usefully
+answer: a hosted `windows-latest` runner already reproduces that failure, and
+this Windows host does not, at the same test count (447 here; 446 passed + 1
+failed there). A hosted runner is reachable by pushing this branch. What is
+genuinely blocked is macOS and Linux, for `s1-08a` and `s1-04m`.
+
+Affects packets `s2-03e-typescript-organize-path-shape`,
+`s1-08a-streamed-worker-mailbox-flake` and `s1-04m-snapshot-lease-expiry`, and
+requirements `COMP-LANG-007`, `COMP-P1-F4-T2-1`, `COMP-PRES-007` and
+`COMP-P0-F4-T5-1`. It promotes and demotes nothing on its own.
+
+### Round r10 register effect
+
+**None in `implementation` or `acceptance`.** All four reviewer-proposed
+transitions across the three passed packets were applied as written and **all
+four were verified no-ops**: `COMP-LANG-007` (`partial`), `COMP-P0-F4-T5-1`
+(`partial`), `COMP-P1-F4-T2-1` (`implemented`) and `COMP-PRES-007` (`partial`)
+each already held the proposed value.
+[`plans/completion/requirements.json`](requirements.json) is **byte-identical**
+before and after the record step — it does not appear in `git diff --numstat`
+at all. 419 rows before, 419 after; 143 implemented / 233 partial / 43 absent,
+before and after; all 419 `acceptance: unassessed`, before and after.
+
+That is thirty consecutive no-op transitions across r05, r06, r07 and r10 —
+three, fifteen, eight and four. The `implementation` column has now gone four
+recorded rounds unexercised. The reading stays the honest one: reviewers keep
+proposing the value a row already holds, and none of these packets produced the
+kind of evidence that moves a row. For r10 that is exactly right — three test
+repairs add no product capability — but it means the column's first real
+transition is still ahead, and will surface disagreements these no-ops hide.
+
+### Round r10 evidence classification
+
+Twenty-four raw logs, **all twenty-four ending `EXIT=0`**. Twenty-two are
+cargo-lane logs and every one of them is **component evidence: not packaged
+evidence, not native GUI evidence, not product acceptance.** No product window
+was opened, no OS-level input was injected, `xtask native-product-acceptance`
+was not invoked, no MSI was built and nothing was staged.
+`round-r10-test-packet-tests-s1-04m-atomicity.log` runs a `tests/` binary, but it
+links one crate and drives its public API in-process, so it is a crate-level
+test rather than an integration of the product's parts.
+`round-r10-test-packet-tests-s1-08a-soak.log` is 30 repetitions of the same
+in-process unit tests on this host — a local flake measurement, not evidence
+about the hosted runners.
+
+The remaining two, `round-r10-record-gh-run-list.log` and
+`round-r10-record-gh-run-34322199039-failed-tests.log`, are neither component
+nor integrated evidence: they are **hosted-CI observations** taken by the record
+role, a record of what GitHub-hosted runners reported. The standing rule already
+classifies a GitHub-hosted runner as a component-layer workspace gate and never
+as a substitute for packaged-product acceptance, and nothing here changes that.
+
+All twenty-four were copied byte-identical (`cmp` clean on every file) into
+[`plans/evidence/full-product-resume-2026-09-08/`](../evidence/full-product-resume-2026-09-08/README.md),
+whose README carries one line per log with its exact command, exit code and
+classification. Those logs were filed in the `2026-09-08` directory by explicit
+round instruction; rounds r08 and r09 filed theirs under
+`plans/evidence/full-product-resume-2026-09-09/`, so r10 evidence is not
+co-located with the rounds immediately before it.
+
+### What round r10 does not establish
+
+No repair in this round is observed to fix anything. Exact prerequisite for
+closing that: a completed `Legion Gates` run on branch
+`codex/full-product-resume` after these commits land, with `windows-latest`,
+`ubuntu-latest` and `macos-latest` all green. Until that run exists, the three
+packets are plausible repairs validated against a host that reproduces none of
+the failures they target — and for `s2-03e` specifically, the reason this
+Windows host passes a test the hosted `windows-latest` runner fails at the same
+panic site is undetermined, which makes the 8.3 short-name falsification the
+brief marked optional the obvious next step rather than an optional one.

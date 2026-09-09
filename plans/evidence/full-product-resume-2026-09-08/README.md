@@ -781,3 +781,152 @@ on `COMP-TRAIN-009`; and `stage`/`package_id` on `COMP-DIST-010`. 419 rows
 before and after, 143 implemented / 233 partial / 43 absent, all 419
 `acceptance: unassessed`. The product-row count moves 357 to 356 because
 `COMP-P1-F1-T3-1` is re-kinded to `internal`.
+
+## Round r10 — three hosted-CI failure repairs (2026-09-09)
+
+Round r10 ran three packets, all of which passed implementation, review and the
+serialized cargo lane. All three exist to repair `cargo test` failures observed
+in the hosted `Legion Gates` run `34322199039` (measured below, not quoted from a brief); none of them changes product
+behaviour, and all three are test-side or test-fixture repairs.
+
+| Packet | Change | Owned code path |
+| --- | --- | --- |
+| `s2-03e-typescript-organize-path-shape` | Fix the TypeScript organize-imports test expectation that compared the product's normalised path against a non-canonical fixture path | `crates/legion-app/src/language/typescript_organize_tests.rs` |
+| `s1-08a-streamed-worker-mailbox-flake` | Make the streamed-layout worker admission test wait on the condition instead of a 5ms sleep before a 64-deep bounded mailbox | `crates/legion-desktop/src/view/streamed_layout/worker.rs` |
+| `s1-04m-snapshot-lease-expiry` | Give the retention test's hand-built snapshot lease a real TTL so the lease-pinned descriptor survives the sweep on every host | `crates/legion-editor/src/lib.rs` |
+
+### Logs
+
+Every log below carries a `CMD:` / `CWD:` / `BEGIN` / `END` / `EXIT=` frame
+written by the round runner, and was copied byte-identical from
+`.superpowers/sdd/2026-09-04-full-product-completion/` (the gitignored ledger)
+into this directory; `cmp` reports zero differences on all 22 files. Two further
+logs, `round-r10-record-gh-*.log`, were written by the record role in this step
+and carry the same frame.
+
+**Every one of the 24 logs exited 0.** No step in this round is red, blocked or
+skipped. Twenty-two are cargo-lane logs; two are `gh` observations taken by the
+record role.
+
+| Log | Command | Exit | Classification |
+| --- | --- | --- | --- |
+| `round-r10-check0-legion-app.log` | `cargo check -p legion-app --all-targets -j 1` | 0 | component evidence — pre-implementation compile baseline |
+| `round-r10-check0-legion-desktop.log` | `cargo check -p legion-desktop --all-targets -j 1` | 0 | component evidence — pre-implementation compile baseline |
+| `round-r10-check0-legion-editor.log` | `cargo check -p legion-editor --all-targets -j 1` | 0 | component evidence — pre-implementation compile baseline |
+| `round-r10-test-packet-tests-s2-03e.log` | `cargo test -p legion-app --lib language::typescript_organize_tests -j 1 --no-fail-fast` | 0 | component evidence — packet-focused unit tests, 6 passed / 0 failed / 441 filtered out |
+| `round-r10-test-packet-tests-s2-03e-full-lib.log` | `cargo test -p legion-app --lib -j 1 --no-fail-fast` | 0 | component evidence — crate regression guard, 447 passed / 0 failed / 0 ignored |
+| `round-r10-test-packet-tests-s2-03e-clippy.log` | `cargo clippy -p legion-app --all-targets -j 1 -- -D warnings` | 0 | component evidence — crate lint gate |
+| `round-r10-test-packet-tests-s1-08a.log` | `cargo test -p legion-desktop --lib view::streamed_layout::worker -j 1 --no-fail-fast` | 0 | component evidence — packet-focused unit tests, 4 passed / 0 failed / 239 filtered out |
+| `round-r10-test-packet-tests-s1-08a-soak.log` | `sh .superpowers/sdd/2026-09-04-full-product-completion/soak-s1-08a.sh` | 0 | component evidence — flake soak: 20 idle then 10 loaded (12 busy shells) repetitions of the packet-focused unit tests, `TOTAL: idle_pass=20 idle_fail=0 loaded_pass=10 loaded_fail=0` |
+| `round-r10-test-packet-tests-s1-08a-full-lib.log` | `cargo test -p legion-desktop --lib -j 1 --no-fail-fast` | 0 | component evidence — crate regression guard, 243 passed / 0 failed / 0 ignored |
+| `round-r10-test-packet-tests-s1-08a-clippy.log` | `cargo clippy -p legion-desktop --all-targets -j 1 -- -D warnings` | 0 | component evidence — crate lint gate |
+| `round-r10-test-packet-tests-s1-04m.log` | `cargo test -p legion-editor --lib -j 1 --no-fail-fast` | 0 | component evidence — crate unit tests, 59 passed / 0 failed / 0 ignored |
+| `round-r10-test-packet-tests-s1-04m-atomicity.log` | `cargo test -p legion-editor --test atomicity_and_retention -j 1 --no-fail-fast` | 0 | component evidence — single-crate integration test binary against the crate public API, 8 passed / 0 failed |
+| `round-r10-test-packet-tests-s1-04m-clippy.log` | `cargo clippy -p legion-editor --all-targets -j 1 -- -D warnings` | 0 | component evidence — crate lint gate |
+| `round-r10-test-packet-tests-round-fmt.log` | `cargo fmt --all --check` | 0 | component evidence — formatting gate, silent on success |
+| `round-r10-gates-step2a-legion-app-lib-tests.log` | `cargo test -p legion-app --lib -j 1` | 0 | component evidence — post-merge regression guard, 447 passed / 0 failed / 0 ignored |
+| `round-r10-gates-step2b-legion-desktop-lib-tests.log` | `cargo test -p legion-desktop --lib -j 1` | 0 | component evidence — post-merge regression guard, 243 passed / 0 failed / 0 ignored |
+| `round-r10-gates-step3-workspace-clippy.log` | `cargo clippy --workspace --all-targets -j 1 -- -D warnings` | 0 | component evidence — workspace lint gate |
+| `round-r10-gates-step4a-cargo-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r10-gates-step4b-xtask-check-deps.log` | `cargo run -p xtask -- check-deps` | 0 | component evidence — fast gate, "dependency policy checks passed" |
+| `round-r10-gates-step4c-xtask-docs-hygiene.log` | `cargo run -p xtask -- docs-hygiene` | 0 | component evidence — fast gate, "documentation hygiene checks passed" |
+| `round-r10-gates-step4d-xtask-claim-audit.log` | `cargo run -p xtask -- claim-audit` | 0 | component evidence — fast gate, "claim audit passed" |
+| `round-r10-gates-step4e-xtask-extract-before-modify.log` | `cargo run -p xtask -- extract-before-modify` | 0 | component evidence — fast gate, "no chokepoint file grew past its slack" |
+| `round-r10-record-gh-run-list.log` | `gh run list --branch codex/full-product-resume --workflow "Legion Gates" --limit 30` | 0 | hosted-CI observation — nine runs listed, all nine `completed / failure` |
+| `round-r10-record-gh-run-34322199039-failed-tests.log` | `gh run view 34322199039 --json jobs` then `gh run view 34322199039 --job <id> --log-failed` per failing job | 0 | hosted-CI observation — per-job failing test names for the run the three packets target |
+
+### Classification, stated plainly
+
+All 22 cargo-lane r10 logs are **component evidence**. Not one of them is
+integrated evidence, packaged-product evidence, native-GUI evidence, or product
+acceptance. The two `round-r10-record-gh-*.log` files are neither: they are
+**hosted-CI observations** — a record of what GitHub-hosted runners reported,
+which the standing rule already classifies as a component-layer workspace gate
+and never as packaged-product acceptance:
+
+- Every command is a `cargo` workspace command run against source in
+  `D:/legion-ide-completion`. Nothing was packaged, installed, signed or
+  launched.
+- No window was opened and no OS input was synthesised, so nothing here bears on
+  the native-GUI rows.
+- `round-r10-test-packet-tests-s1-04m-atomicity.log` runs a `tests/` binary, but
+  it links one crate (`legion-editor`) and drives its public API in-process; it
+  is a crate-level test, not an integration of the product parts.
+- The soak log is 30 repetitions of the same in-process unit tests on this
+  Windows host. It measures this host flake rate, not the hosted runners.
+- No `acceptance` field in `plans/completion/requirements.json` moves on this
+  evidence, and none was touched.
+
+### Register effect of round r10: none
+
+All four reviewer-proposed implementation transitions were applied as written
+and **all four were verified no-ops** — each row already held the proposed
+value: `COMP-LANG-007` (`partial`), `COMP-P0-F4-T5-1` (`partial`),
+`COMP-P1-F4-T2-1` (`implemented`), `COMP-PRES-007` (`partial`).
+`plans/completion/requirements.json` is byte-identical before and after: 419
+rows before, 419 rows after; 143 implemented / 233 partial / 43 absent, both
+before and after; all 419 `acceptance: unassessed`, both before and after. This
+is expected — the three packets repair tests, they do not add product
+capability, so no row earns a promotion from them.
+
+### What round r10 actually targets, measured this round
+
+The record role ran `gh` and read run `34322199039` directly rather than
+restating the packet briefs. Measured:
+
+- **Nine `Legion Gates` runs on this branch, all nine `completed / failure`**,
+  from `34235634538` (2026-09-08T14:01:38Z) to `34322199039`
+  (2026-09-09T07:06:27Z). The nine-failed-runs figure the briefs quote is
+  confirmed.
+- Run `34322199039` has four jobs: `cargo-deny` success, and **all three**
+  `Standing gates` jobs failed — `windows-latest` (`102371151604`),
+  `ubuntu-latest` (`102371151608`) and `macos-latest` (`102371151801`).
+- The failures map to the packets like this, and **the map is not the one the
+  round brief describes**:
+
+| Job | Failing test | Packet |
+| --- | --- | --- |
+| `windows-latest` | `language::typescript_organize_tests::typescript_organize_uses_file_and_all_mode_without_candidates`, panic at `typescript_organize_tests.rs:112:5`; 446 passed / 1 failed | `s2-03e` |
+| `macos-latest` | the same test, same panic site; 450 passed / 1 failed | `s2-03e` |
+| `ubuntu-latest` | `view::streamed_layout::worker::tests::worker_admission_is_bounded_and_cancel_rejects_late_output`, panic at `worker.rs:659:18`; 241 passed / 1 failed | `s1-08a` |
+| `ubuntu-latest` | `tests::retention_drained_prefix_releases_each_unpinned_descriptor_and_preserves_lease`, panic at `legion-editor/src/lib.rs:4573:9`; 56 passed / 1 failed | `s1-04m` |
+
+Two corrections follow from that, and they are recorded rather than smoothed
+over:
+
+1. The round brief frames all three packets as repairs to `macos-latest` and
+   `ubuntu-latest` failures. **The TypeScript failure is on `windows-latest`
+   and `macos-latest`, not on `ubuntu-latest`** — `ubuntu-latest` ran
+   `legion-app --lib` at 451 passed / 0 failed. The branch is red on all three
+   operating systems, not two.
+2. Because the `s2-03e` failure reproduces on a hosted `windows-latest` runner,
+   the standing claim that these repairs "cannot be falsified on this Windows
+   host" is **true only of `s1-08a` and `s1-04m`**. For `s2-03e` this host
+   simply does not reproduce a failure another Windows host does: 447 tests
+   here, 447 on `windows-latest` (446 passed + 1 failed), same count, different
+   outcome. That difference is unexplained by anything measured this round and
+   is the most important open question the round leaves behind.
+
+### What round r10 does not establish
+
+- **None of the three repairs is observed to fix anything.** All were validated
+  only on this Windows host, where none of the three target failures reproduces.
+  Exact prerequisite: a completed `Legion Gates` run on branch
+  `codex/full-product-resume` after these commits land, with `windows-latest`,
+  `ubuntu-latest` and `macos-latest` all green.
+- Why this Windows host passes
+  `typescript_organize_uses_file_and_all_mode_without_candidates` while the
+  hosted `windows-latest` runner fails it at the same panic site was not
+  determined. Until it is, `s2-03e` is a plausible repair, not a diagnosed one.
+- The strongest local falsification for `s2-03e` — re-running the single test
+  with `TMP`/`TEMP` pointed at the 8.3 short-name alias of the temp root — was
+  offered as optional in the brief and was **not attempted**. It is recorded as
+  not attempted, not as passed. Given the `windows-latest` finding above it
+  should no longer be treated as optional.
+- The gates sequence has no `legion-editor` step; that crate's coverage this
+  round comes from the three `s1-04m` packet logs above, which ran on the same
+  merged tree.
+- These logs were placed in this `2026-09-08` directory by explicit round
+  instruction. Rounds r08 and r09 filed their logs under
+  `plans/evidence/full-product-resume-2026-09-09/`, so r10 evidence is not
+  co-located with the immediately preceding rounds.
