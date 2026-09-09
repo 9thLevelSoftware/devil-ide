@@ -247,7 +247,16 @@ fn air_gap_manifest_denies_downloads_but_keeps_system_binaries() {
             .contains("6e23b48efc76af4e70928cdfe62ea6e6cfef67ab4c1e7579c4e82dd284fbdfd2")
     );
 
-    for language in ["javascript", "javascriptreact", "typescriptreact"] {
+    // The alias languages reuse the same pinned archive as `typescript`, so
+    // their denial records must carry the same identity: archive url, policy
+    // gate and digest. Asserting only the count here would have let an alias
+    // silently point at a different archive, or at none, while the test still
+    // passed.
+    for (language, display_name) in [
+        ("javascript", "typescript-language-server (JavaScript)"),
+        ("javascriptreact", "typescript-language-server (JSX)"),
+        ("typescriptreact", "typescript-language-server (TSX)"),
+    ] {
         let manifest = registry.binary_manifest_for_workspace_language(
             workspace_id,
             &LanguageId(language.to_string()),
@@ -258,6 +267,25 @@ fn air_gap_manifest_denies_downloads_but_keeps_system_binaries() {
             "{language} has no system-path fallback under air gap"
         );
         assert_eq!(manifest.denied_downloads.len(), 1);
+        let denied = &manifest.denied_downloads[0];
+        assert!(
+            denied.starts_with(format!("{display_name}:").as_str()),
+            "{language} denial must name its own adapter, got {denied}"
+        );
+        assert!(
+            denied.contains(
+                "https://registry.npmjs.org/typescript-language-server/-/typescript-language-server-6.0.0.tgz"
+            ),
+            "{language} denial must name the pinned archive url, got {denied}"
+        );
+        assert!(
+            denied.contains("policy://lsp-download/typescript-language-server"),
+            "{language} denial must name the policy gate, got {denied}"
+        );
+        assert!(
+            denied.contains("6e23b48efc76af4e70928cdfe62ea6e6cfef67ab4c1e7579c4e82dd284fbdfd2"),
+            "{language} denial must carry the pinned digest, got {denied}"
+        );
     }
 }
 
@@ -900,6 +928,201 @@ fn no_tier_two_typescript_or_javascript_entry_resolves_by_bare_path_name() {
         "the only PATH-resolved TypeScript-family entry is the documented \
          tailwindcss exception"
     );
+}
+
+/// A version padded with surrounding whitespace is not an exact pin, and the
+/// value the resolver reports is the value it validated.
+///
+/// `resolve_downloaded_process` used to validate `metadata.version.trim()`
+/// while reporting `metadata.version` untrimmed, so `" 6.0.0 "` passed the pin
+/// check here and then failed the byte-equality comparison in
+/// `crates/legion-app/src/language/startup_authority.rs`
+/// (`metadata.version != descriptor.version`) — a rejection a long way from its
+/// cause. `metadata.package_name` carried the identical asymmetry: only
+/// `trim().is_empty()` was checked here while the same authority compares it
+/// byte for byte.
+#[test]
+fn whitespace_padded_version_is_not_accepted_as_an_exact_pin() {
+    assert!(legion_lsp::is_exact_pinned_version("6.0.0"));
+    for padded in [
+        " 6.0.0",
+        "6.0.0 ",
+        " 6.0.0 ",
+        "\t6.0.0",
+        "6.0.0\n",
+        "6.0.0\r\n",
+    ] {
+        assert!(
+            !legion_lsp::is_exact_pinned_version(padded),
+            "{padded:?} must not be accepted as an exact pinned release"
+        );
+    }
+
+    let digest = legion_lsp::TYPESCRIPT_LANGUAGE_SERVER_ARCHIVE.checksum_sha256;
+    let root = std::env::temp_dir().join(format!("legion-lsp-padded-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("package/lib")).expect("package");
+    std::fs::write(root.join("package/lib/cli.mjs"), b"entry").expect("entrypoint");
+    let node = root.join("node");
+    std::fs::write(&node, b"node").expect("node");
+
+    // Positive control through the same fixture: the unpadded pin resolves, so
+    // the rejections below are about the padding and not a broken fixture.
+    let pinned = typescript_plan_with("6.0.0", digest);
+    pinned
+        .resolve_downloaded_process(&root, &node, "v22.22.2", digest)
+        .expect("the exact pin must resolve through this fixture");
+
+    for padded in [" 6.0.0", "6.0.0 ", " 6.0.0 "] {
+        let adapter = typescript_plan_with(padded, digest);
+        assert_eq!(
+            adapter.resolve_downloaded_process(&root, &node, "v22.22.2", digest),
+            Err(LspDownloadedArtifactResolveError::UnpinnedPackageVersion {
+                value: padded.to_string(),
+            }),
+            "{padded:?} must be rejected, and the reported value must be the \
+             same bytes that were validated"
+        );
+    }
+
+    // The same rule on `package_name`, and a padded name is still
+    // distinguishable from an absent one.
+    assert_eq!(
+        plan_with_package_name(" typescript-language-server ", digest)
+            .resolve_downloaded_process(&root, &node, "v22.22.2", digest),
+        Err(LspDownloadedArtifactResolveError::PaddedPackageName {
+            value: " typescript-language-server ".to_string(),
+        })
+    );
+    assert_eq!(
+        plan_with_package_name("   ", digest)
+            .resolve_downloaded_process(&root, &node, "v22.22.2", digest),
+        Err(LspDownloadedArtifactResolveError::EmptyPackageName)
+    );
+    plan_with_package_name("typescript-language-server", digest)
+        .resolve_downloaded_process(&root, &node, "v22.22.2", digest)
+        .expect("the unpadded package name must still resolve");
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+/// Moving the pinned archive descriptors into `legion_lsp::pinned_archives`
+/// must not move any caller's path: the crate-root name and the module path
+/// resolve to the same item, and the identity itself survived byte for byte.
+#[test]
+fn pinned_archive_constants_are_reachable_from_the_crate_root_after_extraction() {
+    let server: legion_lsp::LspPinnedArchive = legion_lsp::TYPESCRIPT_LANGUAGE_SERVER_ARCHIVE;
+    let compiler: legion_lsp::LspPinnedArchive = legion_lsp::TYPESCRIPT_COMPILER_ARCHIVE;
+    assert_eq!(
+        server,
+        legion_lsp::pinned_archives::TYPESCRIPT_LANGUAGE_SERVER_ARCHIVE
+    );
+    assert_eq!(
+        compiler,
+        legion_lsp::pinned_archives::TYPESCRIPT_COMPILER_ARCHIVE
+    );
+    assert_eq!(
+        legion_lsp::TYPESCRIPT_LANGUAGE_SERVER_POLICY_GATE,
+        legion_lsp::pinned_archives::TYPESCRIPT_LANGUAGE_SERVER_POLICY_GATE
+    );
+
+    assert_eq!(server.package_name, "typescript-language-server");
+    assert_eq!(server.version, "6.0.0");
+    assert_eq!(
+        server.archive_url,
+        "https://registry.npmjs.org/typescript-language-server/-/typescript-language-server-6.0.0.tgz"
+    );
+    assert_eq!(
+        server.checksum_sha256,
+        "6e23b48efc76af4e70928cdfe62ea6e6cfef67ab4c1e7579c4e82dd284fbdfd2"
+    );
+    assert_eq!(server.archive_format, "tar.gz");
+    assert_eq!(server.package_root, "package");
+    assert_eq!(server.entrypoint, "lib/cli.mjs");
+    assert_eq!(
+        server.minimum_node,
+        LspNodeVersion {
+            major: 22,
+            minor: 22,
+            patch: 2,
+        }
+    );
+
+    assert_eq!(compiler.package_name, "typescript");
+    assert_eq!(compiler.version, "6.0.3");
+    assert_eq!(
+        compiler.archive_url,
+        "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz"
+    );
+    assert_eq!(
+        compiler.checksum_sha256,
+        "33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a"
+    );
+    assert_eq!(compiler.archive_format, "tar.gz");
+    assert_eq!(compiler.package_root, "package");
+    assert_eq!(compiler.entrypoint, "lib/tsserver.js");
+    assert_eq!(
+        compiler.minimum_node,
+        LspNodeVersion {
+            major: 14,
+            minor: 17,
+            patch: 0,
+        }
+    );
+
+    assert_eq!(
+        legion_lsp::TYPESCRIPT_LANGUAGE_SERVER_POLICY_GATE,
+        "policy://lsp-download/typescript-language-server"
+    );
+
+    // The moved predicate is still exported from the crate root and still
+    // refuses a dist-tag.
+    assert!(legion_lsp::is_exact_pinned_version(server.version));
+    assert!(!legion_lsp::is_exact_pinned_version("latest"));
+
+    // `LspPinnedArchive::metadata` moved with the type and still builds the
+    // catalog metadata the registry registers its entries from.
+    let metadata: LspDownloadedArtifactMetadata = server.metadata();
+    assert_eq!(metadata.package_name, "typescript-language-server");
+    assert_eq!(metadata.version, "6.0.0");
+    assert_eq!(metadata.archive_format, "tar.gz");
+    assert_eq!(metadata.package_root, std::path::Path::new("package"));
+    assert_eq!(metadata.entrypoint, std::path::Path::new("lib/cli.mjs"));
+    assert_eq!(
+        metadata.runtime,
+        LspArtifactRuntime::Node {
+            minimum_version: LspNodeVersion {
+                major: 22,
+                minor: 22,
+                patch: 2,
+            }
+        }
+    );
+}
+
+/// Builds a TypeScript adapter that differs from the pinned catalog entry only
+/// in its `metadata.package_name`, so a rejection is attributable to that
+/// field.
+fn plan_with_package_name(
+    package_name: &str,
+    checksum: &str,
+) -> legion_lsp::LanguageServerAdapterPlan {
+    let archive = legion_lsp::TYPESCRIPT_LANGUAGE_SERVER_ARCHIVE;
+    let mut metadata = archive.metadata();
+    metadata.package_name = package_name.to_string();
+    legion_lsp::LanguageServerAdapterPlan::downloaded_package_artifact(
+        legion_protocol::LanguageServerId(903),
+        WorkspaceId(1),
+        LanguageId("typescript".to_string()),
+        "typescript-language-server (fixture)",
+        archive.package_name,
+        archive.archive_url,
+        checksum,
+        legion_lsp::TYPESCRIPT_LANGUAGE_SERVER_POLICY_GATE,
+        metadata,
+        vec!["--stdio".to_string()],
+        true,
+    )
 }
 
 /// Builds a TypeScript adapter that differs from the pinned catalog entry only

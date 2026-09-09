@@ -6,6 +6,8 @@
 pub mod diagnostics;
 /// LSP feature request builders and projection module.
 pub mod features;
+/// Pinned npm archive descriptors approved for downloaded language servers.
+pub mod pinned_archives;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -33,6 +35,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
+
+use pinned_archives::is_sha256_digest;
+// Re-exported at the crate root so the extraction is transparent: every
+// existing `legion_lsp::NAME` path keeps resolving after the move.
+pub use pinned_archives::{
+    LspPinnedArchive, TYPESCRIPT_COMPILER_ARCHIVE, TYPESCRIPT_LANGUAGE_SERVER_ARCHIVE,
+    TYPESCRIPT_LANGUAGE_SERVER_POLICY_GATE, is_exact_pinned_version,
+};
 
 /// Result type used by the LSP runtime crate.
 pub type LspRuntimeResult<T> = Result<T, LspRuntimeError>;
@@ -335,94 +345,6 @@ pub struct LspDownloadedArtifactMetadata {
     pub runtime: LspArtifactRuntime,
 }
 
-/// Pinned identity of one npm archive approved for a language server.
-///
-/// Every field is exact: a released version rather than a range or dist-tag,
-/// and a SHA-256 recomputed from the retained archive rather than transcribed
-/// from a registry manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LspPinnedArchive {
-    /// Package name recorded by the package manifest.
-    pub package_name: &'static str,
-    /// Exact pinned release.
-    pub version: &'static str,
-    /// Archive URL this exact release is fetched from.
-    pub archive_url: &'static str,
-    /// SHA-256 of the archive.
-    pub checksum_sha256: &'static str,
-    /// Archive format (for example, `tar.gz`).
-    pub archive_format: &'static str,
-    /// Relative package root inside the materialized artifact directory.
-    pub package_root: &'static str,
-    /// Relative executable entrypoint below `package_root`.
-    pub entrypoint: &'static str,
-    /// Minimum Node runtime declared by the package.
-    pub minimum_node: LspNodeVersion,
-}
-
-impl LspPinnedArchive {
-    /// Returns the owned packaging metadata described by this pinned archive.
-    pub fn metadata(&self) -> LspDownloadedArtifactMetadata {
-        LspDownloadedArtifactMetadata {
-            package_name: self.package_name.to_string(),
-            version: self.version.to_string(),
-            archive_format: self.archive_format.to_string(),
-            package_root: PathBuf::from(self.package_root),
-            entrypoint: PathBuf::from(self.entrypoint),
-            runtime: LspArtifactRuntime::Node {
-                minimum_version: self.minimum_node,
-            },
-        }
-    }
-}
-
-/// The approved `typescript-language-server` release for the tier-two
-/// registry. The digest is the SHA-256 of the retained
-/// `typescript-language-server-6.0.0.tgz` (515,598 bytes) and the Node minimum
-/// is the `engines.node` constraint declared by that same release.
-pub const TYPESCRIPT_LANGUAGE_SERVER_ARCHIVE: LspPinnedArchive = LspPinnedArchive {
-    package_name: "typescript-language-server",
-    version: "6.0.0",
-    archive_url: "https://registry.npmjs.org/typescript-language-server/-/typescript-language-server-6.0.0.tgz",
-    checksum_sha256: "6e23b48efc76af4e70928cdfe62ea6e6cfef67ab4c1e7579c4e82dd284fbdfd2",
-    archive_format: "tar.gz",
-    package_root: "package",
-    entrypoint: "lib/cli.mjs",
-    minimum_node: LspNodeVersion {
-        major: 22,
-        minor: 22,
-        patch: 2,
-    },
-};
-
-/// The peer `typescript` compiler release whose `lib/tsserver.js` the pinned
-/// language server drives.
-///
-/// [`LspDownloadedArtifactMetadata`] describes exactly one archive and one
-/// entrypoint, so the registry has no first-class representation for a peer
-/// archive. This constant records the peer's pinned identity as its own
-/// descriptor so a caller can verify it; it is deliberately not folded into
-/// the language server's descriptor, which would misreport two archives as
-/// one.
-pub const TYPESCRIPT_COMPILER_ARCHIVE: LspPinnedArchive = LspPinnedArchive {
-    package_name: "typescript",
-    version: "6.0.3",
-    archive_url: "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
-    checksum_sha256: "33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a",
-    archive_format: "tar.gz",
-    package_root: "package",
-    entrypoint: "lib/tsserver.js",
-    minimum_node: LspNodeVersion {
-        major: 14,
-        minor: 17,
-        patch: 0,
-    },
-};
-
-/// Policy gate authorizing the pinned TypeScript language-server download.
-pub const TYPESCRIPT_LANGUAGE_SERVER_POLICY_GATE: &str =
-    "policy://lsp-download/typescript-language-server";
-
 /// Failure while resolving a materialized downloaded artifact into a process.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LspDownloadedArtifactResolveError {
@@ -489,6 +411,16 @@ pub enum LspDownloadedArtifactResolveError {
     /// Catalog metadata omitted the package name.
     #[error("downloaded artifact package_name is empty")]
     EmptyPackageName,
+    /// Catalog metadata pads the package name with surrounding whitespace.
+    ///
+    /// The name is compared byte for byte against the artifact descriptor by
+    /// the app-owned startup authority, so a padded name that passed a
+    /// trimming check here would fail there instead, far from its cause.
+    #[error("downloaded artifact package_name {value:?} has surrounding whitespace")]
+    PaddedPackageName {
+        /// Package name text carrying leading or trailing whitespace.
+        value: String,
+    },
     /// Catalog metadata omitted the package version.
     #[error("downloaded artifact version is empty")]
     EmptyPackageVersion,
@@ -666,6 +598,16 @@ impl LanguageServerAdapterPlan {
         if metadata.package_name.trim().is_empty() {
             return Err(LspDownloadedArtifactResolveError::EmptyPackageName);
         }
+        // Validate the bytes that are reported and compared, not a trimmed
+        // copy of them. `startup_authority` compares `metadata.package_name`
+        // and `metadata.version` byte for byte against the pinned descriptor,
+        // so a check that silently normalizes here only relocates the failure
+        // to a site that cannot explain it.
+        if metadata.package_name != metadata.package_name.trim() {
+            return Err(LspDownloadedArtifactResolveError::PaddedPackageName {
+                value: metadata.package_name.clone(),
+            });
+        }
         if metadata.version.trim().is_empty() {
             return Err(LspDownloadedArtifactResolveError::EmptyPackageVersion);
         }
@@ -673,7 +615,9 @@ impl LanguageServerAdapterPlan {
         // artifact: what it resolves to changes under the product's feet, so a
         // digest recorded beside it cannot mean anything. Reject the unpinned
         // catalog entry before comparing any materializer receipt against it.
-        if !is_exact_pinned_version(metadata.version.trim()) {
+        // A padded version is rejected here too: ` 6.0.0 ` is not the byte
+        // string the descriptor literal contains.
+        if !is_exact_pinned_version(&metadata.version) {
             return Err(LspDownloadedArtifactResolveError::UnpinnedPackageVersion {
                 value: metadata.version.clone(),
             });
@@ -775,48 +719,6 @@ impl LanguageServerAdapterPlan {
             cwd: self.process.cwd.clone(),
             env: self.process.env.clone(),
         })
-    }
-}
-
-fn is_sha256_digest(value: &str) -> bool {
-    value.len() == 64
-        && value.bytes().all(|byte| {
-            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte) || (b'A'..=b'F').contains(&byte)
-        })
-}
-
-/// Returns whether `value` names one exact release rather than a range or a
-/// dist-tag.
-///
-/// `6.0.0` and `6.0.0-rc.1` are exact pins. `^6.0.0`, `~6.0`, `>=6.0.0`,
-/// `1.x`, `6.0`, `*`, `latest` and `next` are not: each can resolve to a
-/// different archive over time, so no digest recorded beside them is
-/// verifiable.
-pub fn is_exact_pinned_version(value: &str) -> bool {
-    let (core, suffix) = match value.find(['-', '+']) {
-        Some(index) => (&value[..index], Some(&value[index + 1..])),
-        None => (value, None),
-    };
-    let mut components = core.split('.');
-    for _ in 0..3 {
-        let Some(component) = components.next() else {
-            return false;
-        };
-        if component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit()) {
-            return false;
-        }
-    }
-    if components.next().is_some() {
-        return false;
-    }
-    match suffix {
-        None => true,
-        Some(suffix) => {
-            !suffix.is_empty()
-                && suffix.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'+'
-                })
-        }
     }
 }
 
