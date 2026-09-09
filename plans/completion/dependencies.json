@@ -548,7 +548,7 @@
       ],
       "external_prerequisites": [
         "A real TypeScript and JavaScript language-server, browser and debug-adapter setup with owner-selected releases.",
-        "A usable Pyright artifact; the current registry entry points at the deliberate placeholder host registry.example.invalid.",
+        "The pinned Pyright 1.1.400 archive materialized on the target host, either by letting the policy://lsp-download/pyright gate reach https://registry.npmjs.org/pyright/-/pyright-1.1.400.tgz or by provisioning that exact archive locally, together with a Node runtime of at least 14.0.0; until it is materialized the registry entry resolves to ArtifactNotMaterialized rather than to a launchable server.",
         "A Python interpreter, an isolated virtual environment and a debugpy release installed on the target host."
       ],
       "owner_role": "luna_worker",
