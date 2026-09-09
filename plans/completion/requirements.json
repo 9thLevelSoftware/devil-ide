@@ -973,7 +973,7 @@
     {
       "id": "COMP-P1-F1-T2-1",
       "title": "legion-ui remains projection-only.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -1002,9 +1002,19 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-GUI-HARNESS-SOURCE-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-P1-F1-T1-1",
+        "COMP-PLAT-002"
+      ],
       "defect_ids": []
     },
     {
@@ -1047,7 +1057,7 @@
     {
       "id": "COMP-P1-F1-T4-1",
       "title": "Evidence document exists and cites the exact SHA + command output it was generated from.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -1076,9 +1086,18 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-GUI-HARNESS-SOURCE-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-P1-F1-T1-1"
+      ],
       "defect_ids": []
     },
     {
@@ -1260,7 +1279,7 @@
     {
       "id": "COMP-P1-F3-T1-1",
       "title": "The CI gate fails if egui::TextEdit is reintroduced into the code canvas.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -1289,9 +1308,19 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-GUI-HARNESS-SOURCE-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-P1-F3-T2-1",
+        "COMP-EDIT-008"
+      ],
       "defect_ids": []
     },
     {
@@ -1517,7 +1546,7 @@
     {
       "id": "COMP-P1-F4-T1-1",
       "title": "Test exists in ignored form, then is un-ignored once streaming mode is implemented.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -1546,9 +1575,19 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-GUI-HARNESS-SOURCE-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-P1-F4-T2-1",
+        "COMP-P1-F4-T4-1"
+      ],
       "defect_ids": []
     },
     {
@@ -1686,7 +1725,7 @@
     {
       "id": "COMP-P1-F4-T5-1",
       "title": "100MB workload is in the standard perf-harness run, not a side script.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -1715,9 +1754,19 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-PERF-HARNESS-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-P1-F4-T2-1",
+        "COMP-PLAT-006"
+      ],
       "defect_ids": []
     },
     {
@@ -3441,7 +3490,7 @@
     {
       "id": "COMP-P3-F4-T1-1",
       "title": "Each rule has a stable id and an enumerated test case.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -3470,9 +3519,20 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-CLASSIFIER-RULES-AND-SMOKE-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-P3-F4-T2-1",
+        "COMP-P3-F4-T3-1",
+        "COMP-P3-F4-T4-1"
+      ],
       "defect_ids": []
     },
     {
@@ -3742,7 +3802,7 @@
     {
       "id": "COMP-P4-F1-T4-1",
       "title": "Recorded smoke tests run in offline CI; live smoke tests are gated by credential availability.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -3771,9 +3831,19 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-CLASSIFIER-RULES-AND-SMOKE-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-PROV-005",
+        "COMP-PROV-011"
+      ],
       "defect_ids": []
     },
     {
@@ -5407,7 +5477,7 @@
     {
       "id": "COMP-P6-F4-T1-1",
       "title": "A fresh ADR exists and the dependency policy reflects the choice.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -5436,9 +5506,18 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-ADR-DEPENDENCY-POLICY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-15-04"
+      ],
       "defect_ids": []
     },
     {
@@ -5620,7 +5699,7 @@
     {
       "id": "COMP-P7-F1-T1-1",
       "title": "Dependency policy admits the chosen runtime and the ADR explains the choice.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -5649,9 +5728,18 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-ADR-DEPENDENCY-POLICY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-17-02"
+      ],
       "defect_ids": []
     },
     {
@@ -6204,7 +6292,7 @@
     {
       "id": "COMP-P8-F2-T1-1",
       "title": "Strategy and manifest format are documented in an ADR and reflected in the pipeline config.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6233,9 +6321,19 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-ADR-DEPENDENCY-POLICY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-DIST-005",
+        "COMP-SCOPE-GAP-03"
+      ],
       "defect_ids": []
     },
     {
@@ -6462,7 +6560,7 @@
     {
       "id": "COMP-P8-F4-T1-1",
       "title": "xtask perf-harness enforces product workloads, not only synthetic stand-ins.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6491,15 +6589,26 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-PERF-HARNESS-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-PLAT-005",
+        "COMP-PLAT-006",
+        "COMP-SCOPE-GAP-09"
+      ],
       "defect_ids": []
     },
     {
       "id": "COMP-P8-F4-T2-1",
       "title": "Perf-harness runs on all three OSes and archives the reports.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6528,15 +6637,25 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-PERF-HARNESS-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-PLAT-006",
+        "COMP-SCOPE-GAP-09"
+      ],
       "defect_ids": []
     },
     {
       "id": "COMP-P8-F4-T3-1",
       "title": "Each CI run archives a trend entry and the strict flag fails the build on regression.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6565,9 +6684,19 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-PERF-HARNESS-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-PLAT-006",
+        "COMP-SCOPE-GAP-09"
+      ],
       "defect_ids": []
     },
     {
@@ -6709,7 +6838,7 @@
     {
       "id": "COMP-P9-F1-T1-1",
       "title": "Agent/product changes have measurable eval regression gates.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6738,15 +6867,26 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-BENCH-EVAL-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-12-13",
+        "COMP-SCOPE-FAMILY-13-11",
+        "COMP-TRUST-006"
+      ],
       "defect_ids": []
     },
     {
       "id": "COMP-P9-F1-T2-1",
       "title": "Each hostile fixture is scored and any successful exfiltration is a hard fail.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6775,15 +6915,26 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-BENCH-EVAL-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-TRUST-002",
+        "COMP-TRUST-006",
+        "COMP-CTX-010"
+      ],
       "defect_ids": []
     },
     {
       "id": "COMP-P9-F1-T3-1",
       "title": "CI always runs recorded mode; live mode is opt-in and scheduled.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6812,15 +6963,26 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-BENCH-EVAL-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-12-13",
+        "COMP-SCOPE-FAMILY-13-11",
+        "COMP-PROV-011"
+      ],
       "defect_ids": []
     },
     {
       "id": "COMP-P9-F1-T4-1",
       "title": "Bench scoring executes real fixture tasks (not synthetic budget arithmetic); the corpus spans >=15 tasks across >=3 fixture repos with a held-out subset; the raw (ungoverned) baseline for the reference local model is recorded with a task-set hash under plans/evidence/production/BENCH/baseline-raw-v1.md.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -6849,9 +7011,20 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-BENCH-EVAL-GATES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-12-13",
+        "COMP-SCOPE-FAMILY-13-11",
+        "COMP-PROV-011"
+      ],
       "defect_ids": []
     },
     {
@@ -7039,7 +7212,7 @@
     {
       "id": "COMP-P9-F3-T1-1",
       "title": "A fresh ADR exists and links the chosen CRDT/operation layer to the existing collaboration substrate.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -7068,9 +7241,20 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-ADR-DEPENDENCY-POLICY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-COLLAB-003",
+        "COMP-COLLAB-004",
+        "COMP-COLLAB-005"
+      ],
       "defect_ids": []
     },
     {
@@ -7105,8 +7289,16 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-COLLAB-CONVERGENCE",
+        "SC-COLLAB-DELIVERY-DURABILITY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -7142,15 +7334,22 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-CLOUD-LANE-EGRESS-MANIFEST"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
     {
       "id": "COMP-P9-F3-T4-1",
       "title": "Each surface has its own ADR, policy, tests, and product evidence before readiness status changes.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -7179,15 +7378,26 @@
       "depends_on": [],
       "implementation": "implemented",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-ADR-DEPENDENCY-POLICY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-17-11",
+        "COMP-REMOTE-017",
+        "COMP-ENT-006"
+      ],
       "defect_ids": []
     },
     {
       "id": "COMP-P9-F4-T1-1",
       "title": "End-to-end consented trace -> adapter -> eval comparison is reproducible.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -7216,9 +7426,18 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-TRAINING-PIPELINE-REPRODUCIBILITY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-TRAIN-009"
+      ],
       "defect_ids": []
     },
     {
@@ -7268,7 +7487,7 @@
     {
       "id": "COMP-P9-F4-T3-1",
       "title": "Adapter training is reproducible and the comparison vs Legion-Bench baseline is archived.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -7297,9 +7516,18 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-TRAINING-PIPELINE-REPRODUCIBILITY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-TRAIN-009"
+      ],
       "defect_ids": []
     },
     {
@@ -8840,8 +9068,15 @@
       "owner_role": "luna_worker",
       "depends_on": [],
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-CANVAS-GROUPS-DERIVED-EDGES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": [],
       "id": "COMP-CAN-005",
@@ -8991,8 +9226,15 @@
       "owner_role": "luna_worker",
       "depends_on": [],
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-CANVAS-GROUPS-DERIVED-EDGES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": [],
       "id": "COMP-CAN-008",
@@ -9778,7 +10020,7 @@
     {
       "id": "COMP-LANG-001",
       "title": "The canonical language matrix names supported Rust, TypeScript, JavaScript, and Python project types, toolchains, language servers, formatters, test runners, build/task runners, debug adapters, supported OS/version entries, package or environment discovery prerequisites, and representative fixture/project identity with fixture hashes and provenance records.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -9809,9 +10051,29 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-STAGE0-LANGUAGE-BTD-MATRIX"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-LANG-002",
+        "COMP-LANG-003",
+        "COMP-LANG-004",
+        "COMP-LANG-005",
+        "COMP-LANG-006",
+        "COMP-LANG-007",
+        "COMP-LANG-008",
+        "COMP-LANG-009",
+        "COMP-LANG-010",
+        "COMP-LANG-011",
+        "COMP-LANG-012",
+        "COMP-LANG-013"
+      ],
       "defect_ids": []
     },
     {
@@ -10733,7 +10995,7 @@
     {
       "id": "COMP-BTD-001",
       "title": "The approved build/test/debug matrix names Rust, TypeScript, JavaScript, and Python project configurations, package and environment discovery, build/task and test runners, debug adapters, launch settings, supported versions and OS coverage, with prerequisite and unavailable states.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -10760,9 +11022,25 @@
       "depends_on": [],
       "implementation": "partial",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-STAGE0-LANGUAGE-BTD-MATRIX"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-BTD-002",
+        "COMP-BTD-003",
+        "COMP-BTD-004",
+        "COMP-BTD-005",
+        "COMP-BTD-006",
+        "COMP-BTD-007",
+        "COMP-BTD-008",
+        "COMP-BTD-009"
+      ],
       "defect_ids": []
     },
     {
@@ -13695,7 +13973,7 @@
         { "path": "crates/legion-app/src/language/download.rs", "identity": "existing approved artifact download/hash pattern" },
         { "path": "crates/legion-ai-providers/tests/provider_activation.rs", "identity": "provider activation fixture boundary" }
       ],
-      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-AI-MODEL-ACQUISITION"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-PROV-009",
@@ -13707,7 +13985,7 @@
         { "path": "plans/evidence/production/BENCH/baseline-raw-v1.md", "identity": "reference hardware and model resource observations" },
         { "path": "crates/legion-app/src/local_ai_diagnosis.rs", "identity": "local AI prerequisite diagnosis" }
       ],
-      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-AI-MODEL-ACQUISITION"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-PROV-010",
@@ -13719,7 +13997,7 @@
         { "path": "crates/legion-ai-providers/src/lib.rs", "identity": "provider lifecycle adapters" },
         { "path": "crates/legion-app/src/product_ai_lane.rs", "identity": "app-owned AI route lifecycle" }
       ],
-      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-03", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-AI-MANAGED-RUNTIME-LIFECYCLE"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-PROV-011",
@@ -13732,7 +14010,7 @@
         { "path": "xtask/src/completion/schema.rs", "identity": "EvidenceRun schema and acceptance data model" },
         { "path": "crates/legion-desktop/tests/provider_key_entry.rs", "identity": "existing provider setup reachability evidence" }
       ],
-      "legacy_ids": [], "stage": "S3", "package_id": "S3-07", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "legacy_ids": [], "stage": "S3", "package_id": "S3-07", "owner_role": "luna_worker", "depends_on": [], "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-AI-MANAGED-RUNTIME-LIFECYCLE", "SC-AI-MODEL-ACQUISITION", "SC-AI-PROVIDER-SETUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
         "id": "COMP-CTX-001",
@@ -14506,8 +14784,15 @@
       ],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-AI-ASSIST-SESSION-DURABILITY"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -14688,7 +14973,9 @@
       ],
       "legacy_ids": [], "stage": "S3", "package_id": "S3-06", "owner_role": "sol_engineer",
       "depends_on": ["COMP-P3-F3-T1-1", "COMP-P3-F3-T2-1", "COMP-P3-F3-T3-1", "COMP-P3-F3-T4-1", "COMP-SCOPE-FAMILY-13-06"], "implementation": "absent", "acceptance": "unassessed",
-      "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "scenario_ids": [
+        "SC-AI-DELEGATE-CHECKPOINT-RESUME"
+      ], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-SCOPE-FAMILY-13-09",
@@ -15351,7 +15638,7 @@
     {
       "id": "COMP-SCOPE-FAMILY-15-01",
       "title": "Stage 0 publishes the S0-02 compatibility contract naming supported MCP and ACP protocol versions, ratified transports, named peer implementations, roles, capabilities, credentials, privacy/redaction boundaries, and executable acceptance configurations for S4-01 to consume.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         {
@@ -15378,9 +15665,20 @@
       "depends_on": [],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-STAGE0-INTEROP-EXTENSION-CONTRACT"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-15-02",
+        "COMP-SCOPE-FAMILY-15-03",
+        "COMP-SCOPE-FAMILY-15-04"
+      ],
       "defect_ids": []
     },
     {
@@ -15780,7 +16078,7 @@
     {
       "id": "COMP-SCOPE-FAMILY-17-01",
       "title": "Stage 0 ratifies the complete extension-host contract: supported VS Code API/contribution/version matrix, WASM WIT ABI, Node/web-worker isolation, Tier 3 security, storage scopes, lifecycle states, and versioned host envelopes.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "required feature families: extensions" },
@@ -15796,9 +16094,22 @@
       "depends_on": ["COMP-SCOPE-FAMILY-15-01"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
-      "protected_product_ids": [],
+      "scenario_ids": [
+        "SC-REPO-STAGE0-INTEROP-EXTENSION-CONTRACT"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE",
+        "CFG-MAC15-ARM64-RUST-WORKSPACE",
+        "CFG-MAC15-X64-RUST-WORKSPACE",
+        "CFG-WIN11-X64-RUST-WORKSPACE"
+      ],
+      "protected_product_ids": [
+        "COMP-SCOPE-FAMILY-17-02",
+        "COMP-SCOPE-FAMILY-17-03",
+        "COMP-SCOPE-FAMILY-17-04",
+        "COMP-SCOPE-FAMILY-17-06",
+        "COMP-SCOPE-FAMILY-17-07"
+      ],
       "defect_ids": []
     },
     {
@@ -15942,8 +16253,15 @@
       "depends_on": ["COMP-SCOPE-FAMILY-17-01", "COMP-SCOPE-FAMILY-17-02"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-EXT-STORAGE-SCOPES"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -15965,8 +16283,15 @@
       "depends_on": ["COMP-SCOPE-FAMILY-17-01", "COMP-SCOPE-FAMILY-17-04", "COMP-SCOPE-FAMILY-17-06"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-EXT-VSCODE-HOST-RUNTIME"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -15987,8 +16312,15 @@
       "depends_on": ["COMP-SCOPE-FAMILY-17-07"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-EXT-WEBVIEW-CHANNEL"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -16009,8 +16341,15 @@
       "depends_on": ["COMP-SCOPE-FAMILY-17-07"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-EXT-NOTEBOOK-RUNTIME"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -16031,8 +16370,15 @@
       "depends_on": ["COMP-SCOPE-FAMILY-17-07", "COMP-SCOPE-FAMILY-17-06"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-EXT-CUSTOM-EDITOR"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
@@ -16053,15 +16399,27 @@
       "depends_on": ["COMP-SCOPE-FAMILY-17-02", "COMP-SCOPE-FAMILY-17-04", "COMP-SCOPE-FAMILY-17-05", "COMP-SCOPE-FAMILY-17-06", "COMP-SCOPE-FAMILY-17-07", "COMP-SCOPE-FAMILY-17-08", "COMP-SCOPE-FAMILY-17-09", "COMP-SCOPE-FAMILY-17-10"],
       "implementation": "absent",
       "acceptance": "unassessed",
-      "scenario_ids": [],
-      "configuration_ids": [],
+      "scenario_ids": [
+        "SC-EXT-CUSTOM-EDITOR",
+        "SC-EXT-NOTEBOOK-RUNTIME",
+        "SC-EXT-STORAGE-SCOPES",
+        "SC-EXT-VSCODE-HOST-RUNTIME",
+        "SC-EXT-WASM-LIFECYCLE",
+        "SC-EXT-WEBVIEW-CHANNEL"
+      ],
+      "configuration_ids": [
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-WIN11-X64-PRODUCT-JOURNEY"
+      ],
       "protected_product_ids": [],
       "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-001",
       "title": "Stage 0 ratifies finite SSH and dev-container host, image, architecture, identity, credential, agent, language, terminal, debug, extension, and port-forwarding configurations with named versions, prerequisites, and external acceptance oracles.",
-      "kind": "product",
+      "kind": "internal",
       "required": true,
       "source_refs": [
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-18 remote development and finite remote-host matrix" },
@@ -16069,7 +16427,7 @@
         { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "S6 candidate matrix and external prerequisites" }
       ],
       "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-STAGE0-REMOTE-COLLAB-TRAINING-MATRIX"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-REMOTE-002", "COMP-REMOTE-003", "COMP-REMOTE-017"], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-002",
@@ -16081,7 +16439,7 @@
         { "path": "crates/legion-remote/src/lib.rs", "identity": "RemoteConnectionSpec and plan_ssh_session" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-001"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-SSH-CONNECT"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-003",
@@ -16093,7 +16451,7 @@
         { "path": "plans/adrs/ADR-0024-remote-execution-boundary.md", "identity": "bounded remote execution boundary" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-001"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-CONTAINER-CONNECT"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-004",
@@ -16106,7 +16464,7 @@
         { "path": "crates/legion-remote-transport/src/lib.rs", "identity": "RemoteTransportStateMachine handshake, replay, flow, and health" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-05", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-002", "COMP-REMOTE-003"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-WORKSPACE-IDENTITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-005",
@@ -16118,7 +16476,7 @@
         { "path": "crates/legion-remote/src/lib.rs", "identity": "RemoteFilesystemSnapshot and filesystem operation handlers" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-FILES-EDIT-SAVE"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-006",
@@ -16131,7 +16489,7 @@
         { "path": "plans/completion/requirements.json", "identity": "COMP-PRES-001, COMP-PRES-008 canonical local save/conflict outcomes" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-005", "COMP-PRES-001", "COMP-PRES-008"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-FILES-EDIT-SAVE"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-007",
@@ -16143,7 +16501,7 @@
         { "path": "plans/adrs/ADR-0024-remote-execution-boundary.md", "identity": "bounded descriptor and cancellation rules" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-NAV-008"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-SEARCH"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-008",
@@ -16155,7 +16513,7 @@
         { "path": "crates/legion-remote/src/lib.rs", "identity": "handle_process_descriptor and handle_pty_descriptor" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-TERM-004", "COMP-TERM-011"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-TERMINAL-TASKS"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-009",
@@ -16168,7 +16526,7 @@
         { "path": "plans/completion/requirements.json", "identity": "COMP-LANG-004, COMP-LANG-007 canonical language lifecycle and proposal outcomes" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-LANG-004", "COMP-LANG-007"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-LSP-SESSIONS"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-010",
@@ -16180,7 +16538,7 @@
         { "path": "plans/completion/requirements.json", "identity": "COMP-BTD-004, COMP-BTD-007, COMP-LANG-011, COMP-LANG-012 canonical local build/test/debug outcomes" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-008", "COMP-REMOTE-009", "COMP-BTD-004", "COMP-BTD-007"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-BUILD-TEST-DEBUG"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-011",
@@ -16192,7 +16550,7 @@
         { "path": "plans/adrs/ADR-0047-extension-distribution.md", "identity": "extension permissions and lifecycle source" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-06", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-SCOPE-FAMILY-17-04"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-EXTENSION-LIFECYCLE"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-012",
@@ -16204,7 +16562,7 @@
         { "path": "plans/adrs/ADR-0023-remote-transport-security.md", "identity": "remote egress and capability denial" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-PORT-FORWARDING"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-013",
@@ -16216,7 +16574,7 @@
         { "path": "crates/legion-remote/src/lib.rs", "identity": "RemoteRuntimeError limits and cancellation-token validation" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-06", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-008", "COMP-REMOTE-009", "COMP-REMOTE-010"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-CANCEL-CLEANUP"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-014",
@@ -16229,7 +16587,7 @@
         { "path": "crates/legion-remote/tests/transport_reconnect_offline.rs", "identity": "forced drop and resume contract tests" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-06", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-REMOTE-013"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-DISCONNECT-RECONNECT"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-015",
@@ -16241,7 +16599,7 @@
         { "path": "crates/legion-remote-transport/src/lib.rs", "identity": "RemoteAgentPackageDescriptor and activate_agent_package" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-06", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-REMOTE-013", "COMP-REMOTE-014"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-AGENT-INSTALL-LIFECYCLE"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-016",
@@ -16254,7 +16612,7 @@
         { "path": "plans/completion/requirements.json", "identity": "COMP-TRUST-004, COMP-TRUST-005, COMP-PRES-003, COMP-PRES-004 canonical safety outcomes" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-006", "COMP-REMOTE-014", "COMP-TRUST-004", "COMP-TRUST-005", "COMP-PRES-003", "COMP-PRES-004"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-EGRESS-PRIVACY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-017",
@@ -16267,7 +16625,7 @@
         { "path": "plans/evidence/phase-7/remote-architecture-map.md", "identity": "deterministic harness versus product UX boundary" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-15", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-001", "COMP-REMOTE-002", "COMP-REMOTE-003", "COMP-REMOTE-005", "COMP-REMOTE-006", "COMP-REMOTE-007", "COMP-REMOTE-008", "COMP-REMOTE-009", "COMP-REMOTE-010", "COMP-REMOTE-011", "COMP-REMOTE-012", "COMP-REMOTE-013", "COMP-REMOTE-014", "COMP-REMOTE-015", "COMP-REMOTE-016", "COMP-REMOTE-018"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-AGENT-INSTALL-LIFECYCLE", "SC-REMOTE-BUILD-TEST-DEBUG", "SC-REMOTE-CANCEL-CLEANUP", "SC-REMOTE-CONTAINER-CONNECT", "SC-REMOTE-DISCONNECT-RECONNECT", "SC-REMOTE-EGRESS-PRIVACY", "SC-REMOTE-EXTENSION-LIFECYCLE", "SC-REMOTE-FILES-EDIT-SAVE", "SC-REMOTE-GIT", "SC-REMOTE-LSP-SESSIONS", "SC-REMOTE-PORT-FORWARDING", "SC-REMOTE-SEARCH", "SC-REMOTE-SSH-CONNECT", "SC-REMOTE-TERMINAL-TASKS", "SC-REMOTE-WORKSPACE-IDENTITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-REMOTE-018",
@@ -16280,19 +16638,19 @@
         { "path": "crates/legion-remote/src/lib.rs", "identity": "current remote runtime operations and absence of Git dispatcher" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-07", "owner_role": "luna_worker", "depends_on": ["COMP-REMOTE-004", "COMP-SCM-001", "COMP-SCM-002", "COMP-SCM-003", "COMP-SCM-006", "COMP-SCM-009", "COMP-SCM-010"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REMOTE-GIT"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-COLLAB-001",
       "title": "Stage 0 publishes a finite collaboration and enterprise identity/policy matrix with supported endpoints, roles, transports, retention, and executable acceptance oracles.",
-      "kind": "product", "required": true,
+      "kind": "internal", "required": true,
       "source_refs": [
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "finite supported-configuration contracts and family-19" },
         { "path": "docs/superpowers/plans/2026-09-04-full-product-completion.md", "identity": "S0-02 compatibility matrices" },
         { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ matrix and endpoint prerequisites" }
       ],
       "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-STAGE0-REMOTE-COLLAB-TRAINING-MATRIX"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-COLLAB-002"], "defect_ids": []
     },
     {
       "id": "COMP-COLLAB-002",
@@ -16305,7 +16663,7 @@
         { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current participant/session runtime" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-08", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-001", "COMP-TRUST-002"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-COLLAB-TENANT-AUTHORITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-COLLAB-003",
@@ -16318,7 +16676,7 @@
         { "path": "plans/evidence/phase-6/collaboration-architecture-map.md", "identity": "accepted local substrate and explicit service gap" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-09", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-002"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-COLLAB-CONTROL-PLANE-SESSION"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-COLLAB-004",
@@ -16330,7 +16688,7 @@
         { "path": "plans/evidence/phase-6/disconnect-reconnect-replay-tests.txt", "identity": "deterministic reconnect/replay evidence" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-09", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-003", "COMP-PRES-003", "COMP-PRES-004"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-COLLAB-DELIVERY-DURABILITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-COLLAB-005",
@@ -16342,7 +16700,7 @@
         { "path": "plans/evidence/phase-6/collaboration-convergence-tests.txt", "identity": "local convergence evidence" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-10", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-003", "COMP-COLLAB-004"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-COLLAB-CONVERGENCE"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-COLLAB-006",
@@ -16355,7 +16713,7 @@
         { "path": "crates/legion-security/src/lib.rs", "identity": "current collaboration capability policy" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-10", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-005", "COMP-TRUST-001", "COMP-TRUST-002", "COMP-TRUST-004", "COMP-PRES-008"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-COLLAB-SHARED-PROPOSALS"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-ENT-001",
@@ -16367,7 +16725,7 @@
         { "path": "crates/legion-security/src/lib.rs", "identity": "current policy/capability security boundary" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-11", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-002", "COMP-COLLAB-003"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-ENTERPRISE-OIDC-IDENTITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-ENT-002",
@@ -16379,7 +16737,7 @@
         { "path": "crates/legion-collaboration/src/lib.rs", "identity": "current runtime has no SCIM API" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-11", "owner_role": "luna_worker", "depends_on": ["COMP-ENT-001", "COMP-COLLAB-003"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-ENTERPRISE-SCIM-PROVISIONING"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-ENT-003",
@@ -16415,7 +16773,7 @@
         { "path": "plans/product-readiness-ledger.md", "identity": "PR-ENT-002 current absence of deployable service" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-14", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-003", "COMP-ENT-003", "COMP-ENT-004"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-ENTERPRISE-SERVICE-OPERATIONS"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-STABLE-SIGNED", "CFG-MAC15-ARM64-STABLE-SIGNED", "CFG-WIN11-X64-STABLE-SIGNED"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-ENT-006",
@@ -16427,19 +16785,19 @@
         { "path": "plans/product-readiness-ledger.md", "identity": "PR-ENT-002 product-workflow status" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-15", "owner_role": "luna_worker", "depends_on": ["COMP-COLLAB-005", "COMP-COLLAB-006", "COMP-ENT-001", "COMP-ENT-002", "COMP-ENT-003", "COMP-ENT-004", "COMP-ENT-005"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-COLLAB-CONTROL-PLANE-SESSION", "SC-COLLAB-CONVERGENCE", "SC-COLLAB-DELIVERY-DURABILITY", "SC-COLLAB-SHARED-PROPOSALS", "SC-COLLAB-TENANT-AUTHORITY", "SC-ENTERPRISE-OIDC-IDENTITY", "SC-ENTERPRISE-POLICY-CEILINGS", "SC-ENTERPRISE-SCIM-PROVISIONING", "SC-ENTERPRISE-SERVICE-OPERATIONS"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-LINUX-UBUNTU-X64-STABLE-SIGNED", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-STABLE-SIGNED", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-STABLE-SIGNED"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-TRAIN-001",
       "title": "Stage 0 publishes a finite telemetry and training matrix naming supported consent modes, retention/export destinations, training corpus and model/runtime configurations, reproducibility thresholds, and Manual/offline privacy rules.",
-      "kind": "product", "required": true,
+      "kind": "internal", "required": true,
       "source_refs": [
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-20 and Stage 0 matrix contract" },
         { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-12/S5-13 Stage 0 dependencies" },
         { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "EvidenceRun and qualification prerequisites" }
       ],
       "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-STAGE0-REMOTE-COLLAB-TRAINING-MATRIX"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-TRAIN-002", "COMP-TRAIN-003", "COMP-TRAIN-004", "COMP-TRAIN-005", "COMP-TRAIN-006", "COMP-TRAIN-009", "COMP-TRAIN-010"], "defect_ids": []
     },
     {
       "id": "COMP-TRAIN-002",
@@ -16506,7 +16864,7 @@
     {
       "id": "COMP-TRAIN-007",
       "title": "The current consented corpus export filters denied, missing, expired, and revoked traces, enforces metadata-only redaction and secret scanning, binds source/corpus/dataset fingerprints, and rejects tampering at the trainer boundary.",
-      "kind": "product", "required": true,
+      "kind": "internal", "required": true,
       "source_refs": [
         { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-13 corpus/export provenance requirements" },
         { "path": "xtask/src/training_corpus.rs", "identity": "consented corpus export and re-check" },
@@ -16514,12 +16872,12 @@
         { "path": "training/README.md", "identity": "supported training input and consent manifest" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-13", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-P9-F4-T1-1", "COMP-P9-F4-T2-1", "COMP-TRAIN-003"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-TRAINING-PIPELINE-REPRODUCIBILITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-TRAIN-005", "COMP-TRAIN-009"], "defect_ids": []
     },
     {
       "id": "COMP-TRAIN-008",
       "title": "A real consent-gated adapter run is reproducible under the ratified model/runtime/hardware matrix and records code, corpus, consent, base revision, tokenizer, seed, hyperparameters, resources, adapter hash, held-out comparison, Legion-Bench comparison, and independent accept/reject review.",
-      "kind": "product", "required": true,
+      "kind": "internal", "required": true,
       "source_refs": [
         { "path": "docs/superpowers/plans/2026-09-04-ai-team-completion.md", "identity": "S5-13 QLoRA/evaluation workflow" },
         { "path": "training/qlora_train.py", "identity": "adapter training entrypoint" },
@@ -16528,7 +16886,7 @@
         { "path": "plans/evidence/training-flywheel/P9-F4-T3-consented-corpus-legion-bench-comparison.md", "identity": "training comparison evidence" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-13", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-TRAIN-007", "COMP-P9-F4-T3-1", "COMP-P9-F1-T1-1"],
-      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "partial", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-TRAINING-PIPELINE-REPRODUCIBILITY"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-TRAIN-009"], "defect_ids": []
     },
     {
       "id": "COMP-TRAIN-010",
@@ -16541,7 +16899,7 @@
         { "path": "training/README.md", "identity": "consented corpus input boundary" }
       ],
       "legacy_ids": [], "stage": "S5", "package_id": "S5-12", "owner_role": "luna_worker", "depends_on": ["COMP-TRAIN-001", "COMP-TRAIN-002", "COMP-TRAIN-003"],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-TRAIN-CANDIDATE-FEEDBACK"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY", "CFG-MAC15-ARM64-PRODUCT-JOURNEY", "CFG-MAC15-X64-PRODUCT-JOURNEY", "CFG-WIN11-X64-PRODUCT-JOURNEY"], "protected_product_ids": [], "defect_ids": []
     },
     {
       "id": "COMP-TRAIN-009",
@@ -16558,14 +16916,14 @@
     {
       "id": "COMP-PLAT-001",
       "title": "Stage 0 publishes a finite native platform matrix naming supported Windows, macOS, and Linux versions/architectures, reference hardware, display/DPI classes, input and accessibility tools, and explicit unavailable or blocked configurations.",
-      "kind": "product", "required": true,
+      "kind": "internal", "required": true,
       "source_refs": [
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-21 and finite OS/hardware/accessibility matrix" },
         { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-02/XQ-03 matrix prerequisites" },
         { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "platform quality and supported platform direction" }
       ],
       "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-STAGE0-PLATFORM-DIST-MATRIX"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-PLAT-002", "COMP-PLAT-003", "COMP-PLAT-004", "COMP-PLAT-005", "COMP-PLAT-006", "COMP-PLAT-007", "COMP-PLAT-008", "COMP-GAP-001", "COMP-SCOPE-GAP-01", "COMP-SCOPE-GAP-05", "COMP-SCOPE-GAP-09"], "defect_ids": []
     },
     {
       "id": "COMP-PLAT-002",
@@ -16677,14 +17035,14 @@
     {
       "id": "COMP-DIST-001",
       "title": "Stage 0 publishes a finite distribution matrix naming supported OS versions/architectures, package formats, signing/notarization verifiers, release channels, update feeds, offline artifact variants, clean-machine configurations, and owner-held external prerequisites.",
-      "kind": "product", "required": true,
+      "kind": "internal", "required": true,
       "source_refs": [
         { "path": "docs/superpowers/specs/2026-09-04-product-completion-design.md", "identity": "family-22 and finite supported-configuration contract" },
         { "path": "docs/superpowers/plans/2026-09-04-production-qualification.md", "identity": "XQ-01/XQ-06/XQ-07 prerequisites" },
         { "path": "plans/legion-production-master-plan-v0.2.md", "identity": "WS-REL-01 distribution scope" }
       ],
       "legacy_ids": [], "stage": "S0", "package_id": "S0-02", "owner_role": "luna_worker", "depends_on": [],
-      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": [], "configuration_ids": [], "protected_product_ids": [], "defect_ids": []
+      "implementation": "absent", "acceptance": "unassessed", "scenario_ids": ["SC-REPO-STAGE0-PLATFORM-DIST-MATRIX"], "configuration_ids": ["CFG-LINUX-UBUNTU-X64-RUST-WORKSPACE", "CFG-MAC15-ARM64-RUST-WORKSPACE", "CFG-MAC15-X64-RUST-WORKSPACE", "CFG-WIN11-X64-RUST-WORKSPACE"], "protected_product_ids": ["COMP-DIST-002", "COMP-DIST-003", "COMP-DIST-004", "COMP-DIST-005", "COMP-DIST-007", "COMP-DIST-010", "COMP-SCOPE-GAP-02"], "defect_ids": []
     },
     {
       "id": "COMP-DIST-002",
@@ -17205,7 +17563,10 @@
         "CFG-MAC15-X64-RUST-WORKSPACE",
         "CFG-WIN11-X64-RUST-WORKSPACE"
       ],
-      "protected_product_ids": ["COMP-SCOPE-GAP-01", "COMP-SCOPE-GAP-02"],
+      "protected_product_ids": [
+        "COMP-SCOPE-GAP-01",
+        "COMP-SCOPE-GAP-02"
+      ],
       "defect_ids": []
     },
         {
@@ -17254,7 +17615,11 @@
         "CFG-MAC15-X64-RUST-WORKSPACE",
         "CFG-WIN11-X64-RUST-WORKSPACE"
       ],
-      "protected_product_ids": ["COMP-DIST-009", "COMP-SCOPE-GAP-01", "COMP-SCOPE-GAP-02"],
+      "protected_product_ids": [
+        "COMP-DIST-009",
+        "COMP-SCOPE-GAP-01",
+        "COMP-SCOPE-GAP-02"
+      ],
       "defect_ids": []
     },
         {

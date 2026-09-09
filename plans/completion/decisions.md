@@ -964,3 +964,170 @@ three `legacy_ids` values (`COMP-P4-F1-T1-1`, `COMP-P4-F1-T2-1`,
 here as observations for the record role. They are not repaired by this packet,
 they say nothing about the four new files, and they must not be counted against
 them.
+
+## Owner-blocked prerequisites — round r06 additions and changes (2026-09-08)
+
+Six owner-blocked prerequisites were surfaced in round r06 and **all six are
+restatements of prerequisites already recorded above**. No new prerequisite was
+found, none was invented, and no `BLK-2026-09-08-08` exists:
+
+- `BLK-2026-09-08-02` — a macOS host and a Linux host with the packaged native
+  product installed and a real display session, able to run the windowed GUI
+  e2e suite.
+- `BLK-2026-09-08-04` — a Windows 11 x64 host with the packaged native Legion
+  product installed into the package directory this command was given,
+  containing the product executable, so the harness can launch the packaged
+  product as a subprocess rather than a development build.
+- `BLK-2026-09-08-01` — a Linux or macOS host with this workspace checked out
+  and a Rust toolchain able to run
+  `cargo test -p legion-platform --test bounded_process`.
+- `BLK-2026-09-08-05` — a native Node runtime at or above 22.22.2 approved on
+  this host plus the retained TypeScript fixtures, so that
+  `cargo test -p legion-app --test typescript_app_startup -- --ignored` can
+  execute.
+- `BLK-2026-09-08-06` — a real TypeScript and JavaScript language-server,
+  browser and debug-adapter setup with owner-selected releases.
+- `BLK-2026-09-08-07` — an approved `tailwindcss-language-server` release
+  artifact with a published version and SHA-256, so registry entry 103 can be
+  pinned instead of resolving by bare name from PATH.
+
+The standing authority is unchanged: native GUI automation is resumed on this
+Windows host by owner instruction; macOS and Linux hosts remain unavailable and
+their rows stay blocked, and a Windows result never substitutes for a macOS or
+Linux row.
+
+### BLK-2026-09-08-03 is retired by construction
+
+`BLK-2026-09-08-03` asked the owner to install an external native input driver
+at `tools/native-input-driver/legion-input-driver.exe`. Round r06's packet
+`s1-02c-native-input-driver` **builds that driver from source in this
+repository**, as the workspace crate
+[`crates/legion-input-driver`](../../crates/legion-input-driver/src/main.rs).
+`PREREQUISITE_DRIVER_MISSING` at
+`xtask/src/native_product_acceptance.rs:80-90` now names
+`cargo build -p legion-input-driver --release` instead of an installation, and
+the retained staged path survives only as the last of three discovery
+candidates (`target/release`, then `target/debug`, then
+`tools/native-input-driver/`), so an owner-staged binary still works. The
+retirement is recorded in the ADR-0056 amendment dated 2026-09-08 and in
+`blockers.json`, where the blocker's `status` is now `retired` and its original
+prerequisite string is left unedited as the true record of what the harness said
+on its own date.
+
+**The r05 entry for `BLK-2026-09-08-03` earlier in this file is not rewritten.**
+It recorded the state truthfully on 2026-09-08 in round r05, including the exact
+string the harness carried then. This section supersedes it; it does not correct
+it. The same applies to
+`plans/evidence/completion/native-manual-open-type-save-r05-win11-x64/host-observations.md`,
+which still quotes the old prerequisite and is left as the record of what was
+observed when it was written.
+
+**What this retirement does not do.** It produces no acceptance evidence and it
+unblocks no run. `xtask native-product-acceptance` was not invoked at all in
+round r06: no product window was opened, no OS-level input was injected into any
+process, and no `run.json` was written. On this host
+`target/debug/legion-input-driver.exe` exists only as a side effect of the cargo
+lane's own test builds, no `target/release/legion-input-driver.exe` exists, and
+`target/native-input-acceptance/package/` does not exist.
+**`BLK-2026-09-08-04` is not retired and still blocks every run.**
+`COMP-PLAT-002` stays `implementation: partial`, `acceptance: unassessed`.
+
+### A standing constraint on the first native acceptance artifact
+
+Before any `xtask native-product-acceptance` artifact is transcribed into
+`plans/completion/defects.json` or into any requirement row, this must be
+settled first. The harness currently writes `status = "conformance-failed"`,
+`exit_code = 1` for **any** post-driver outcome that is not
+`driver_code == 0 && window_created && 6/6 conforms` — including the driver's own
+exit `3`/blocked. The driver as built exits 3/blocked on this host by design,
+because `observe_ime_cjk` blocks whenever the product window's keyboard layout
+is not CJK. The first real run would therefore produce an artifact blaming the
+product for a missing IME, which is exactly what the harness's own
+`missing_packaged_binary_is_reported_blocked_rather_than_failed` test calls
+filing a false defect. The mapping is pre-existing and was not introduced by
+round r06. **Until a follow-up propagates the driver's blocked exit into a
+blocked harness status, no `conformance-failed` artifact from this command may
+be entered anywhere in the register.**
+
+### Round r06 register effect
+
+Round r06 applied fifteen reviewer-proposed implementation transitions across
+three passed packets: `COMP-PLAT-002` to `partial` and `COMP-P1-F1-T1-1` to
+`implemented` for `s1-02c-native-input-driver`; `COMP-DIST-010`,
+`COMP-PLAT-001` and `COMP-DIST-001` to `absent` and `COMP-P1-F1-T4-1`,
+`COMP-P1-F3-T1-1`, `COMP-P1-F4-T1-1`, `COMP-P6-F4-T1-1`, `COMP-P7-F1-T1-1`,
+`COMP-P8-F2-T1-1` and `COMP-P9-F3-T1-1` to `implemented` for
+`s0-05d-register-kind-repair`; and `COMP-LANG-001`, `COMP-LANG-002` and
+`COMP-LANG-009` to `partial` for `s2-01c-pinned-archive-extract`. **All fifteen
+were verified no-ops** — every row already held the value its reviewer proposed.
+`plans/completion/requirements.json` is byte-identical across the record step:
+419 rows, 143 implemented / 233 partial / 43 absent, all 419 `acceptance` values
+`unassessed`.
+
+That is now three rounds — r01, r05 and r06 — in which every proposed transition
+was a no-op. The `implementation` column has not been exercised by the
+transition mechanism at all, and a future round should expect its first real
+transition to surface disagreements these no-ops have hidden.
+
+The file *is* modified against the previous commit, by
+`s0-05d-register-kind-repair`: `kind` on 32 rows, `scenario_ids` and
+`configuration_ids` on 75 rows, and `protected_product_ids` on 32 rows. The
+`implementation` and `acceptance` columns are untouched on all 419 rows against
+the previous commit as well as across the record step. No `owner_approval_ref`
+value exists anywhere in the register, so there is still no ratified cell on this
+date, provisional or otherwise.
+
+The brief authorised 34 re-kindings; 32 were applied, `COMP-P1-F1-T3-1` was held
+back and `COMP-DIST-010` was declined — 32 + 1 + 1 = 34, reconciled against the
+file. Seven re-kinded rows sit at `implementation: absent` (`COMP-PLAT-001`,
+`COMP-DIST-001`, `COMP-SCOPE-FAMILY-15-01`, `COMP-SCOPE-FAMILY-17-01`,
+`COMP-REMOTE-001`, `COMP-COLLAB-001`, `COMP-TRAIN-001`), and two more
+(`COMP-LANG-001`, `COMP-BTD-001`) at `partial` and stage S2 rather than Stage 0.
+
+`plans/completion/dependencies.json` entry 104 no longer names the deliberate
+placeholder host `registry.example.invalid`; it now names the pinned Pyright
+1.1.400 archive, its `policy://lsp-download/pyright` gate and its Node 14.0.0
+minimum. That closes the stale-register item carried forward from round r05.
+Two further `registry.example.invalid` assertions remain and are **not** fixed:
+`plans/completion/language-tooling-scope-audit.md:26` and `:60`. They are
+carried forward as an open repair.
+
+### The register's structural-issue count was not measured this round
+
+No `verify-completion-register` run happened in round r06. The
+`s0-05d-register-kind-repair` report predicts 3 remaining structural issues after
+its edits, and a reviewer's independently written port of
+`validate_register_structure` reproduced 78-at-HEAD and 3-on-tree, but neither is
+an exit code from the validator itself and **neither is recorded here as a
+measurement**. The last figure measured on a tree that exists remains the **78
+structural issues of round r04**. Closing it needs exactly
+`cargo run -p xtask -- verify-completion-register --root .` run from the
+workspace root by the cargo lane and logged with its own frame.
+
+One pre-existing register edge holds one of the three predicted remaining issues
+open and its repair is an open record-role decision, deliberately **not** made
+this round: `COMP-P0-F3-T1-1`, `COMP-P0-F3-T2-1` and `COMP-P0-F3-T3-1` — the
+Kanban backlog and its validator — all name `COMP-P1-F1-T3-1` ("Each
+representative workflow has at least one headless test driving it through the
+harness") in `protected_product_ids`. Choosing which of those four rows is
+misclassified is a register judgement that wants the measured validator output in
+front of it, which this round does not have. No row was accepted, no exemption
+was added, and no convenient target was minted to work around it.
+
+### Round r06 evidence classification
+
+The round's thirty logs are recorded in
+`plans/evidence/full-product-resume-2026-09-08/README.md` with one line each
+giving the exact command, the exit code and the classification. Twenty-eight
+exit 0. The two non-zero are both `EXIT=101` clippy failures on mechanical lints
+in *test* targets — `unused import: windows_uia::*` and
+`assertions_on_constants` — both repaired in the fix pass and both superseded by
+retests at exit 0; the failing logs are retained because they happened. Every
+fast gate step exited 0.
+
+The whole set is **component evidence with five crate-level integrated test
+targets. None of it is packaged evidence, native GUI evidence, or product
+acceptance**, and no `acceptance` value was set from any of it. In particular
+the `native_product_acceptance` and `driver_contract` targets exercise the
+harness and the driver's own contract against fixtures and temp directories;
+they opened no window and injected no input.

@@ -481,3 +481,141 @@ no longer exists. The committed tree's last measured value remains the 78
 structural issues recorded for round r04. No `verify-completion-register` run in
 this round measured the post-revert tree, and no register value was changed on
 the strength of the 35.
+
+## Round r06 — in-repo native input driver; register kind repair; pinned-archive extract
+
+Three packets passed independent review and their tests were green:
+`s1-02c-native-input-driver`, `s0-05d-register-kind-repair` and
+`s2-01c-pinned-archive-extract`. A fourth packet, `ledger-r02-r04-backfill`,
+touched only the gitignored local ledger and produced no cargo log and no
+committable file.
+
+**Classification for every log in this section: component evidence, with five
+crate-level integrated test targets. Not packaged evidence, not native GUI
+evidence, not product acceptance.** No `acceptance` value in
+`plans/completion/requirements.json` was changed from any of these runs; all 419
+rows remain `acceptance: unassessed`.
+
+The five integrated targets are `xtask --test completion_command`,
+`xtask --test native_product_acceptance`,
+`legion-input-driver --test driver_contract`,
+`legion-lsp --test registry_contract` and
+`legion-app --test typescript_bundle_drift`. Every one of them runs entirely
+in-process against fixtures and temp directories. In particular
+`native_product_acceptance` and `driver_contract` exercise the *harness and the
+driver's own contract*; **no product window was opened, no OS-level input was
+injected into any process, and `xtask native-product-acceptance` was not run in
+this round at all.**
+
+All thirty logs were copied byte-identical from the gitignored ledger
+`.superpowers/sdd/2026-09-04-full-product-completion/`, SHA-256 verified after
+each copy.
+
+| Log | Command | Exit | Classification |
+| --- | --- | --- | --- |
+| `round-r06-check0-legion-input-driver.log` | `cargo check -p legion-input-driver --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r06-check0-legion-app.log` | `cargo check -p legion-app --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r06-check0-legion-lsp.log` | `cargo check -p legion-lsp --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r06-check0-xtask.log` | `cargo check -p xtask --all-targets -j 1` | 0 | component evidence — compile check, no test executed |
+| `round-r06-test-s1-02c-driver-contract.log` | `cargo test -p legion-input-driver --test driver_contract -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 8 passed / 0 failed; asserts the driver's own exit and report contract, injects nothing |
+| `round-r06-test-s1-02c-xtask-native-product-acceptance.log` | `cargo test -p xtask --test native_product_acceptance -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 10 passed / 0 failed; harness behaviour against fixtures, no product launched |
+| `round-r06-test-s1-02c-clippy-legion-input-driver.log` | `cargo clippy -p legion-input-driver --all-targets -j 1 -- -D warnings` | **101** | component evidence — **failed**: `unused import: windows_uia::*` in the `driver_contract` target. Repaired in the fix pass; superseded by `round-r06-retest-s1-02c-clippy-legion-input-driver.log` |
+| `round-r06-test-s1-02c-s0-05d-clippy-xtask.log` | `cargo clippy -p xtask --all-targets -j 1 -- -D warnings` | **101** | component evidence — **failed**: `assertions_on_constants` in the `native_product_acceptance` target. Repaired in the fix pass; superseded by `round-r06-retest-clippy-xtask.log` |
+| `round-r06-test-s0-05d-completion-command.log` | `cargo test -p xtask --test completion_command -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 33 passed / 0 failed; synthetic registers in temp directories, not the repository register |
+| `round-r06-test-s0-05d-named-filter-check.log` | `cargo test -p xtask --test completion_command -j 1 --no-fail-fast -- verify_completion_register` | 0 | filter probe — 0 passed / 0 failed / **33 filtered out**; this exit 0 means *no test matched the name*, not that anything ran |
+| `round-r06-test-s2-01c-lsp-registry-contract.log` | `cargo test -p legion-lsp --test registry_contract -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 17 passed / 0 failed |
+| `round-r06-test-s2-01c-app-typescript-bundle-drift.log` | `cargo test -p legion-app --test typescript_bundle_drift -j 1 --no-fail-fast` | 0 | integrated evidence — crate-level integration target, 2 passed / 0 failed; new drift guard, green-on-agreement only (its red path was never exercised) |
+| `round-r06-test-s2-01c-clippy-legion-lsp.log` | `cargo clippy -p legion-lsp --all-targets -j 1 -- -D warnings` | 0 | component evidence — static lint only |
+| `round-r06-test-s2-01c-clippy-legion-app.log` | `cargo clippy -p legion-app --all-targets -j 1 -- -D warnings` | 0 | component evidence — static lint only |
+| `round-r06-test-round-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r06-retest-s1-02c-clippy-legion-input-driver.log` | `cargo clippy -p legion-input-driver --all-targets -j 1 -- -D warnings` | 0 | component evidence — fix-pass retest of the 101 above |
+| `round-r06-retest-s1-02c-named-tests.log` | `cargo test -p legion-input-driver -p xtask --test driver_contract --test native_product_acceptance -j 1 --no-fail-fast` | 0 | integrated evidence — 8 passed / 0 failed and 10 passed / 0 failed after the fix pass |
+| `round-r06-retest-clippy-xtask.log` | `cargo clippy -p xtask --all-targets -j 1 -- -D warnings` | 0 | component evidence — fix-pass retest of the 101 above |
+| `round-r06-retest-s0-05d-completion-command.log` | `cargo test -p xtask --test completion_command -j 1 --no-fail-fast` | 0 | integrated evidence — 33 passed / 0 failed after the fix pass |
+| `round-r06-retest-s0-05d-named-filter-check.log` | `cargo test -p xtask --test completion_command -j 1 --no-fail-fast -- verify_completion_register` | 0 | filter probe — 0 passed / 0 failed / 33 filtered out; again, nothing ran |
+| `round-r06-retest-round-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r06-fixtest1-fmt.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r06-gates-02a-test-legion-app.log` | `cargo test -p legion-app --lib -j 1` | 0 | component evidence — regression guard, 447 passed / 0 failed |
+| `round-r06-gates-02b-test-legion-desktop.log` | `cargo test -p legion-desktop --lib -j 1` | 0 | component evidence — regression guard, 243 passed / 0 failed |
+| `round-r06-gates-03-clippy-workspace.log` | `cargo clippy --workspace --all-targets -j 1 -- -D warnings` | 0 | component evidence — workspace lint gate |
+| `round-r06-gates-04a-fmt-check.log` | `cargo fmt --all --check` | 0 | component evidence — fast gate, silent on success |
+| `round-r06-gates-04b-xtask-check-deps.log` | `cargo run -p xtask -- check-deps` | 0 | component evidence — fast gate, "dependency policy checks passed" |
+| `round-r06-gates-04c-xtask-docs-hygiene.log` | `cargo run -p xtask -- docs-hygiene` | 0 | component evidence — fast gate, "documentation hygiene checks passed" |
+| `round-r06-gates-04d-xtask-claim-audit.log` | `cargo run -p xtask -- claim-audit` | 0 | component evidence — fast gate, "claim audit passed" |
+| `round-r06-gates-04e-xtask-extract-before-modify.log` | `cargo run -p xtask -- extract-before-modify` | 0 | component evidence — fast gate, "no chokepoint file grew past its slack" |
+
+Every fast gate step exited 0, read from the logs' own `EXIT=` frames:
+`cargo fmt --all --check` silent, `check-deps`, `docs-hygiene`, `claim-audit`
+and `extract-before-modify` each printing their pass line, workspace `clippy`
+under `-D warnings` at 0, and the two regression guards at 447 and 243 passed
+with 0 failed. The workspace clippy log's only warning is the vendored `epaint`
+`falling back to f32` future-incompatibility, which is outside the workspace
+lint failure and unchanged from earlier rounds.
+
+Four logs share SHA-256
+`8d1e140cf6ec861d9e2b3ba8410ce7d29b7abbe7cc16abc59a153f4597030a2a`
+(`round-r06-test-round-fmt-check.log`, `round-r06-fixtest1-fmt.log`,
+`round-r06-retest-round-fmt-check.log`, `round-r06-gates-04a-fmt-check.log`)
+because `cargo fmt --all --check` prints nothing when it succeeds. Each is kept
+so that every lane's frame stands on its own, and each carries the same hash the
+r05 fmt logs carry for the same reason.
+
+### The two exit-101 logs are retained failures, not hidden ones
+
+`round-r06-test-s1-02c-clippy-legion-input-driver.log` and
+`round-r06-test-s1-02c-s0-05d-clippy-xtask.log` both end `EXIT=101`. They are
+the first packet-lane clippy runs of the round; both failures are mechanical
+lints in *test* targets (`unused import: windows_uia::*`, and
+`assertions_on_constants`), both were repaired in the fix pass, and both retests
+exit 0. The failing logs are kept because they happened.
+
+### No `verify-completion-register` run measured this tree
+
+No `round-r06-*verify-completion-register*` log exists. The register validator
+was not run against the repository register in this round, so the last figure
+measured on a tree that exists is still the **78 structural issues of round
+r04**. The `s0-05d-register-kind-repair` report predicts 3 remaining issues
+after its edits, and an independently written port of
+`validate_register_structure` reproduced 78-at-HEAD and 3-on-tree during review,
+but neither is a `verify-completion-register` exit code and neither is recorded
+here as a measurement. Closing it needs exactly:
+`cargo run -p xtask -- verify-completion-register --root .` run from
+`D:/legion-ide-completion` by the cargo lane, logged with its own frame.
+
+### Four verification commands named by a brief have no r06 log
+
+The `s2-01c-pinned-archive-extract` brief named eight verification commands;
+four produced no log this round:
+`cargo test -p legion-lsp --test rust_analyzer_launch`,
+`cargo test -p legion-app --test javascript_adapter_selection`,
+`cargo test -p legion-app --lib` as that packet's named blast-radius guard, and
+`cargo run -p xtask -- extract-before-modify` attributed to that packet. The
+`--all-targets` check and clippy runs prove those targets *compile*; they do not
+prove they *pass*. `cargo test -p legion-app --lib` and `extract-before-modify`
+did both run at round-gate level (`round-r06-gates-02a-test-legion-app.log`,
+`round-r06-gates-04e-xtask-extract-before-modify.log`, both exit 0) on the tree
+containing all three packets, which covers the regression question but is not a
+per-packet attribution. The two `--test` targets ran in neither place.
+
+### The native input driver was built but never used to drive anything
+
+`crates/legion-input-driver` is new in this round and its contract tests pass.
+That is a driver *in the workspace*, not a driver *run*. On this host
+`target/debug/legion-input-driver.exe` exists only as a side effect of the cargo
+lane's own test builds; no `target/release/legion-input-driver.exe` exists, no
+`target/native-input-acceptance/package/` directory exists, and
+`xtask native-product-acceptance` was not invoked. `BLK-2026-09-08-04` (a
+packaged native Legion product staged into the package directory) still blocks
+every run. `COMP-PLAT-002` stays `implementation: partial`,
+`acceptance: unassessed`.
+
+Before any future `native-product-acceptance` artifact is transcribed anywhere:
+the harness currently writes `status = "conformance-failed"`, `exit_code = 1`
+for **any** post-driver outcome that is not `driver_code == 0 && window_created
+&& 6/6 conforms` — including the driver's own exit `3`/blocked, which is what
+this host is expected to produce, because `observe_ime_cjk` blocks whenever the
+product window's keyboard layout is not CJK. Until a follow-up propagates the
+driver's blocked exit into a blocked harness status, **no `conformance-failed`
+artifact from this command may be entered into `plans/completion/defects.json`
+or into any requirement row**, because it would be blaming the product for a
+missing host prerequisite.
