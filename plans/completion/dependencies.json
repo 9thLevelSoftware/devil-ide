@@ -1632,9 +1632,7 @@
     },
     {
       "package_id": "S6-01",
-      "requirement_ids": [
-        "COMP-DIST-010"
-      ],
+      "requirement_ids": [],
       "milestones": [
         {
           "id": "S6-01:implemented",
@@ -1871,7 +1869,8 @@
         "COMP-P8-F1-T5-1",
         "COMP-DIST-003",
         "COMP-DIST-007",
-        "COMP-SCOPE-GAP-02"
+        "COMP-SCOPE-GAP-02",
+        "COMP-DIST-010"
       ],
       "milestones": [
         {
@@ -1893,7 +1892,8 @@
       ],
       "external_prerequisites": [
         "Owner-supplied signing, notarization and update-feed infrastructure; no signing credential, certificate, key, notarization tool, provider or feed is available in the retained facts.",
-        "A clean virtual machine for each supported OS with no prior Legion installation."
+        "A clean virtual machine for each supported OS with no prior Legion installation.",
+        "A macOS host and a Linux host with the packaged native product installed and a real display session, able to run the windowed GUI e2e suite."
       ],
       "owner_role": "luna_worker",
       "implementation_stage": "S0",

@@ -8285,6 +8285,7 @@
       "id": "SC-REPO-GUI-HARNESS-SOURCE-GATES",
       "requirement_ids": [
         "COMP-P1-F1-T2-1",
+        "COMP-P1-F1-T3-1",
         "COMP-P1-F1-T4-1",
         "COMP-P1-F3-T1-1",
         "COMP-P1-F4-T1-1"
@@ -8306,7 +8307,10 @@
         "In a scratch copy reintroduce egui::TextEdit into the code canvas, re-run the gate, record the exit status and confirm the output names the offending file; then discard the scratch copy and re-run the gate.",
         "Locate the 100MB open and scroll test, record whether it is present and whether it is currently ignored, and record the exact attribute or annotation that makes it so.",
         "Record whether the streaming mode the test waits on is implemented at this revision, and record whether the test's ignored state matches that answer.",
-        "Run the test with ignored tests included from a host shell and record the exit status and the failure it reports if it fails."
+        "Run the test with ignored tests included from a host shell and record the exit status and the failure it reports if it fails.",
+        "Read from the headless-input evidence document the list of representative workflows it records under the P1.F1.T3 backlog card, and record each entry verbatim together with the count.",
+        "For each recorded workflow, search `crates/legion-desktop/tests/headless_input.rs` from a host shell for the test function that drives that workflow through the harness, and record the function name and its line, or record that no such function was found.",
+        "Run the headless input harness from a host shell naming each of those test functions, and record the per-test result and the overall exit status."
       ],
       "external_oracles": [
         {
@@ -8328,6 +8332,10 @@
         {
           "id": "OR-CLEAN-TREE",
           "description": "`git status --porcelain` in the clone is empty after the scratch reintroduction is discarded."
+        },
+        {
+          "id": "OR-HARNESS-TEST-INVENTORY",
+          "description": "The host search over `crates/legion-desktop/tests/headless_input.rs` and the host shell's per-test result output are the record of which representative workflows are driven through the harness; a workflow the evidence document lists with no matching test function is recorded from the search, never from the document's own claim."
         }
       ],
       "recovery_cases": [
@@ -8354,6 +8362,10 @@
         {
           "id": "RC-TOOLCHAIN-MISSING",
           "description": "If the toolchain cannot build the gate or the test on this configuration, that leg is recorded blocked with the exact missing prerequisite and never as passed."
+        },
+        {
+          "id": "RC-WORKFLOW-WITHOUT-HEADLESS-TEST",
+          "description": "A representative workflow the evidence document lists for which no headless test function is found, or whose test does not run, records the row failed with the workflow text and the search performed; no test is added and the recorded workflow list is not shortened during the run."
         }
       ],
       "sensitive_artifact_policy": "Capture the host search outputs, the gate and test command lines with their exit statuses and bounded output, the evidence document path with its SHA-256, and the re-run comparison. Only repository content is in scope. Redact absolute user-home segments and the toolchain install path. Retain under the run evidence directory for the candidate; delete with the candidate."
@@ -8505,6 +8517,191 @@
         }
       ],
       "sensitive_artifact_policy": "Strictest policy. The traces are synthetic and generated for the run; no real user trace, prompt or source content enters the pipeline. Capture the command lines, exit statuses, the trace dispositions, the fingerprints, the recorded training provenance, the comparison results and the artifact hashes. The exported corpus and the produced adapter are inspected before retention and destroyed if they contain a secret-shaped string or content outside the metadata-only policy; only their hashes and the disposition table are retained. No model weight, adapter binary or corpus body is retained. Redact absolute user-home segments and any accelerator or host serial identity. Retain under the sealed run evidence directory for the candidate; delete with the candidate."
+    },
+    {
+      "id": "SC-TRAIN-PACKAGED-STAGE5-QUALIFICATION",
+      "requirement_ids": [
+        "COMP-TRAIN-009"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-X64-PRODUCT-JOURNEY",
+        "CFG-MAC15-ARM64-PRODUCT-JOURNEY",
+        "CFG-LINUX-UBUNTU-X64-PRODUCT-JOURNEY"
+      ],
+      "steps": [
+        "Install the pinned candidate build on the machine named by this configuration cell, start from a clean product profile, and record the installed artifact SHA-256 and every consent state file the product writes.",
+        "Start a host per-process DNS, TCP and UDP capture over the product process tree and configure a host-controlled collection endpoint as the only telemetry and training destination; record that the endpoint log is empty before any work begins.",
+        "Complete first run and record, for each of the crash, product and raw-training consent controls, the state it starts in and the purpose, retention and destination the product displays for it.",
+        "Work in a real project with every consent off for the period recorded for this run, then confirm from the capture, the endpoint log and the spool directory that nothing was captured, queued or uploaded.",
+        "Grant product and raw-training consent, do ordinary work that produces training candidates, and record for each capture the preview the product shows before upload together with the redaction result it reports.",
+        "Read the payloads the host endpoint received and compare each byte for byte with the preview that was shown for it, recording every difference.",
+        "Revoke raw-training consent part way through and confirm from the endpoint log and from the spool that no item captured under that consent is uploaded afterwards.",
+        "Take the endpoint offline, keep working, then restart the product and confirm from the spool that queued items survived the restart with a truthful pending state and that none was uploaded while consent was revoked.",
+        "Restore consent and the endpoint, let the retry drain the spool, and confirm the endpoint received each queued item exactly once.",
+        "Export the consented training bundle to a host path through the product's own export route as an authorized user, and record the export path, the manifest it writes and their SHA-256 values.",
+        "Run the repository corpus exporter from a host shell against that bundle, running `cargo run -p xtask -- training-corpus --out <run-dir>` with the corpus id, expansion, seed and holdout values recorded for this run, and record its exit status, the emitted `train.jsonl`, `holdout.jsonl` and export manifest, and their SHA-256 values.",
+        "Read the exported corpus from the host byte by byte and confirm it carries no trace whose consent was denied, expired or revoked earlier in this run, and no secret-shaped string.",
+        "Run the consent-gated adapter training from a host shell with the model revision, tokenizer, hyperparameters, seed and device recorded for this run, passing the export manifest as the consent manifest, and record the exit status, the adapter artifact and its SHA-256.",
+        "Run the held-out evaluation against that adapter, the same consent manifest and the holdout split, and record the base-versus-adapter comparison it writes.",
+        "Repeat the training run under the reproducibility rule recorded for this run and record whether the adapter hash and metrics fall inside the threshold recorded before the first run.",
+        "Revoke consent for one trace already present in the export, re-run the corpus exporter and the trainer against the same run directory, and record whether each refuses the revoked trace or proceeds.",
+        "Record the retention the product displayed for each consented bundle and, after the retention window recorded for this run has elapsed, confirm from a host listing that the expired bundle was purged and that a re-run of the exporter no longer emits it.",
+        "Delete the remaining consented telemetry and training bundles through the product as an authorized user, record each deletion receipt, and confirm from the host that the stored payload and its key are absent and that a re-run of the exporter no longer emits the deleted rows.",
+        "Restart the product once more and record the consent, spool, export, retention and deletion state it reports, comparing each against the host state read directly."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-ENDPOINT-RECEIPT",
+          "description": "The host-controlled collection endpoint's own log is the record of what was uploaded and when: nothing while every consent was off, nothing captured under a revoked consent, and exactly one delivery per queued item after the retry drained."
+        },
+        {
+          "id": "OR-NETWORK-CAPTURE",
+          "description": "The host per-process DNS, TCP and UDP capture over the product process tree is the record of every destination the product contacted; the product's own report of its network activity is never accepted in its place."
+        },
+        {
+          "id": "OR-PREVIEW-EQUALS-UPLOAD",
+          "description": "A host byte comparison of each received payload against the preview shown for it is the record of whether the product uploaded what it displayed; a difference is recorded with both texts rather than resolved by repeating the capture."
+        },
+        {
+          "id": "OR-EXPORT-BYTES",
+          "description": "A host byte inspection of the exported bundle, of `train.jsonl` and `holdout.jsonl` and of the export manifest is the record of what left the product; a denied, expired or revoked trace or a secret-shaped string found there fails the run."
+        },
+        {
+          "id": "OR-TRAINER-BOUNDARY",
+          "description": "The trainer runs outside the product: its recorded exit status and the manifest it writes are the record of whether the exported corpus was accepted, and a corpus carrying a revoked trace must produce a non-zero exit rather than a completed run."
+        },
+        {
+          "id": "OR-EVAL-COMPARISON",
+          "description": "The base-versus-adapter comparison file the evaluator writes to the host, together with the archived Legion-Bench baseline it names, is the record of the evaluation result; the training run's own loss curve is not accepted as an evaluation."
+        },
+        {
+          "id": "OR-RETENTION-PURGE",
+          "description": "A host listing of the bundle store after the recorded retention window, and a re-run of the exporter, are the record of whether the expired bundle was purged; the product's displayed retention state is not accepted on its own."
+        },
+        {
+          "id": "OR-DELETION",
+          "description": "After each deletion a host listing shows the stored payload and its key absent, the receipt identifier matches what the product displayed, and a re-run of the exporter omits the deleted rows."
+        },
+        {
+          "id": "OR-RESTART-STATE",
+          "description": "The consent, spool, export, retention and deletion state read directly from the host after each restart is the record; a state the product reports that the host contradicts fails the run."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-NO-RATIFIED-TRAINING-MATRIX",
+          "description": "If the Stage 0 telemetry and training matrix has not been published, so the model revision, tokenizer, hyperparameters, seed, device, retention window and reproducibility threshold this run must use do not exist, the corpus, training, evaluation and retention legs are recorded blocked with that exact missing prerequisite named, never passed and never skipped; no substitute model, shorter run, different runtime or reduced hardware is used in their place."
+        },
+        {
+          "id": "RC-NO-TRAINING-HOST",
+          "description": "If no host carrying the ratified model, runtime and hardware for the consent-gated adapter run is available, the training and evaluation legs are recorded blocked with that exact missing prerequisite; a dry run, a fixture smoke run or a recorded stand-in is never recorded as a training or evaluation result."
+        },
+        {
+          "id": "RC-NO-HOST-CONTROLLED-DESTINATION",
+          "description": "If the packaged product will only upload to a destination that cannot be pointed at a host-controlled endpoint, the upload, retry and revocation legs are recorded blocked with the exact missing prerequisite, namely the named external destination and its credential, and no third-party destination is contacted to complete them."
+        },
+        {
+          "id": "RC-NO-MAC-OR-LINUX-HOST",
+          "description": "On the macOS and Linux cells, if no macOS host and Linux host with the packaged native product installed and a real display session, able to run the windowed GUI e2e suite, is available, that cell is recorded blocked with that exact prerequisite; a Windows result is never substituted for it."
+        },
+        {
+          "id": "RC-MISSING-CONTROL",
+          "description": "A consent, preview, export, retention or deletion control the requirement names that the packaged build does not expose records the run failed with the exact missing control named; it is never recorded as passed against a partial control set and never recorded as skipped."
+        },
+        {
+          "id": "RC-CONSENT-VIOLATION",
+          "description": "A trace whose consent was denied, expired or revoked that appears in an upload, in the exported bundle or in the exporter output fails the run as a privacy defect with the trace identifier and the host path named, and the export is destroyed."
+        },
+        {
+          "id": "RC-TRAINER-ACCEPTS-REVOKED",
+          "description": "A trainer or exporter run that completes against a corpus carrying a revoked trace is recorded as a defect with the trace named; the consent filter is not widened and the corpus is not edited during the run."
+        },
+        {
+          "id": "RC-IRREPRODUCIBLE-ADAPTER",
+          "description": "A repeated training run whose adapter hash or metrics fall outside the reproducibility threshold recorded before the first run is a valid failed result; the threshold is not moved after the result is observed."
+        },
+        {
+          "id": "RC-RESTART-STATE-MISMATCH",
+          "description": "A consent, spool, export, retention or deletion state the product reports after a restart that the host state contradicts fails the run, with both readings recorded and neither corrected during the run."
+        }
+      ],
+      "sensitive_artifact_policy": "Strictest policy. The collection endpoint is host-controlled and run-local; no third-party destination is contacted. The project is a disposable clone containing only synthetic content. Capture the consent state files, the previews, the endpoint log, the received payloads, the exported bundle and manifest, the corpus files, the trainer and evaluator manifests and exit statuses, the adapter hash and the deletion receipts. No model weights and no private raw trace are retained. Every received payload and every exported corpus file is inspected byte by byte before retention; one found to contain editor text, a prompt or a secret-shaped string outside the consented and previewed scope is destroyed and the run recorded as failed. Redact absolute user-home segments and any credential or endpoint token. Retain under the sealed run evidence directory for the candidate; delete with the candidate and honour every deletion receipt."
+    },
+    {
+      "id": "SC-TRAIN-PACKAGED-STAGE5-MANUAL-OFFLINE",
+      "requirement_ids": [
+        "COMP-TRAIN-009"
+      ],
+      "configuration_ids": [
+        "CFG-WIN11-X64-MANUAL-OFFLINE",
+        "CFG-MAC15-ARM64-MANUAL-OFFLINE",
+        "CFG-LINUX-UBUNTU-X64-MANUAL-OFFLINE"
+      ],
+      "steps": [
+        "Install the separately labelled Manual/offline artifact for this configuration cell on a machine with no prior Legion state, record its SHA-256, and record the flavour its descriptor declares.",
+        "Start an OS-level per-process DNS, TCP and UDP capture over the artifact's whole process tree before the product is launched, and record the capture command and its start time.",
+        "Launch the product, complete first run, and record every consent control it exposes together with the state each starts in.",
+        "Grant crash, product and raw-training consent in full, which is the state in which an ordinary build would upload, and record the destination the product displays for each.",
+        "Work in a real project for the Manual/offline qualification period recorded for this run: open, edit, save, search, use Git and the local tooling, and produce training candidates through ordinary consented work.",
+        "Export the consented training bundle through the product's own export route to a host path and record the export, its manifest and their SHA-256 values.",
+        "Delete one exported bundle through the product, record the deletion receipt, and read the store back from the host.",
+        "Restart the product, then kill the process mid-work and restart it again, recording the consent, spool, export and deletion state after each restart.",
+        "Stop the capture, read it in full from the host, and record every destination it contains with the process that contacted it."
+      ],
+      "external_oracles": [
+        {
+          "id": "OR-NO-EGRESS",
+          "description": "The OS-level per-process DNS, TCP and UDP capture, read from the host, is the record of every destination the artifact's process tree contacted for the whole run, including while every consent was granted; loopback counts only for a local server the run record names in advance."
+        },
+        {
+          "id": "OR-SPOOL-STAYS-LOCAL",
+          "description": "A host listing of the spool, bundle and export directories after the run is the record that consented data stayed on the machine; a spool that drains with no destination in the capture is inspected rather than assumed delivered."
+        },
+        {
+          "id": "OR-EXPORT-BYTES",
+          "description": "A host byte inspection of the exported bundle and its manifest is the record of what the export contains; a trace whose consent was denied or revoked, or a secret-shaped string, fails the run."
+        },
+        {
+          "id": "OR-DELETION-RECEIPT",
+          "description": "After the deletion a host listing shows the stored bundle and its key absent and the receipt identifier matches what the product displayed."
+        },
+        {
+          "id": "OR-RESTART-STATE",
+          "description": "The consent, spool, export and deletion state read directly from the host after each restart and after the kill is the record; a state the product reports that the host contradicts fails the run."
+        },
+        {
+          "id": "OR-ARTIFACT-FLAVOUR",
+          "description": "The installed artifact SHA-256 and the flavour recorded in its descriptor are read from the host and matched against the candidate manifest for this configuration; an ordinary build is not accepted as the Manual/offline artifact."
+        }
+      ],
+      "recovery_cases": [
+        {
+          "id": "RC-EGRESS-OBSERVED",
+          "description": "Any external destination in the capture fails the run and is recorded as a privacy defect with the destination and the contacting process named; the capture is not filtered and no destination is excluded to make the run pass."
+        },
+        {
+          "id": "RC-FALLBACK-TO-CONSENTED-ROUTE",
+          "description": "Any fall back to a consented upload route, observed in the capture or in the spool, fails the run and is recorded with the exact route named; the consent state is not changed during the run to avoid it."
+        },
+        {
+          "id": "RC-NO-MANUAL-ARTIFACT",
+          "description": "If no separately labelled Manual/offline artifact exists for this configuration cell, the run is recorded blocked with that exact missing prerequisite; an ordinary build with networking disabled by the host is never substituted for it."
+        },
+        {
+          "id": "RC-NO-CAPTURE-TOOL",
+          "description": "If no OS-level per-process DNS, TCP and UDP capture is available on this cell, the run is recorded blocked with that exact missing prerequisite; the product's own report of its network activity is never accepted in its place."
+        },
+        {
+          "id": "RC-NO-MAC-OR-LINUX-HOST",
+          "description": "On the macOS and Linux cells, if no macOS host and Linux host with the packaged native product installed and a real display session, able to run the windowed GUI e2e suite, is available, that cell is recorded blocked with that exact prerequisite; a Windows result is never substituted for it."
+        },
+        {
+          "id": "RC-MISSING-CONTROL",
+          "description": "A consent, export or deletion control the requirement names that the Manual/offline build does not expose records the run failed with the exact missing control named, never passed and never skipped."
+        }
+      ],
+      "sensitive_artifact_policy": "Strictest policy. The machine has no prior Legion state and the project is a disposable clone containing only synthetic content. Capture the artifact hash and descriptor flavour, the consent states, the full network capture, the spool and export listings, the exported bundle and manifest, and the deletion receipts. The network capture is retained in full and is never edited; only host-identifying fields are reduced to a run-local pseudonym. The exported bundle is inspected byte by byte before retention and destroyed if it contains a secret-shaped string or an unconsented trace. Redact absolute user-home segments. Retain under the sealed run evidence directory for the candidate; delete with the candidate and honour every deletion receipt."
     }
   ]
 }
