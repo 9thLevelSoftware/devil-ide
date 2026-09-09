@@ -221,10 +221,16 @@ fn observe_conformance(product: &Path, scratch_root: &Path) -> report::Conforman
         }
     }
 
-    if observed.observations.is_empty() && observed.prerequisite.is_none() {
-        observed.prerequisite = Some(
-            "A run in which at least one input class oracle produced an observation.".to_string(),
-        );
+    // A blocked run must state why. The expected shape on a host with no CJK
+    // input layout is *not* the empty-observation one: five classes observed,
+    // `ime-cjk` blocked, no `Err` from the oracles — which left `prerequisite`
+    // unset and wrote `prerequisite = ""` onto a blocked report. The reason
+    // lives in the blocked classes' own details, so compose it from them and
+    // name the classes. This only ever fills a gap: a prerequisite already
+    // stated above wins, and a run that is not blocked gets none.
+    if observed.prerequisite.is_none() {
+        let composed = report::effective_prerequisite(&observed);
+        observed.prerequisite = composed;
     }
     observed
 }

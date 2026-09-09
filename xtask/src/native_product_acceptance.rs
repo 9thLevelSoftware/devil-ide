@@ -20,6 +20,16 @@
 //! | [`EXIT_OPERATIONAL_ERROR`] (`2`) | The harness itself could not operate: the output directory could not be created, the report could not be written, the driver was launched but produced no result. |
 //! | [`EXIT_BLOCKED`] (`3`) | This host cannot answer the question: no input driver, no interactive desktop session, no packaged product, or an OS whose rows are blocked on `BLK-2026-09-08-02`. **Never a pass, never a skip, never `0`.** |
 //!
+//! # A blocked class is not a defect
+//!
+//! The driver reports one outcome per input class, and `blocked` is one of
+//! them: on a host with no CJK input layout the `ime-cjk` oracle cannot be
+//! established, and saying so is the driver behaving correctly. A run that ends
+//! that way is [`EXIT_BLOCKED`], carrying the driver's own prerequisite. It is
+//! not [`EXIT_CONFORMANCE_FAILED`], because nothing about the product was
+//! observed to deviate — and an artifact that said otherwise would be eligible
+//! to become a defect against a product that did nothing wrong.
+//!
 //! # Not a gate
 //!
 //! Like `windowed-gui-e2e`, this command is not a standing gate and is not
@@ -113,6 +123,24 @@ pub const PREREQUISITE_UNSUPPORTED_HOST: &str = concat!(
     "and a real display session, able to run the windowed GUI e2e suite ",
     "(BLK-2026-09-08-02). A Windows result never substitutes for a macOS or ",
     "Linux row."
+);
+
+/// Exact, actionable prerequisite when the driver reported [`EXIT_BLOCKED`]
+/// without stating a prerequisite of its own.
+///
+/// What is missing here is not a host capability: it is a driver result that
+/// names its reason. The driver composes that reason from its blocked classes
+/// (`blocked_run_prerequisite` in `crates/legion-input-driver/src/report.rs`),
+/// so the real instrument does not reach this. The constant exists because the
+/// harness must never publish an unactionable blocked result — or, worse,
+/// invent a reason of its own — whatever instrument it is handed.
+pub const PREREQUISITE_DRIVER_STATED_NO_REASON: &str = concat!(
+    "A native input driver whose blocked `--conformance-run` result states its ",
+    "own exact prerequisite in the result's top-level `prerequisite` field, so ",
+    "a blocked run names what this host must supply. The driver reported ",
+    "blocked and stated no reason, and the harness does not invent one; ",
+    "rebuild the driver from this repository with `cargo build -p ",
+    "legion-input-driver --release` and re-run. The product is not implicated."
 );
 
 /// Options for `xtask native-product-acceptance`.
@@ -321,6 +349,12 @@ pub struct AcceptanceReport {
     pub window_created: bool,
     /// Input classes observed to conform, from outside the product process.
     pub input_classes_observed: Vec<String>,
+    /// Input classes the driver reported it could not observe on this host.
+    /// A blocked class is a missing oracle, never a defect against the product.
+    pub input_classes_blocked: Vec<String>,
+    /// Input classes the driver observed to deviate. These, and only these, are
+    /// findings against the product.
+    pub input_classes_deviating: Vec<String>,
     /// The driver path this run used.
     pub driver_path: String,
     /// The package directory this run used.
@@ -341,6 +375,8 @@ impl AcceptanceReport {
             subprocess_launched: false,
             window_created: false,
             input_classes_observed: Vec::new(),
+            input_classes_blocked: Vec::new(),
+            input_classes_deviating: Vec::new(),
             driver_path,
             package_dir,
             notes: Vec::new(),
@@ -411,6 +447,29 @@ pub fn render_report(report: &AcceptanceReport) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     ));
+    // Additive: `required_input_classes` and `input_classes_observed` keep
+    // exactly the meaning they had. These two exist so an operator reading a
+    // blocked artifact can tell "five conformed and `ime-cjk` had no oracle"
+    // from "nothing ran at all" — the distinction between a host that cannot
+    // answer the question and a product that got the answer wrong.
+    text.push_str(&format!(
+        "input_classes_blocked = [{}]\n",
+        report
+            .input_classes_blocked
+            .iter()
+            .map(|class| format!("\"{}\"", escape_toml(class)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    text.push_str(&format!(
+        "input_classes_deviating = [{}]\n",
+        report
+            .input_classes_deviating
+            .iter()
+            .map(|class| format!("\"{}\"", escape_toml(class)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     match &report.prerequisite {
         Some(prerequisite) => text.push_str(&format!(
             "prerequisite = \"{}\"\n",
@@ -428,6 +487,63 @@ pub fn render_report(report: &AcceptanceReport) -> String {
             .join(", ")
     ));
     text
+}
+
+/// The driver result's own top-level fields, read strictly.
+///
+/// Every field is optional and `None` means **not stated**. A key that is
+/// absent, duplicated, or not of the expected type is not a value: `toml`
+/// rejects a duplicated key for the whole document, which is exactly the
+/// reading wanted here, and a document that does not parse states nothing.
+///
+/// These three are read as parsed TOML on purpose. The six class markers and
+/// `window_created` stay literal substring matches — they are the wire protocol
+/// the driver's `driver_report_markers_match_the_harness_wire_protocol_verbatim`
+/// pins with literals — but a free-form note or a class `detail` must not be
+/// able to forge a *field*, and a parsed top-level key cannot be forged from
+/// inside a string value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DriverResultFields {
+    /// The driver's own `status` string, if stated.
+    pub status: Option<String>,
+    /// The driver's own `exit_code`, if stated. Corroboration, not authority.
+    pub exit_code: Option<i64>,
+    /// The driver's own `prerequisite`, if stated. Propagated verbatim.
+    pub prerequisite: Option<String>,
+}
+
+/// Read the driver result's own top-level fields.
+pub fn parse_driver_result_fields(result_text: &str) -> DriverResultFields {
+    let Ok(value) = result_text.parse::<toml::Value>() else {
+        return DriverResultFields::default();
+    };
+    let Some(table) = value.as_table() else {
+        return DriverResultFields::default();
+    };
+    DriverResultFields {
+        status: table
+            .get("status")
+            .and_then(toml::Value::as_str)
+            .map(str::to_string),
+        exit_code: table.get("exit_code").and_then(toml::Value::as_integer),
+        prerequisite: table
+            .get("prerequisite")
+            .and_then(toml::Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+/// The classes whose per-class line in `result_text` reads `= "<outcome>"`.
+///
+/// Read the same literal way for every outcome, so `blocked` and `deviates` are
+/// recognised exactly as `conforms` always was.
+fn classes_with_outcome(result_text: &str, outcome: &str) -> Vec<String> {
+    INPUT_CLASSES
+        .iter()
+        .copied()
+        .filter(|class| result_text.contains(&format!("input_class_{class} = \"{outcome}\"")))
+        .map(|class| class.to_string())
+        .collect()
 }
 
 fn bool_literal(value: bool) -> &'static str {
@@ -477,15 +593,31 @@ pub fn run_native_product_acceptance_command(opts: &NativeProductAcceptanceOptio
 
 /// Run the harness against injected boundaries.
 ///
-/// Return points, exhaustively: an unwritable output directory or report is
-/// [`EXIT_OPERATIONAL_ERROR`]; an unavailable driver, an absent packaged
-/// product, an OS blocked on `BLK-2026-09-08-02` and a host with no
-/// interactive desktop session are [`EXIT_BLOCKED`]; a driver that ran but
-/// produced no readable result is [`EXIT_OPERATIONAL_ERROR`]; an observed
-/// product deviation is [`EXIT_CONFORMANCE_FAILED`]. [`EXIT_PASSED`] is
-/// returned only when the driver exited zero **and** the result records a
-/// created window **and** every one of the six [`INPUT_CLASSES`] was observed
-/// to conform.
+/// Return points before the driver's conformance run, exhaustively: an
+/// unwritable output directory or report is [`EXIT_OPERATIONAL_ERROR`]; an
+/// unavailable driver, an absent packaged product, an OS blocked on
+/// `BLK-2026-09-08-02` and a host with no interactive desktop session are
+/// [`EXIT_BLOCKED`]; a driver that ran but produced no readable result is
+/// [`EXIT_OPERATIONAL_ERROR`].
+///
+/// After the conformance run the driver's **process exit code** is dispatched
+/// on exhaustively, and the driver's own result corroborates it:
+///
+/// | What the driver did | `status` | exit |
+/// | --- | --- | --- |
+/// | exit `0`, and its result records a created window and all six [`INPUT_CLASSES`] conforming | `passed` | `0` |
+/// | exit `1` — it ran to completion and reported a deviation itself | `conformance-failed` | `1` |
+/// | exit `3` — it could not establish an oracle, or a class was blocked | `blocked` | `3`, carrying the driver's own exact prerequisite |
+/// | exit `2` | `operational-error` | `2` |
+/// | any other exit code | `operational-error` | `2` |
+/// | exit `0` contradicted by its own result | `operational-error` | `2` |
+/// | a stated `exit_code` field that disagrees with the process exit code | `operational-error` | `2` |
+///
+/// [`STATUS_CONFORMANCE_FAILED`] is reachable from exactly one of those rows: a
+/// driver that ran to completion and said so itself. It is never reached by
+/// inference from a missing marker, and in particular a **blocked** class — the
+/// `ime-cjk` oracle on a host with no CJK input layout — is a blocked run, not
+/// a defect against the product.
 pub fn run_native_product_acceptance(
     workspace_root: &Path,
     opts: &NativeProductAcceptanceOptions,
@@ -614,26 +746,116 @@ pub fn run_native_product_acceptance(
     };
 
     report.window_created = result_text.contains("window_created = true");
-    report.input_classes_observed = INPUT_CLASSES
-        .iter()
-        .copied()
-        .filter(|class| result_text.contains(&format!("input_class_{class} = \"conforms\"")))
-        .map(|class| class.to_string())
-        .collect();
+    report.input_classes_observed = classes_with_outcome(&result_text, "conforms");
+    report.input_classes_blocked = classes_with_outcome(&result_text, "blocked");
+    report.input_classes_deviating = classes_with_outcome(&result_text, "deviates");
+
+    let fields = parse_driver_result_fields(&result_text);
+
+    // The driver's `exit_code` field is corroboration, not authority: the
+    // process exit code is what this harness dispatches on. The two disagreeing
+    // means the instrument contradicts itself, and neither a pass nor a product
+    // verdict can be read from an instrument in that state.
+    if let Some(stated) = fields.exit_code
+        && stated != i64::from(driver_code)
+    {
+        report.status = STATUS_OPERATIONAL_ERROR.to_string();
+        report.exit_code = EXIT_OPERATIONAL_ERROR;
+        report.notes.push(format!(
+            "the driver process exited {driver_code} but its own result reports exit_code = \
+             {stated}; the instrument contradicts itself, so this is an operational error and \
+             not a product outcome"
+        ));
+        return finish(&report_path, &report);
+    }
 
     let every_class_observed = report.input_classes_observed.len() == INPUT_CLASSES.len();
-    if driver_code == 0 && report.window_created && every_class_observed {
-        report.status = STATUS_PASSED.to_string();
-        report.exit_code = EXIT_PASSED;
-    } else {
-        report.status = STATUS_CONFORMANCE_FAILED.to_string();
-        report.exit_code = EXIT_CONFORMANCE_FAILED;
-        report.notes.push(format!(
-            "driver exited {driver_code}; window_created={}, {} of {} input classes observed",
-            report.window_created,
-            report.input_classes_observed.len(),
-            INPUT_CLASSES.len()
-        ));
+    // An unstated status is not a value, so it cannot corroborate a pass and it
+    // cannot contradict one either; the six class markers and the window marker
+    // are what a pass rests on.
+    let stated_status_denies_pass = fields
+        .status
+        .as_deref()
+        .is_some_and(|status| status != STATUS_PASSED);
+
+    match driver_code {
+        EXIT_PASSED => {
+            if report.window_created && every_class_observed && !stated_status_denies_pass {
+                report.status = STATUS_PASSED.to_string();
+                report.exit_code = EXIT_PASSED;
+            } else {
+                // `conformance_exit_code` in the driver returns 0 if and only if
+                // its report holds a created window and six conforming classes,
+                // so a driver that exits 0 while its own result says otherwise
+                // is a broken instrument, not a broken product. Calling this a
+                // conformance failure would be this packet's bug in a new place.
+                report.status = STATUS_OPERATIONAL_ERROR.to_string();
+                report.exit_code = EXIT_OPERATIONAL_ERROR;
+                report.notes.push(format!(
+                    "the driver exited {EXIT_PASSED} but its own result does not corroborate a \
+                     pass: window_created={}, {} of {} input classes observed to conform, result \
+                     status {:?}. A driver that exits 0 while its result says otherwise is a \
+                     broken instrument, not a broken product",
+                    report.window_created,
+                    report.input_classes_observed.len(),
+                    INPUT_CLASSES.len(),
+                    fields.status.as_deref().unwrap_or("<unstated>")
+                ));
+            }
+        }
+        // The only route to `conformance-failed`. It is reached from a driver
+        // that ran to completion and reported a deviation itself, never by
+        // inference from a missing marker, a short class list or an unreadable
+        // field.
+        EXIT_CONFORMANCE_FAILED => {
+            report.status = STATUS_CONFORMANCE_FAILED.to_string();
+            report.exit_code = EXIT_CONFORMANCE_FAILED;
+            report.notes.push(format!(
+                "the driver ran to completion and reported a deviation itself (exit \
+                 {EXIT_CONFORMANCE_FAILED}); classes observed to deviate: [{}]",
+                report.input_classes_deviating.join(", ")
+            ));
+        }
+        // A blocked driver is a blocked run. A class the driver could not
+        // observe — `ime-cjk` on a host with no CJK input layout is the worked
+        // example — is a missing oracle, and a missing oracle is never a defect
+        // against the product.
+        EXIT_BLOCKED => {
+            let stated = fields
+                .prerequisite
+                .as_deref()
+                .filter(|prerequisite| !prerequisite.trim().is_empty());
+            match stated {
+                // Verbatim. Not reworded, not prefixed, not merged with one of
+                // this module's own prerequisites.
+                Some(prerequisite) => report.blocked(prerequisite),
+                None => report.blocked(PREREQUISITE_DRIVER_STATED_NO_REASON),
+            }
+            report.notes.push(format!(
+                "the driver reported blocked (exit {EXIT_BLOCKED}); this host cannot answer the \
+                 question and the product is not implicated. Classes the driver could not \
+                 observe: [{}]",
+                report.input_classes_blocked.join(", ")
+            ));
+        }
+        EXIT_OPERATIONAL_ERROR => {
+            report.status = STATUS_OPERATIONAL_ERROR.to_string();
+            report.exit_code = EXIT_OPERATIONAL_ERROR;
+            report.notes.push(format!(
+                "the driver reported an operational error (exit {EXIT_OPERATIONAL_ERROR}); the \
+                 instrument could not operate and the product is not implicated"
+            ));
+        }
+        other => {
+            report.status = STATUS_OPERATIONAL_ERROR.to_string();
+            report.exit_code = EXIT_OPERATIONAL_ERROR;
+            report.notes.push(format!(
+                "the driver exited {other}, which is not one of the four outcome codes this \
+                 contract defines ({EXIT_PASSED}, {EXIT_CONFORMANCE_FAILED}, \
+                 {EXIT_OPERATIONAL_ERROR}, {EXIT_BLOCKED}); no product outcome can be read from \
+                 an instrument the harness does not understand"
+            ));
+        }
     }
     finish(&report_path, &report)
 }

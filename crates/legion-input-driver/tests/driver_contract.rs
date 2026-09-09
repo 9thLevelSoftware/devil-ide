@@ -74,6 +74,59 @@ fn conforming_report() -> ConformanceReport {
     }
 }
 
+/// The exact sentence `observe_ime_cjk` opens its blocked detail with, written
+/// out here rather than imported: `main.rs` is a binary and this test asserts
+/// the *text* an operator would read, so a reword has to change both places.
+const IME_PREREQUISITE: &str = concat!(
+    "A Windows 11 x64 host with a CJK IME installed (for example Microsoft IME for ",
+    "Japanese) and active as the input layout of the packaged product's window, so the ",
+    "driver can drive a real composition by key injection rather than synthesizing a ",
+    "commit."
+);
+
+/// The report this host actually produces: a window, five conforming classes,
+/// and `ime-cjk` blocked because no CJK input layout is active.
+fn five_conforms_one_blocked_ime() -> ConformanceReport {
+    ConformanceReport {
+        product: "package/legion-desktop.exe".to_string(),
+        window_created: true,
+        observations: report::INPUT_CLASSES
+            .iter()
+            .copied()
+            .map(|class| {
+                if class == "ime-cjk" {
+                    ClassObservation::new(
+                        class,
+                        ClassOutcome::Blocked,
+                        format!(
+                            "{IME_PREREQUISITE} The product window's input layout reports \
+                             language id 0x0409, which is not a CJK IME."
+                        ),
+                    )
+                } else {
+                    ClassObservation::new(class, ClassOutcome::Conforms, "observed")
+                }
+            })
+            .collect(),
+        prerequisite: None,
+        notes: Vec::new(),
+    }
+}
+
+/// The rendered `prerequisite = "..."` line's value, unescaped only for the
+/// escapes this renderer emits.
+fn rendered_prerequisite(text: &str) -> String {
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("prerequisite = \""))
+        .unwrap_or_else(|| panic!("no prerequisite line:\n{text}"));
+    line["prerequisite = \"".len()..]
+        .strip_suffix('"')
+        .unwrap_or_else(|| panic!("unterminated prerequisite line: {line}"))
+        .replace("\\\\", "\\")
+        .replace("\\\"", "\"")
+}
+
 #[test]
 fn probe_session_writes_a_report_even_when_no_interactive_desktop_is_available() {
     let dir = temp_dir("probe-report");
@@ -375,5 +428,209 @@ fn sha256_matches_published_known_answer_vectors() {
     assert_eq!(
         observe::sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    );
+}
+
+#[test]
+fn a_blocked_class_makes_the_run_blocked_and_names_that_class_prerequisite() {
+    // This is the report this host produces today: the product opened a window,
+    // five classes were observed to conform, and `ime-cjk` was blocked because
+    // no CJK input layout is active. Nothing about that implicates the product.
+    let observed = five_conforms_one_blocked_ime();
+
+    assert_eq!(
+        report::conformance_exit_code(&observed),
+        3,
+        "a blocked class with no deviation anywhere is a blocked run, not a conformance failure"
+    );
+    assert_eq!(report::conformance_status(&observed), "blocked");
+
+    let text = report::render_conformance_report(&observed);
+    assert!(
+        text.contains("input_class_ime-cjk = \"blocked\""),
+        "the blocked class must still emit its own per-class line:\n{text}"
+    );
+    assert!(
+        !text.contains("input_class_ime-cjk = \"conforms\""),
+        "composing a prerequisite must never turn a blocked class into a conforming one:\n{text}"
+    );
+    assert_eq!(
+        text.matches("= \"conforms\"").count(),
+        5,
+        "exactly the five observed classes conform:\n{text}"
+    );
+
+    let prerequisite = rendered_prerequisite(&text);
+    assert!(
+        !prerequisite.trim().is_empty(),
+        "a blocked run with a blocked class must state why:\n{text}"
+    );
+    assert!(
+        prerequisite.contains("`ime-cjk`"),
+        "the composed prerequisite must name the class that blocked; got {prerequisite:?}"
+    );
+    assert!(
+        prerequisite.contains(IME_PREREQUISITE),
+        "the composed prerequisite must carry the blocked class's own detail verbatim, not a \
+         reworded summary; got {prerequisite:?}"
+    );
+    assert!(
+        prerequisite.contains("the product is not implicated"),
+        "a blocked run must say plainly that the product is not implicated; got {prerequisite:?}"
+    );
+
+    // The detail this composition quotes is the driver's, not this test's.
+    let source = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("main.rs"),
+    )
+    .expect("read the driver source");
+    assert!(
+        source.contains(
+            "A Windows 11 x64 host with a CJK IME installed (for example Microsoft IME for "
+        ),
+        "the IME prerequisite asserted here must be the one `observe_ime_cjk` actually writes"
+    );
+    assert!(
+        source.contains("which is not a CJK IME."),
+        "the IME blocked detail asserted here must be the one `observe_ime_cjk` actually writes"
+    );
+
+    // Three outcomes, no fourth. This match is exhaustive, so adding a variant
+    // stops this test compiling rather than silently widening the vocabulary.
+    for outcome in [
+        ClassOutcome::Conforms,
+        ClassOutcome::Deviates,
+        ClassOutcome::Blocked,
+    ] {
+        let literal = match outcome {
+            ClassOutcome::Conforms => "conforms",
+            ClassOutcome::Deviates => "deviates",
+            ClassOutcome::Blocked => "blocked",
+        };
+        assert_eq!(outcome.as_str(), literal);
+    }
+}
+
+#[test]
+fn blocked_conformance_report_never_renders_an_empty_prerequisite() {
+    let explicitly_empty = ConformanceReport {
+        product: "package/legion-desktop.exe".to_string(),
+        window_created: true,
+        observations: report::INPUT_CLASSES
+            .iter()
+            .copied()
+            .map(|class| ClassObservation::new(class, ClassOutcome::Conforms, "observed"))
+            .filter(|observation| observation.class != "command")
+            .collect(),
+        prerequisite: Some(String::new()),
+        notes: Vec::new(),
+    };
+
+    let blocked_shapes: Vec<(&str, ConformanceReport)> = vec![
+        ("nothing observed at all", ConformanceReport::default()),
+        (
+            "five conforms, ime-cjk blocked",
+            five_conforms_one_blocked_ime(),
+        ),
+        ("an explicitly empty prerequisite", explicitly_empty),
+        (
+            "an unsupported host",
+            report::unsupported_host_conformance_report("package/legion-desktop"),
+        ),
+        (
+            "an absent packaged product",
+            report::missing_product_conformance_report("package/legion-desktop.exe"),
+        ),
+    ];
+
+    for (label, blocked) in blocked_shapes {
+        assert_eq!(
+            report::conformance_exit_code(&blocked),
+            3,
+            "{label} must be a blocked run for this test to mean anything"
+        );
+        let text = report::render_conformance_report(&blocked);
+        assert!(
+            !text.contains("prerequisite = \"\""),
+            "{label}: a blocked report with an empty prerequisite is unactionable, and the \
+             harness would have nothing to propagate:\n{text}"
+        );
+        let prerequisite = rendered_prerequisite(&text);
+        assert!(
+            prerequisite.trim().len() > 80,
+            "{label}: a prerequisite must be a sentence naming what is missing, not a label; \
+             got {prerequisite:?}"
+        );
+    }
+}
+
+#[test]
+fn a_deviating_class_still_outranks_a_blocked_class() {
+    // A real product finding must not be hidden behind an oracle that happened
+    // to be unavailable for some other class. Composing a blocked run's
+    // prerequisite does not change that ranking.
+    let mixed = ConformanceReport {
+        product: "package/legion-desktop.exe".to_string(),
+        window_created: true,
+        observations: vec![
+            ClassObservation::new(
+                "pointer",
+                ClassOutcome::Deviates,
+                "focus moved to an element that does not contain the clicked point",
+            ),
+            ClassObservation::new(
+                "ime-cjk",
+                ClassOutcome::Blocked,
+                format!("{IME_PREREQUISITE} language id 0x0409."),
+            ),
+        ],
+        prerequisite: None,
+        notes: Vec::new(),
+    };
+
+    assert_eq!(
+        report::conformance_exit_code(&mixed),
+        1,
+        "an observed deviation outranks a blocked class and stays a conformance failure"
+    );
+    assert_eq!(report::conformance_status(&mixed), "conformance-failed");
+    assert_eq!(
+        report::effective_prerequisite(&mixed),
+        None,
+        "a conformance failure is a product finding, not a missing host capability; dressing it \
+         as a prerequisite would hide it"
+    );
+
+    let text = report::render_conformance_report(&mixed);
+    assert!(
+        text.contains("input_class_pointer = \"deviates\""),
+        "the deviating class keeps its own line:\n{text}"
+    );
+    assert!(
+        text.contains("input_class_ime-cjk = \"blocked\""),
+        "the blocked class keeps its own line even when it is outranked:\n{text}"
+    );
+    assert!(
+        text.contains("prerequisite = \"\""),
+        "only a blocked run composes a prerequisite; a conformance failure states none:\n{text}"
+    );
+
+    // Removing the deviation is what makes the same run blocked.
+    let without_deviation = ConformanceReport {
+        observations: mixed
+            .observations
+            .iter()
+            .filter(|observation| observation.outcome != ClassOutcome::Deviates)
+            .cloned()
+            .collect(),
+        ..mixed.clone()
+    };
+    assert_eq!(report::conformance_exit_code(&without_deviation), 3);
+    assert!(
+        report::effective_prerequisite(&without_deviation)
+            .is_some_and(|prerequisite| prerequisite.contains(IME_PREREQUISITE)),
+        "with the deviation gone the run is blocked and states the blocked class's own reason"
     );
 }

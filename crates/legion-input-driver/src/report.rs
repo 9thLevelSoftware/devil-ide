@@ -60,6 +60,22 @@ pub const PREREQUISITE_NO_PRODUCT: &str = concat!(
     "subprocess rather than a development build (BLK-2026-09-08-04)."
 );
 
+/// Last-resort prerequisite for a blocked run that states no reason of its own.
+///
+/// [`blocked_reasons`] comes back empty only for a report that is blocked while
+/// a window was observed, every one of [`INPUT_CLASSES`] carries an observation
+/// and none of those is blocked — a shape [`conformance_exit_code`] cannot
+/// produce. The constant exists so [`render_conformance_report`] can never
+/// write an unactionable `prerequisite = ""` onto a blocked report, whatever
+/// value it is handed.
+pub const PREREQUISITE_UNSTATED_BLOCKED_REASON: &str = concat!(
+    "A `--conformance-run` result that states why it was blocked. This result ",
+    "reports a blocked run while naming no blocked class, no unobserved class ",
+    "and no missing window, so the driver published no reason an owner can act ",
+    "on. Rebuild the driver with `cargo build -p legion-input-driver --release` ",
+    "and re-run; the product is not implicated."
+);
+
 /// How one input class came out. There is no fourth value, and in particular
 /// no "assumed" and no "skipped": an unobserved class is simply absent from the
 /// report, which already reads as not-observed on the harness side.
@@ -171,6 +187,113 @@ pub fn conformance_status(report: &ConformanceReport) -> &'static str {
     }
 }
 
+/// The classes named by [`INPUT_CLASSES`] that this report carries no
+/// observation for at all.
+///
+/// An unobserved class is not the same thing as a blocked one: the blocked
+/// class has a reason, and this one does not even have that. Both are reasons a
+/// run is blocked, and neither is ever rendered as conforming.
+pub fn unobserved_classes(report: &ConformanceReport) -> Vec<&'static str> {
+    INPUT_CLASSES
+        .iter()
+        .copied()
+        .filter(|class| {
+            !report
+                .observations
+                .iter()
+                .any(|observation| observation.class == *class)
+        })
+        .collect()
+}
+
+/// Why this run could not answer the question, in the run's own words.
+///
+/// Each blocked class contributes its own `detail`, which is where the exact
+/// prerequisite text already lives (`observe_ime_cjk` in `main.rs` is the
+/// worked example: its detail opens with the CJK IME prerequisite verbatim).
+/// Nothing here is reworded, and nothing here is invented.
+pub fn blocked_reasons(report: &ConformanceReport) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if !report.window_created {
+        reasons.push(
+            "no native top-level window of the product process was observed from outside it"
+                .to_string(),
+        );
+    }
+    for observation in &report.observations {
+        if observation.outcome == ClassOutcome::Blocked {
+            reasons.push(format!(
+                "input class `{}` was blocked: {}",
+                observation.class, observation.detail
+            ));
+        }
+    }
+    let unobserved = unobserved_classes(report);
+    if !unobserved.is_empty() {
+        reasons.push(format!(
+            "no observation at all was recorded for input {}: {}",
+            if unobserved.len() == 1 {
+                "class"
+            } else {
+                "classes"
+            },
+            unobserved
+                .iter()
+                .map(|class| format!("`{class}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    reasons
+}
+
+/// The top-level prerequisite a blocked run composes from its own observations.
+///
+/// This is what closes the gap where a run with five conforming classes and one
+/// blocked class reported `prerequisite = ""`: the reason lives in the blocked
+/// class's `detail`, so the top-level prerequisite is composed from it and
+/// names the class it came from.
+pub fn blocked_run_prerequisite(report: &ConformanceReport) -> String {
+    let reasons = blocked_reasons(report);
+    if reasons.is_empty() {
+        return PREREQUISITE_UNSTATED_BLOCKED_REASON.to_string();
+    }
+    let mut composed = format!(
+        "This host could not answer COMP-PLAT-002 for the packaged product, and the product is \
+         not implicated. Supply what these observations name and re-run: {}",
+        reasons.join("; ")
+    );
+    // A blocked class's detail usually ends its own sentence; do not double the
+    // full stop, and do not leave one missing when it does not.
+    if !composed.ends_with('.') {
+        composed.push('.');
+    }
+    composed
+}
+
+/// The prerequisite this report actually renders.
+///
+/// Precedence, and there is no fourth case:
+///
+/// 1. a stated, non-empty top-level `prerequisite` wins, verbatim — the caller
+///    already knew a more specific reason than the observations carry;
+/// 2. otherwise a **blocked** run composes one with [`blocked_run_prerequisite`];
+/// 3. otherwise there is none. A passing run has no prerequisite, and neither
+///    does a `conformance-failed` one: a deviation the driver observed is a
+///    product finding, not a missing host capability, and dressing it as a
+///    prerequisite would hide it.
+pub fn effective_prerequisite(report: &ConformanceReport) -> Option<String> {
+    if let Some(stated) = report.prerequisite.as_deref()
+        && !stated.trim().is_empty()
+    {
+        return Some(stated.to_string());
+    }
+    if conformance_exit_code(report) == EXIT_BLOCKED {
+        return Some(blocked_run_prerequisite(report));
+    }
+    None
+}
+
 /// Render the `--probe-session` report.
 ///
 /// The session success marker is written in exactly one arm of this match: the
@@ -267,9 +390,13 @@ pub fn render_conformance_report(report: &ConformanceReport) -> String {
         ));
     }
 
+    // A blocked run renders the reason it actually has: its own stated
+    // prerequisite, or one composed from the blocked classes' details. A
+    // blocked result with an empty prerequisite is unactionable, and the
+    // harness would have nothing to propagate.
     text.push_str(&format!(
         "prerequisite = \"{}\"\n",
-        toml_string(report.prerequisite.as_deref().unwrap_or(""))
+        toml_string(&effective_prerequisite(report).unwrap_or_default())
     ));
     text.push_str(&format!(
         "notes = [{}]\n",

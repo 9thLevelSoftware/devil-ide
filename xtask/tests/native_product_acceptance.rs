@@ -55,6 +55,169 @@ impl SubprocessLauncher for RecordingLauncher {
     }
 }
 
+/// A launcher that plays a scripted driver run.
+///
+/// [`RecordingLauncher`] answers `Ok(0)` to everything and writes nothing, so
+/// it cannot express "the driver exited 3 after writing this result". This is
+/// its sibling rather than a change to it: the assertions that depend on a
+/// launcher which starts nothing and returns zero stay exactly as they were.
+struct ScriptedLauncher {
+    session_exit_code: i32,
+    session_result: String,
+    run_exit_code: i32,
+    run_result: Option<String>,
+    launches: Mutex<Vec<String>>,
+}
+
+impl Default for ScriptedLauncher {
+    fn default() -> Self {
+        Self {
+            session_exit_code: 0,
+            session_result: "# legion-input-driver --probe-session\nstatus = \"attached\"\n\
+                             interactive_session = true\n"
+                .to_string(),
+            run_exit_code: EXIT_PASSED,
+            run_result: Some(driver_result_text(
+                "passed",
+                Some(0),
+                true,
+                &conforming_classes(),
+                "",
+                &[],
+            )),
+            launches: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl ScriptedLauncher {
+    /// A launcher whose conformance run exits `run_exit_code` after writing
+    /// `run_result`. The session handshake succeeds, so the run is reached.
+    fn conformance(run_exit_code: i32, run_result: String) -> Self {
+        Self {
+            run_exit_code,
+            run_result: Some(run_result),
+            ..Self::default()
+        }
+    }
+}
+
+impl SubprocessLauncher for ScriptedLauncher {
+    fn launch(&self, program: &Path, args: &[String], _working_dir: &Path) -> io::Result<i32> {
+        self.launches.lock().expect("launch log").push(format!(
+            "{} {}",
+            program.display(),
+            args.join(" ")
+        ));
+        let report_path = args
+            .iter()
+            .position(|arg| arg == "--report")
+            .and_then(|index| args.get(index + 1))
+            .map(PathBuf::from)
+            .expect("the harness always passes --report <path>");
+        if args.iter().any(|arg| arg == "--probe-session") {
+            fs::write(&report_path, self.session_result.as_bytes())?;
+            return Ok(self.session_exit_code);
+        }
+        if let Some(result) = &self.run_result {
+            fs::write(&report_path, result.as_bytes())?;
+        }
+        Ok(self.run_exit_code)
+    }
+}
+
+/// The exact sentence `observe_ime_cjk` opens its blocked detail with. Written
+/// out here, and cross-checked against the driver source by
+/// `driver_blocked_result_carries_the_drivers_exact_prerequisite_string`, so
+/// this fixture cannot drift into a prerequisite nothing actually emits.
+const IME_PREREQUISITE: &str = concat!(
+    "A Windows 11 x64 host with a CJK IME installed (for example Microsoft IME for ",
+    "Japanese) and active as the input layout of the packaged product's window, so the ",
+    "driver can drive a real composition by key injection rather than synthesizing a ",
+    "commit."
+);
+
+/// The top-level prerequisite the driver composes for this host: five classes
+/// conforming, `ime-cjk` blocked, its own detail quoted verbatim.
+fn composed_ime_prerequisite() -> String {
+    format!(
+        "This host could not answer COMP-PLAT-002 for the packaged product, and the product is \
+         not implicated. Supply what these observations name and re-run: input class `ime-cjk` \
+         was blocked: {IME_PREREQUISITE} The product window's input layout reports language id \
+         0x0409, which is not a CJK IME."
+    )
+}
+
+fn conforming_classes() -> Vec<(&'static str, &'static str)> {
+    npa::INPUT_CLASSES
+        .iter()
+        .copied()
+        .map(|class| (class, "conforms"))
+        .collect()
+}
+
+/// This host's expected result: a window, five conforming classes, `ime-cjk`
+/// blocked.
+fn five_conforms_one_blocked_ime() -> Vec<(&'static str, &'static str)> {
+    npa::INPUT_CLASSES
+        .iter()
+        .copied()
+        .map(|class| {
+            if class == "ime-cjk" {
+                (class, "blocked")
+            } else {
+                (class, "conforms")
+            }
+        })
+        .collect()
+}
+
+/// Escape for a TOML basic string, exactly as the driver's `toml_string` does
+/// after its marker scrub.
+fn escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+/// Render a `driver_result.toml` in the shape
+/// `crates/legion-input-driver/src/report.rs` writes.
+fn driver_result_text(
+    status: &str,
+    exit_code: Option<i32>,
+    window_created: bool,
+    classes: &[(&str, &str)],
+    prerequisite: &str,
+    notes: &[&str],
+) -> String {
+    let mut text = String::new();
+    text.push_str("# legion-input-driver --conformance-run (ADR-0056)\n");
+    text.push_str("schema_version = 1\n");
+    text.push_str("driver = \"legion-input-driver\"\n");
+    text.push_str("mode = \"conformance-run\"\n");
+    text.push_str(&format!("status = \"{}\"\n", escape(status)));
+    if let Some(exit_code) = exit_code {
+        text.push_str(&format!("exit_code = {exit_code}\n"));
+    }
+    text.push_str("product = \"package/legion-desktop.exe\"\n");
+    text.push_str(&format!("window_created = {window_created}\n"));
+    for (class, outcome) in classes {
+        text.push_str(&format!("input_class_{class} = \"{outcome}\"\n"));
+        text.push_str(&format!("input_class_{class}_detail = \"observed\"\n"));
+    }
+    text.push_str(&format!("prerequisite = \"{}\"\n", escape(prerequisite)));
+    text.push_str(&format!(
+        "notes = [{}]\n",
+        notes
+            .iter()
+            .map(|note| format!("\"{}\"", escape(note)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    text
+}
+
 fn temp_workspace(tag: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -100,6 +263,18 @@ fn touch(path: &Path) {
             .unwrap_or_else(|err| panic!("create {}: {err}", parent.display()));
     }
     fs::write(path, b"").unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
+}
+
+/// A workspace with a packaged product executable staged, so a run reaches the
+/// driver's conformance launch instead of stopping at the package prerequisite.
+fn staged_workspace(tag: &str) -> PathBuf {
+    let workspace = temp_workspace(tag);
+    touch(
+        &workspace
+            .join("package")
+            .join(npa::packaged_executable_name()),
+    );
+    workspace
 }
 
 fn report_text(workspace: &Path) -> String {
@@ -481,6 +656,8 @@ fn report_is_written_and_readable_even_when_the_run_is_blocked() {
         subprocess_launched: false,
         window_created: false,
         input_classes_observed: Vec::new(),
+        input_classes_blocked: Vec::new(),
+        input_classes_deviating: Vec::new(),
         driver_path: "tools/native-input-driver/fixture-driver".to_string(),
         package_dir: "package".to_string(),
         notes: Vec::new(),
@@ -523,4 +700,607 @@ fn command_is_not_referenced_by_any_pr_gate_workflow() {
         "expected workflow files under {}",
         workflows.display()
     );
+}
+
+/// Items of a `key = ["a", "b"]` line.
+fn toml_list_field(text: &str, key: &str) -> Vec<String> {
+    let prefix = format!("{key} = [");
+    let line = text
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("report has no `{key}` field:\n{text}"));
+    let body = line[prefix.len()..]
+        .strip_suffix(']')
+        .unwrap_or_else(|| panic!("unterminated `{key}` field: {line}"));
+    if body.trim().is_empty() {
+        return Vec::new();
+    }
+    body.split(", ")
+        .map(|item| item.trim().trim_matches('"').to_string())
+        .collect()
+}
+
+/// The driver result this host is expected to produce, and the launcher that
+/// plays it: a window, five conforming classes, `ime-cjk` blocked, exit 3.
+fn this_hosts_blocked_run() -> ScriptedLauncher {
+    ScriptedLauncher::conformance(
+        EXIT_BLOCKED,
+        driver_result_text(
+            "blocked",
+            Some(EXIT_BLOCKED),
+            true,
+            &five_conforms_one_blocked_ime(),
+            &composed_ime_prerequisite(),
+            &[],
+        ),
+    )
+}
+
+#[test]
+fn driver_blocked_exit_is_propagated_as_blocked_with_its_own_exit_code() {
+    let workspace = staged_workspace("driver-blocked");
+    let launcher = this_hosts_blocked_run();
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+
+    assert_eq!(
+        code, EXIT_BLOCKED,
+        "the driver's own blocked outcome is the run's outcome; collapsing it into a conformance \
+         failure blames the product for a host that cannot answer the question"
+    );
+    assert_ne!(code, EXIT_CONFORMANCE_FAILED);
+    assert_ne!(code, EXIT_PASSED);
+    assert_ne!(code, EXIT_OPERATIONAL_ERROR);
+
+    let text = report_text(&workspace);
+    assert_eq!(toml_string_field(&text, "status"), "blocked");
+    assert!(
+        text.contains("exit_code = 3"),
+        "the report must record the blocked exit code it returned:\n{text}"
+    );
+    let launches = launcher.launches.lock().expect("launch log").clone();
+    assert_eq!(
+        launches.len(),
+        2,
+        "the session handshake and the conformance run are the only two launches: {launches:?}"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn driver_blocked_result_carries_the_drivers_exact_prerequisite_string() {
+    let workspace = staged_workspace("driver-prerequisite");
+    let launcher = this_hosts_blocked_run();
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    assert_eq!(code, EXIT_BLOCKED);
+
+    let text = report_text(&workspace);
+    let prerequisite = toml_string_field(&text, "prerequisite");
+    assert_eq!(
+        prerequisite,
+        composed_ime_prerequisite(),
+        "the harness must propagate the driver's prerequisite verbatim; a reworded prerequisite \
+         is a fabricated one"
+    );
+    assert!(
+        prerequisite.contains(IME_PREREQUISITE),
+        "the propagated string must still carry the blocked class's own prerequisite sentence; \
+         got {prerequisite:?}"
+    );
+    for own in [
+        npa::PREREQUISITE_DRIVER_MISSING,
+        npa::PREREQUISITE_SESSION_MISSING,
+        npa::PREREQUISITE_PACKAGE_MISSING,
+        npa::PREREQUISITE_UNSUPPORTED_HOST,
+        npa::PREREQUISITE_DRIVER_STATED_NO_REASON,
+    ] {
+        assert!(
+            !prerequisite.contains(own),
+            "the driver's prerequisite must not be merged with one of the harness's own: \
+             {prerequisite:?}"
+        );
+    }
+
+    // The sentence this fixture quotes is the driver's, not this test's.
+    let driver_source = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/legion-input-driver/src/main.rs"),
+    )
+    .expect("read the driver source");
+    assert!(
+        driver_source.contains(
+            "A Windows 11 x64 host with a CJK IME installed (for example Microsoft IME for "
+        ),
+        "the IME prerequisite this fixture propagates must be the one `observe_ime_cjk` writes"
+    );
+    assert!(
+        driver_source.contains("which is not a CJK IME."),
+        "the IME blocked detail this fixture propagates must be the one `observe_ime_cjk` writes"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn a_blocked_input_class_is_never_reported_as_a_conformance_failure() {
+    // The artifact this host produces today, built exactly: a created window,
+    // five classes observed to conform, `ime-cjk` blocked because no CJK input
+    // layout is active, driver exit 3. The driver behaved perfectly and the
+    // product did nothing wrong, so nothing here may be eligible to become a
+    // defect against it.
+    let workspace = staged_workspace("blocked-class");
+    let launcher = this_hosts_blocked_run();
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+
+    assert_eq!(
+        code, EXIT_BLOCKED,
+        "a blocked class with no deviation anywhere is a blocked run"
+    );
+    let text = report_text(&workspace);
+    assert_eq!(toml_string_field(&text, "status"), "blocked");
+    assert_eq!(
+        toml_string_field(&text, "prerequisite"),
+        composed_ime_prerequisite()
+    );
+    assert!(
+        !text.contains("conformance-failed"),
+        "the string `conformance-failed` must appear nowhere in this artifact; if it does, this \
+         report is eligible to become a defect against a product that did nothing wrong:\n{text}"
+    );
+    assert_eq!(
+        toml_list_field(&text, "input_classes_blocked"),
+        vec!["ime-cjk".to_string()],
+        "the artifact must name the class that blocked:\n{text}"
+    );
+    assert!(
+        toml_list_field(&text, "input_classes_deviating").is_empty(),
+        "no class deviated:\n{text}"
+    );
+    assert_eq!(
+        toml_list_field(&text, "input_classes_observed").len(),
+        5,
+        "the five classes that did conform are still recorded:\n{text}"
+    );
+    assert!(
+        text.contains("window_created = true"),
+        "the window really was observed, and a blocked run does not erase that:\n{text}"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn conformance_failed_requires_a_driver_that_reported_a_deviation_itself() {
+    // The one route in: a driver that ran to completion, observed a deviation,
+    // and exited 1 saying so.
+    let deviating = npa::INPUT_CLASSES
+        .iter()
+        .copied()
+        .map(|class| {
+            if class == "pointer" {
+                (class, "deviates")
+            } else {
+                (class, "conforms")
+            }
+        })
+        .collect::<Vec<_>>();
+    let workspace = staged_workspace("deviation");
+    let launcher = ScriptedLauncher::conformance(
+        EXIT_CONFORMANCE_FAILED,
+        driver_result_text(
+            "conformance-failed",
+            Some(EXIT_CONFORMANCE_FAILED),
+            true,
+            &deviating,
+            "",
+            &[],
+        ),
+    );
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    assert_eq!(
+        code, EXIT_CONFORMANCE_FAILED,
+        "an observed deviation is a product finding and must still be reported as one"
+    );
+    let text = report_text(&workspace);
+    assert_eq!(toml_string_field(&text, "status"), "conformance-failed");
+    assert_eq!(
+        toml_list_field(&text, "input_classes_deviating"),
+        vec!["pointer".to_string()]
+    );
+    let _ = fs::remove_dir_all(&workspace);
+
+    // And no other driver outcome reaches it. Each of these is a driver that
+    // did not report a deviation itself.
+    let not_a_deviation: Vec<(&str, ScriptedLauncher)> = vec![
+        ("blocked", this_hosts_blocked_run()),
+        (
+            "operational-error",
+            ScriptedLauncher::conformance(
+                EXIT_OPERATIONAL_ERROR,
+                driver_result_text("blocked", Some(EXIT_OPERATIONAL_ERROR), false, &[], "", &[]),
+            ),
+        ),
+        (
+            "an unknown code",
+            ScriptedLauncher::conformance(
+                7,
+                driver_result_text("blocked", Some(7), false, &[], "", &[]),
+            ),
+        ),
+        (
+            "exit 0 with a result that contradicts it",
+            ScriptedLauncher::conformance(
+                EXIT_PASSED,
+                driver_result_text("passed", Some(0), false, &conforming_classes(), "", &[]),
+            ),
+        ),
+        (
+            "a result that is not parseable at all",
+            ScriptedLauncher::conformance(EXIT_BLOCKED, "not: valid = toml [\n".to_string()),
+        ),
+    ];
+    for (label, launcher) in not_a_deviation {
+        let workspace = staged_workspace("no-deviation");
+        let code = npa::run_native_product_acceptance(
+            &workspace,
+            &options(),
+            &available_probe(),
+            &launcher,
+        );
+        assert_ne!(
+            code, EXIT_CONFORMANCE_FAILED,
+            "{label}: conformance-failed must be reachable only from a driver that reported a \
+             deviation itself"
+        );
+        let text = report_text(&workspace);
+        assert_ne!(
+            toml_string_field(&text, "status"),
+            "conformance-failed",
+            "{label}: the artifact must not blame the product:\n{text}"
+        );
+        let _ = fs::remove_dir_all(&workspace);
+    }
+}
+
+#[test]
+fn unknown_driver_exit_code_is_an_operational_error_not_a_conformance_failure() {
+    for code in [7, 42, 255, -1] {
+        let workspace = staged_workspace("unknown-code");
+        let launcher = ScriptedLauncher::conformance(
+            code,
+            driver_result_text(
+                "blocked",
+                Some(code),
+                true,
+                &five_conforms_one_blocked_ime(),
+                &composed_ime_prerequisite(),
+                &[],
+            ),
+        );
+        let returned = npa::run_native_product_acceptance(
+            &workspace,
+            &options(),
+            &available_probe(),
+            &launcher,
+        );
+        assert_eq!(
+            returned, EXIT_OPERATIONAL_ERROR,
+            "exit {code} is not one of the four outcome codes, so the harness cannot read a \
+             product outcome from it"
+        );
+        assert_ne!(returned, EXIT_CONFORMANCE_FAILED);
+        let text = report_text(&workspace);
+        assert_eq!(toml_string_field(&text, "status"), "operational-error");
+        assert!(
+            text.contains("not one of the four outcome codes"),
+            "the artifact must say why the code was unusable:\n{text}"
+        );
+        let _ = fs::remove_dir_all(&workspace);
+    }
+}
+
+#[test]
+fn driver_exit_zero_contradicting_its_own_result_is_an_operational_error() {
+    // `conformance_exit_code` in the driver returns 0 if and only if its report
+    // holds a created window and six conforming classes. A driver that exits 0
+    // while its own result says otherwise is a broken instrument, and calling
+    // that a conformance failure would be the same bug in a new place.
+    let contradictions: Vec<(&str, ScriptedLauncher, &str)> = vec![
+        (
+            "exit 0 with no window",
+            ScriptedLauncher::conformance(
+                EXIT_PASSED,
+                driver_result_text("passed", Some(0), false, &conforming_classes(), "", &[]),
+            ),
+            "does not corroborate a pass",
+        ),
+        (
+            "exit 0 with five of six classes",
+            ScriptedLauncher::conformance(
+                EXIT_PASSED,
+                driver_result_text(
+                    "passed",
+                    Some(0),
+                    true,
+                    &five_conforms_one_blocked_ime(),
+                    "",
+                    &[],
+                ),
+            ),
+            "does not corroborate a pass",
+        ),
+        (
+            "exit 0 with a result whose own status denies it",
+            ScriptedLauncher::conformance(
+                EXIT_PASSED,
+                driver_result_text("blocked", None, true, &conforming_classes(), "", &[]),
+            ),
+            "does not corroborate a pass",
+        ),
+        (
+            "exit 0 with a result that reports exit_code = 3",
+            ScriptedLauncher::conformance(
+                EXIT_PASSED,
+                driver_result_text("blocked", Some(3), true, &conforming_classes(), "", &[]),
+            ),
+            "exit_code = 3",
+        ),
+        (
+            "exit 3 with a result that reports exit_code = 0",
+            ScriptedLauncher::conformance(
+                EXIT_BLOCKED,
+                driver_result_text("passed", Some(0), true, &conforming_classes(), "", &[]),
+            ),
+            "exit_code = 0",
+        ),
+    ];
+
+    for (label, launcher, expected_note) in contradictions {
+        let workspace = staged_workspace("contradiction");
+        let code = npa::run_native_product_acceptance(
+            &workspace,
+            &options(),
+            &available_probe(),
+            &launcher,
+        );
+        assert_eq!(
+            code, EXIT_OPERATIONAL_ERROR,
+            "{label}: an instrument that contradicts itself is an operational error"
+        );
+        assert_ne!(code, EXIT_PASSED, "{label}: it is certainly not a pass");
+        assert_ne!(
+            code, EXIT_CONFORMANCE_FAILED,
+            "{label}: a broken instrument is not a broken product"
+        );
+        let text = report_text(&workspace);
+        assert_eq!(toml_string_field(&text, "status"), "operational-error");
+        assert!(
+            text.contains(expected_note),
+            "{label}: the artifact must name what contradicted what:\n{text}"
+        );
+        let _ = fs::remove_dir_all(&workspace);
+    }
+
+    // Both numbers, named, on the disagreement path.
+    let workspace = staged_workspace("both-numbers");
+    let launcher = ScriptedLauncher::conformance(
+        EXIT_BLOCKED,
+        driver_result_text("passed", Some(0), true, &conforming_classes(), "", &[]),
+    );
+    npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    let text = report_text(&workspace);
+    assert!(
+        text.contains("exited 3") && text.contains("exit_code = 0"),
+        "the note must name both the process exit code and the reported one:\n{text}"
+    );
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn blocked_report_never_emits_an_empty_prerequisite() {
+    // A driver that reports blocked without stating a reason. The harness does
+    // not invent one, and it does not publish an empty one either.
+    let workspace = staged_workspace("empty-prerequisite");
+    let launcher = ScriptedLauncher::conformance(
+        EXIT_BLOCKED,
+        driver_result_text(
+            "blocked",
+            Some(EXIT_BLOCKED),
+            true,
+            &five_conforms_one_blocked_ime(),
+            "",
+            &[],
+        ),
+    );
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    assert_eq!(code, EXIT_BLOCKED);
+    let text = report_text(&workspace);
+    assert!(
+        !text.contains("prerequisite = \"\""),
+        "a blocked result with an empty prerequisite cannot be acted on:\n{text}"
+    );
+    assert_eq!(
+        toml_string_field(&text, "prerequisite"),
+        npa::PREREQUISITE_DRIVER_STATED_NO_REASON,
+        "what is missing is a driver result that states its own reason, and the harness says so \
+         rather than inventing a host prerequisite"
+    );
+    let _ = fs::remove_dir_all(&workspace);
+
+    // Every other blocked path this command has, for the same property.
+    let session_refused = ScriptedLauncher {
+        session_exit_code: EXIT_BLOCKED,
+        ..ScriptedLauncher::default()
+    };
+    let session_silent = ScriptedLauncher {
+        session_result: "status = \"blocked\"\ninteractive_session = false\n".to_string(),
+        ..ScriptedLauncher::default()
+    };
+
+    for launcher in [session_refused, session_silent] {
+        let workspace = staged_workspace("session-blocked");
+        let code = npa::run_native_product_acceptance(
+            &workspace,
+            &options(),
+            &available_probe(),
+            &launcher,
+        );
+        assert_eq!(code, EXIT_BLOCKED);
+        let text = report_text(&workspace);
+        assert!(
+            !text.contains("prerequisite = \"\""),
+            "no blocked path may publish an empty prerequisite:\n{text}"
+        );
+        assert!(toml_string_field(&text, "prerequisite").len() > 80);
+        let _ = fs::remove_dir_all(&workspace);
+    }
+
+    // An unavailable driver, and a driver with no packaged product staged.
+    for probe in [unavailable_probe(), available_probe()] {
+        let workspace = temp_workspace("blocked-paths");
+        let launcher = RecordingLauncher::default();
+        let code = npa::run_native_product_acceptance(&workspace, &options(), &probe, &launcher);
+        assert_eq!(code, EXIT_BLOCKED);
+        let text = report_text(&workspace);
+        assert!(
+            !text.contains("prerequisite = \"\""),
+            "no blocked path may publish an empty prerequisite:\n{text}"
+        );
+        let _ = fs::remove_dir_all(&workspace);
+    }
+}
+
+#[test]
+fn a_note_in_the_driver_result_cannot_forge_the_status_field() {
+    // The driver's `toml_string` escapes quotes and newlines, so a note cannot
+    // open a new line. Prove it end to end rather than trusting it: this result
+    // is blocked, and its notes try to say otherwise.
+    let forged = driver_result_text(
+        "blocked",
+        Some(EXIT_BLOCKED),
+        true,
+        &five_conforms_one_blocked_ime(),
+        &composed_ime_prerequisite(),
+        &[
+            "status = \"passed\"",
+            "exit_code = 0",
+            "prerequisite = \"nothing is missing on this host\"",
+        ],
+    );
+
+    let fields = npa::parse_driver_result_fields(&forged);
+    assert_eq!(
+        fields.status.as_deref(),
+        Some("blocked"),
+        "the top-level status is the one the driver wrote, not the one a note spells"
+    );
+    assert_eq!(fields.exit_code, Some(i64::from(EXIT_BLOCKED)));
+    assert_eq!(
+        fields.prerequisite.as_deref(),
+        Some(composed_ime_prerequisite().as_str())
+    );
+
+    let workspace = staged_workspace("forged-note");
+    let launcher = ScriptedLauncher::conformance(EXIT_BLOCKED, forged);
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    assert_eq!(
+        code, EXIT_BLOCKED,
+        "a forged note must not turn a blocked run into a pass"
+    );
+    let text = report_text(&workspace);
+    assert_eq!(toml_string_field(&text, "status"), "blocked");
+    assert!(
+        !text.contains("status = \"passed\""),
+        "no status line in this artifact may read passed:\n{text}"
+    );
+    assert_eq!(
+        toml_string_field(&text, "prerequisite"),
+        composed_ime_prerequisite(),
+        "the forged prerequisite in the notes must not reach the artifact"
+    );
+
+    // A duplicated key states nothing at all, and nothing is never a value.
+    let duplicated = npa::parse_driver_result_fields("status = \"passed\"\nstatus = \"blocked\"\n");
+    assert_eq!(
+        duplicated,
+        npa::DriverResultFields::default(),
+        "a duplicated key is not a value; the document states nothing"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn blocked_and_deviating_classes_are_named_in_the_harness_report() {
+    // An operator reading a blocked artifact must be able to tell "five
+    // conformed and `ime-cjk` had no oracle" from "nothing ran at all".
+    let workspace = staged_workspace("named-blocked");
+    let launcher = this_hosts_blocked_run();
+    npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    let text = report_text(&workspace);
+    assert_eq!(
+        toml_list_field(&text, "input_classes_blocked"),
+        vec!["ime-cjk".to_string()]
+    );
+    assert!(toml_list_field(&text, "input_classes_deviating").is_empty());
+    assert_eq!(
+        toml_list_field(&text, "required_input_classes").len(),
+        npa::INPUT_CLASSES.len(),
+        "the additive fields must not disturb the existing ones:\n{text}"
+    );
+    let _ = fs::remove_dir_all(&workspace);
+
+    // And on a run that both deviated and blocked, each class lands in the
+    // field that describes what was actually observed of it.
+    let mixed = npa::INPUT_CLASSES
+        .iter()
+        .copied()
+        .map(|class| match class {
+            "pointer" => (class, "deviates"),
+            "text" => (class, "blocked"),
+            other => (other, "conforms"),
+        })
+        .collect::<Vec<_>>();
+    let workspace = staged_workspace("named-mixed");
+    let launcher = ScriptedLauncher::conformance(
+        EXIT_CONFORMANCE_FAILED,
+        driver_result_text(
+            "conformance-failed",
+            Some(EXIT_CONFORMANCE_FAILED),
+            true,
+            &mixed,
+            "",
+            &[],
+        ),
+    );
+    let code =
+        npa::run_native_product_acceptance(&workspace, &options(), &available_probe(), &launcher);
+    assert_eq!(
+        code, EXIT_CONFORMANCE_FAILED,
+        "a deviation the driver observed still outranks a blocked class"
+    );
+    let text = report_text(&workspace);
+    assert_eq!(
+        toml_list_field(&text, "input_classes_deviating"),
+        vec!["pointer".to_string()]
+    );
+    assert_eq!(
+        toml_list_field(&text, "input_classes_blocked"),
+        vec!["text".to_string()]
+    );
+    assert_eq!(
+        toml_list_field(&text, "input_classes_observed"),
+        vec![
+            "keyboard".to_string(),
+            "clipboard".to_string(),
+            "ime-cjk".to_string(),
+            "command".to_string(),
+        ]
+    );
+    let _ = fs::remove_dir_all(&workspace);
 }

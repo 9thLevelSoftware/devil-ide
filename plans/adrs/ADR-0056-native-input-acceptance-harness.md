@@ -323,3 +323,105 @@ workspace member built with `cargo build -p legion-input-driver --release`.
 opened, no input class was observed. `COMP-PLAT-002` remains
 `implementation: partial`, `acceptance: unassessed`, and `DEF-2026-09-05-01` and
 `DEF-2026-09-05-02` stay exactly where the register has them.
+
+## Amendment 2026-09-08 — a blocked driver outcome is a blocked run
+
+Before this amendment,
+[`xtask/src/native_product_acceptance.rs`](../../xtask/src/native_product_acceptance.rs)
+ended its run with a two-arm `if/else`: a complete six-of-six pass, or
+`conformance-failed` with exit `1`. That `else` swallowed every other
+post-driver outcome — including the driver's own `EXIT_BLOCKED` (`3`).
+
+That is not a stylistic problem. On this host `observe_ime_cjk` in
+[`crates/legion-input-driver/src/main.rs`](../../crates/legion-input-driver/src/main.rs)
+reads the product window's keyboard layout, finds it is not a CJK primary
+language id, and correctly returns `ClassOutcome::Blocked` with an exact
+prerequisite. The first real windowed run would therefore have produced a driver
+that behaved perfectly, an `ime-cjk` class that honestly reported *blocked*, and
+a harness artifact saying **the product failed native input conformance** — an
+artifact eligible to enter `plans/completion/defects.json` against a product
+that did nothing wrong.
+
+**Decision: the driver's process exit code is dispatched on exhaustively.**
+
+| What the driver did | Harness `status` | Harness exit |
+| --- | --- | --- |
+| exit `0`, and its own result records a created window and all six classes `conforms` | `passed` | `0` |
+| exit `1` (`EXIT_CONFORMANCE_FAILED`) — it ran to completion and observed a genuine deviation | `conformance-failed` | `1` |
+| exit `3` (`EXIT_BLOCKED`) — it could not establish an oracle, or a class was blocked | `blocked` | `3`, carrying the driver's own exact prerequisite verbatim |
+| exit `2` (`EXIT_OPERATIONAL_ERROR`) | `operational-error` | `2` |
+| any other exit code | `operational-error` | `2` |
+| exit `0` contradicted by its own result (no window, or fewer than six `conforms`) | `operational-error` | `2` |
+| a stated `exit_code` field that disagrees with the process exit code | `operational-error` | `2` |
+
+**`conformance-failed` is reachable from exactly one of those rows:** a driver
+that ran to completion and reported a deviation itself. It is never reached by
+inference from a missing marker, a short class list, an unreadable field or a
+catch-all arm.
+
+The last two rows are not technicalities. `conformance_exit_code` in
+[`crates/legion-input-driver/src/report.rs`](../../crates/legion-input-driver/src/report.rs)
+returns `0` if and only if the report holds a created window and six conforming
+classes, so a driver that exits `0` while its own result says otherwise is a
+broken instrument, not a broken product. Reporting that as `conformance-failed`
+would be the same bug in a new place.
+
+**Decision: a blocked class is never a defect against the product.** `blocked`
+is one of the three class outcomes, and `ime-cjk` on a host with no CJK input
+layout is the worked example: the oracle cannot be established, saying so is the
+driver behaving correctly, and the run is `blocked` with that class's own
+prerequisite. The report now also names which classes blocked and which
+deviated, in `input_classes_blocked` and `input_classes_deviating` beside the
+existing `required_input_classes` and `input_classes_observed`, so the
+distinction is visible in the artifact and not only in the code.
+
+**Decision: the driver composes a blocked run's prerequisite from its blocked
+classes.** A run with five conforming classes and one blocked class is blocked
+with a non-empty `observations` list and no top-level prerequisite, which
+previously wrote `prerequisite = ""` — a blocked result nobody can act on. The
+driver now composes the top-level prerequisite from the blocked classes' own
+`detail` strings, naming each class, and a blocked report never renders an empty
+prerequisite. The harness propagates that string **verbatim**: it is not
+reworded, not prefixed, and not merged with one of the harness's own
+prerequisites. If it is ever handed a blocked result that states no reason, the
+harness says exactly that (`PREREQUISITE_DRIVER_STATED_NO_REASON`) rather than
+inventing a host prerequisite.
+
+**What did not change, and is not weakened by any of this.**
+
+- **Out-of-process observation.** The driver reads the product only through UI
+  Automation, the system clipboard and bytes on disk. No product-side test hook,
+  feature flag, environment variable or IPC channel exists or may be added, and
+  no assertion inside the product counts. This amendment touches no product
+  crate.
+- **The four-outcome exit contract.** `0` passed, `1` conformance-failed, `2`
+  operational-error, `3` blocked, pairwise distinct.
+- **Blocked is nonzero, always** — never `passed`, never `skipped`, never `0` —
+  and always carries an exact prerequisite. The report is written even when the
+  run is blocked.
+- **The deviates-outranks-blocked ranking inside the driver.** A class observed
+  to deviate still yields `EXIT_CONFORMANCE_FAILED` even when another class is
+  blocked, so a real product finding is never hidden behind an unavailable
+  oracle. `ClassOutcome` still has exactly three variants, a blocked class still
+  emits its own `input_class_<class> = "blocked"` line, and no path can now
+  produce `conforms` that could not before.
+- **A class the driver did not observe is never reported as conforming,** and
+  the six class markers plus `window_created` remain literal wire-protocol
+  substrings.
+- **`xtask` never links `legion-desktop`,** and never builds the driver.
+- **Not a gate.** No workflow under `.github/workflows/` references this
+  command, and
+  [`xtask/tests/native_product_acceptance.rs`](../../xtask/tests/native_product_acceptance.rs)
+  asserts that, unchanged.
+- **macOS and Linux stay blocked on `BLK-2026-09-08-02`,** and *a Windows result
+  never substitutes for a macOS or Linux row.* The driver's non-Windows build
+  still writes a blocked report naming that blocker and exits nonzero, and
+  `BLK-2026-09-08-04` (a packaged native product staged into the package
+  directory) is not retired.
+
+**This amendment produces no acceptance evidence.** No run happened, no window
+opened, no input class was observed. The correct claim is narrow: the harness
+can now tell a blocked host from a failing product, and it has told neither.
+`COMP-PLAT-002` remains `implementation: partial`, `acceptance: unassessed`, no
+defect is filed, and `DEF-2026-09-05-01` and `DEF-2026-09-05-02` stay exactly
+where the register has them.
