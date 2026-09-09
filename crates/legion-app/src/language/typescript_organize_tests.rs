@@ -109,14 +109,27 @@ fn typescript_organize_uses_file_and_all_mode_without_candidates() {
         params["arguments"][1],
         serde_json::json!({"mode":"All", "skipDestructiveCodeActions":false})
     );
+    // The command argument must be the filesystem-canonical native path of the
+    // opened file. Build that expectation independently of the URI round trip the
+    // product uses (`canonical_path_to_uri` + `uri_to_canonical_path`): mirroring
+    // that expression would make the assertion a tautology that passes even when
+    // both sides are wrong together. `std::fs::canonicalize` is the independent
+    // oracle, and `strip_unc_from_pathbuf` is the crate's existing helper for
+    // dropping the Windows verbatim `\\?\` prefix it adds.
+    //
+    // The raw `TempDir` path is *not* usable as the expectation: on the GitHub
+    // Windows runner the temp root arrives through the 8.3 short name `RUNNER~1`
+    // (canonical: `runneradmin`), and on the GitHub macOS runner through the
+    // `/var` -> `/private/var` symlink. The fixture deliberately keeps opening the
+    // workspace and the file through that non-canonical spelling, so this assertion
+    // is what proves the product normalises it.
+    let expected_argument = crate::strip_unc_from_pathbuf(
+        std::fs::canonicalize(fixture._root.path().join("app.ts"))
+            .expect("fixture file must canonicalize"),
+    );
     assert_eq!(
         params["arguments"][0],
-        fixture
-            ._root
-            .path()
-            .join("app.ts")
-            .to_string_lossy()
-            .as_ref()
+        expected_argument.to_string_lossy().as_ref()
     );
     assert!(
         !params["arguments"][0]
